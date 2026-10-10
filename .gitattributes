@@ -1,0 +1,3 @@
+# These hashes must survive Windows checkout line-ending settings.
+/third_party/fmd2/yomira.patch -text
+/third_party/fmd2/baseunits/uYomiraApi.pas -text

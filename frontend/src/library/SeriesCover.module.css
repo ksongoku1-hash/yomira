@@ -1,0 +1,45 @@
+:where(.cover) {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 2 / 3;
+  object-fit: contain;
+  background: var(--surface-soft);
+}
+
+:where(.placeholder) {
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: linear-gradient(145deg, var(--surface-hover), var(--surface-soft));
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.mark {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2.5rem;
+  border: 2px solid var(--text-muted);
+  border-radius: 0.2rem;
+}
+
+.mark::after {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.35rem;
+  left: 0.35rem;
+  height: 1px;
+  background: var(--text-muted);
+  box-shadow: 0 0.4rem var(--text-muted), 0 0.8rem var(--text-muted);
+  content: "";
+}

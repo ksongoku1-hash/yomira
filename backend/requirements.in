@@ -1,0 +1,10 @@
+fastapi==0.141.1
+uvicorn==0.54.0
+pytest==9.1.1
+httpx==0.28.1
+SQLAlchemy==2.0.54
+alembic==1.20.0
+Pillow==12.3.0
+comtypes==1.4.17; platform_system == "Windows"
+ruff==0.16.9
+pyright==1.1.414

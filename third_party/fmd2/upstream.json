@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/dazedcat19/FMD2.git",
+  "commit": "ad3a5b632375a5712065373027b0e8cc98a56b60",
+  "patch_sha256": "9f7a94df66123f34cb54c6b052089b3a3e9574b22c8d49ac44e62bd11a307bea",
+  "api_source_sha256": "b770b2b52e90d3a5968a055b13969133a9d627f0ae66e6d694846e0dac7bbe62",
+  "reference_executable_sha256": "413b110941a106e44504f23e2cccc69759910c4f4ace5d739da1c193a84a1db8",
+  "lazarus_reference_version": "4.6",
+  "build_mode": "Win64"
+}

@@ -1,0 +1,419 @@
+.page {
+  display: grid;
+  gap: 1.25rem;
+  width: min(100%, 72rem);
+  min-width: 0;
+  margin-inline: auto;
+}
+
+.pageHeader {
+  min-width: 0;
+}
+
+.pageHeader h1 {
+  margin: 0.3rem 0 0;
+  color: var(--text);
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.eyebrow {
+  margin: 1rem 0 0;
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.textLink {
+  color: var(--accent);
+  font-weight: 650;
+  text-underline-offset: 0.2em;
+}
+
+.textLink:hover {
+  color: var(--accent-hover);
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: minmax(8rem, auto) 1fr minmax(8rem, auto);
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: var(--surface-soft);
+}
+
+.modeControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.readerTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.zoomValue {
+  min-width: 3.5rem;
+  color: var(--text-secondary);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.modeControls button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: #173024;
+}
+
+.secondaryButton {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  background: var(--surface-hover);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.secondaryButton:focus-visible,
+.textLink:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.secondaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.pageNumber,
+.statusMessage {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.progressMessage,
+.progressFailure {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.65rem;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.progressFailure {
+  border-color: #754044;
+  color: #ffb4ab;
+}
+
+.progressMessage p,
+.progressFailure p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.readerCanvas {
+  display: grid;
+  min-height: min(65vh, 42rem);
+  place-items: center;
+  overflow: auto;
+  padding: clamp(0.75rem, 3vw, 1.5rem);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: var(--background);
+}
+
+.doubleCanvas {
+  min-height: min(72vh, 48rem);
+}
+
+.doublePages {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  justify-items: center;
+  gap: clamp(0.5rem, 2vw, 1.25rem);
+  width: 100%;
+  min-width: 0;
+}
+
+.doublePageSlot {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+}
+
+.verticalViewport {
+  height: min(72vh, 48rem);
+  min-height: min(22rem, 50vh);
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: var(--background);
+  scrollbar-gutter: stable;
+}
+
+.verticalViewport:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.verticalTrack {
+  min-width: 0;
+}
+
+.verticalSpacer {
+  width: 1px;
+  pointer-events: none;
+}
+
+.verticalPageSlot {
+  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--reader-vertical-page-height, 48rem);
+  min-width: 0;
+  justify-items: center;
+  align-items: center;
+  padding: clamp(0.5rem, 2vw, 1rem);
+}
+
+.verticalPageImage {
+  display: block;
+  max-width: 100%;
+  max-height: var(--reader-page-height, 100%);
+  object-fit: contain;
+}
+
+.pageImage {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: calc(100vh - 17rem);
+  object-fit: contain;
+}
+
+.fitWidthImage {
+  width: 100%;
+  max-width: 100%;
+  max-height: none;
+  height: auto;
+  transform: none !important;
+}
+
+.verticalPageImage.fitWidthImage {
+  max-height: var(--reader-page-height, 100%);
+}
+
+.fitHeightImage {
+  width: auto;
+  height: calc(100vh - 17rem);
+  max-width: none;
+  max-height: none;
+  transform: none !important;
+}
+
+.verticalPageImage.fitHeightImage {
+  height: var(--reader-page-height, 100%);
+  max-height: var(--reader-page-height, 100%);
+}
+
+.settingsMessage {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.65rem;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.settingsMessage p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ereaderProfile {
+  background: #fff;
+  color: #111;
+}
+
+.ereaderProfile *,
+.ereaderProfile *::before,
+.ereaderProfile *::after {
+  animation-duration: 0.001ms !important;
+  box-shadow: none !important;
+  transition-duration: 0.001ms !important;
+}
+
+.ereaderProfile .pageHeader h1,
+.ereaderProfile .textLink,
+.ereaderProfile .eyebrow,
+.ereaderProfile .statusMessage,
+.ereaderProfile .pageNumber,
+.ereaderProfile .zoomValue,
+.ereaderProfile .progressMessage,
+.ereaderProfile .settingsMessage {
+  color: #111;
+}
+
+.ereaderProfile .readerCanvas,
+.ereaderProfile .verticalViewport,
+.ereaderProfile .controls,
+.ereaderProfile .settingsMessage,
+.ereaderProfile .progressMessage {
+  border-color: #222;
+  background: #fff;
+  color: #111;
+}
+
+.ereaderProfile .secondaryButton {
+  min-width: 2.75rem;
+  min-height: 3rem;
+  border: 2px solid #111;
+  background: #fff;
+  color: #111;
+}
+
+.ereaderProfile button[aria-pressed="true"] {
+  background: #111;
+  color: #fff;
+}
+
+.ereaderProfile :focus-visible {
+  outline: 3px solid #111;
+  outline-offset: 3px;
+}
+
+.ereaderProfile .progressFailure,
+.ereaderProfile .settingsMessage[role="alert"],
+.ereaderProfile .pageError,
+.ereaderProfile .errorState {
+  border-color: #600;
+  background: #fff;
+  color: #600;
+}
+
+.ereaderProfile .errorDetails {
+  color: #111 !important;
+}
+
+.page:fullscreen {
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  overflow: auto;
+  padding: 1rem;
+  background: var(--background);
+}
+
+.page:fullscreen .readerCanvas {
+  min-height: 72vh;
+}
+
+.page:fullscreen .verticalViewport {
+  height: 68vh;
+}
+
+.errorState,
+.pageError {
+  display: grid;
+  justify-items: start;
+  gap: 0.85rem;
+  width: min(100%, 44rem);
+  box-sizing: border-box;
+  padding: clamp(1rem, 4vw, 1.5rem);
+  border: 1px solid #754044;
+  border-radius: 0.75rem;
+  background: #211619;
+}
+
+.errorState h1,
+.pageError h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.15rem;
+}
+
+.errorState p,
+.pageError p {
+  margin: 0.45rem 0 0;
+  color: #ffb4ab;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.errorDetails {
+  color: var(--text-secondary) !important;
+  font-size: 0.85rem;
+}
+
+.errorDetails code {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 639px) {
+  .controls {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .pageNumber {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .readerCanvas {
+    min-height: min(55vh, 30rem);
+    padding: 0.5rem;
+  }
+
+  .verticalViewport {
+    height: 65vh;
+    min-height: 50vh;
+  }
+
+  .pageImage {
+    max-height: calc(100vh - 15rem);
+  }
+
+  .doublePages {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .doublePageSlot {
+    width: 100%;
+  }
+}

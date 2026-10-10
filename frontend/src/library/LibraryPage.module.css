@@ -1,0 +1,445 @@
+.page {
+  display: grid;
+  gap: 1.5rem;
+  min-width: 0;
+}
+
+.pageHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.importPanel {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.importPanel h2 { margin: 0 0 0.5rem; font-size: 1.05rem; color: var(--text); }
+.importPanel p { margin: 0.5rem 0; }
+.folderPath { overflow-wrap: anywhere; color: var(--accent); }
+.folderGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.folderCard { padding: 1rem; border: 1px solid #303a43; border-radius: 0.65rem; min-width: 0; }
+.folderCard h3 { margin: 0; font-size: 1rem; color: var(--text); }
+.folderActions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.folderWarning { color: #ffd38c; }
+.folderGuide { margin: 1rem 0; }
+.folderGuide summary { cursor: pointer; color: var(--text); }
+.folderExample { overflow-x: auto; padding: 0.75rem; background: #080c10; border-radius: 0.5rem; }
+
+.pageHeader h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  line-height: 1.15;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.intro {
+  margin: 0.65rem 0 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(14rem, 1fr);
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: var(--surface-soft);
+}
+
+.filterControls {
+  display: grid;
+  min-width: 0;
+  gap: 0.45rem;
+}
+
+.filterLabel {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.filterGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.filterButton {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+.filterButton:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.filterButtonActive {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--background);
+}
+
+.filterButtonActive:hover {
+  background: var(--accent);
+  color: var(--background);
+}
+
+.filterButton:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.searchField {
+  display: grid;
+  width: min(100%, 32rem);
+  gap: 0.45rem;
+}
+
+.searchField label {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.searchField input {
+  width: 100%;
+  min-height: 2.75rem;
+  box-sizing: border-box;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  background: var(--background);
+  color: var(--text);
+  font: inherit;
+}
+
+.searchField input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.searchField input:focus-visible {
+  border-color: var(--accent);
+}
+
+.helpText {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.secondaryButton,
+.textButton {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  background: var(--surface-hover);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.secondaryButton:hover:not(:disabled),
+.textButton:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.secondaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.textButton {
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent);
+  padding-inline: 0;
+}
+
+.loadingRegion,
+.seriesGrid {
+  min-width: 0;
+}
+
+.loadingRegion {
+  display: grid;
+  gap: 1rem;
+}
+
+.statusMessage {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.seriesGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 11.5rem), 1fr));
+  justify-content: start;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seriesItem {
+  min-width: 0;
+}
+
+.seriesCard {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+
+.seriesCard:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  box-shadow: 0 0.8rem 1.8rem #0004;
+}
+
+.seriesCard > :first-child {
+  border-radius: 0.7rem 0.7rem 0 0;
+}
+
+.coverLink { display: block; overflow: hidden; }
+
+.cardDetails {
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.9rem;
+}
+
+.seriesTitle {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.seriesLink {
+  color: inherit;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.16em;
+}
+
+.seriesLink:hover {
+  color: var(--text);
+  text-decoration-color: var(--accent);
+}
+
+.description {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.metadata {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.listHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.rangeText {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding-top: 0.5rem;
+}
+
+.pageNumber {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.emptyState,
+.noMatches,
+.errorState,
+.boundaryState {
+  display: grid;
+  justify-items: start;
+  gap: 0.85rem;
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: var(--surface);
+}
+
+.emptyState {
+  justify-items: center;
+  padding-block: clamp(2rem, 8vw, 4rem);
+  text-align: center;
+}
+
+.emptyState h2,
+.noMatches h2,
+.errorState h2,
+.boundaryState h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.25rem;
+  line-height: 1.35;
+}
+
+.emptyState p,
+.noMatches p,
+.errorState p,
+.boundaryState p {
+  max-width: 42rem;
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.emptyMark {
+  width: 3rem;
+  height: 3rem;
+  border: 2px solid var(--text-muted);
+  border-radius: 50%;
+}
+
+.errorState {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-color: #754044;
+  background: #211619;
+}
+
+.errorDetails {
+  font-size: 0.9rem;
+}
+
+.errorDetails code {
+  color: #ffd5d8;
+  overflow-wrap: anywhere;
+}
+
+.skeletonCard {
+  aspect-ratio: 2 / 3;
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: linear-gradient(110deg, var(--surface) 8%, var(--surface-hover) 18%, var(--surface) 33%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  to {
+    background-position-x: -200%;
+  }
+}
+
+@media (min-width: 640px) {
+  .seriesGrid {
+    gap: 1.15rem;
+  }
+}
+
+@media (max-width: 639px) {
+  .pageHeader {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .seriesGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .errorState {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .pagination {
+    gap: 0.5rem;
+  }
+
+  .pageNumber {
+    font-size: 0.88rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonCard {
+    animation: none;
+    background: var(--surface-hover);
+  }
+}

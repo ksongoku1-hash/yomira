@@ -1,0 +1,74 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+
+# JavaScript dependencies and generated output
+node_modules/
+frontend/dist/
+frontend/coverage/
+
+# Local secrets and runtime data
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
+*.db
+logs/
+data/
+
+# Personal libraries, exports, credentials and native build output
+/library/
+/downloads/
+/exports/
+/secrets/
+*.cbz
+*.cbr
+*.epub
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
+*.log
+*.pem
+*.key
+*.pfx
+*.exe
+*.dll
+*.tsbuildinfo
+/backend/build/
+/backend/dist/
+/runtime/
+# Local execution reports and screenshots remain on the development machine.
+/docs/reports/
+
+# Editor and OS artifacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Preserved local toolchains and per-run test workspaces; never source artifacts
+/work/
+/.vite/
+/backend/.pytest-*/
+/backend/pytest-*/
+/backend/reader-*/
+/backend/test-artifacts/
+/backend/wpd-probe/
+# Pytest roots created when a Windows temp path exceeded the path limit
+/backend/UsersksongDocumentsCodex*/
+# Preserved local edit backups and Codex-only helper; keep on disk, exclude from source freeze
+*.pre-*.bak
+*.pre-*.bak.atomic
+/YOMIRA_ESTADO_ACTUAL.md.atomic-replacement-original-*.bak
+/YOMIRA_ESTADO_ACTUAL.md.rollback-current-*.bak
+/.codex_tracker_k094_start.ps1

@@ -1,0 +1,342 @@
+diff --git a/baseunits/DBUpdater.pas b/baseunits/DBUpdater.pas
+index 7297470..fcc2f16 100644
+--- a/baseunits/DBUpdater.pas
++++ b/baseunits/DBUpdater.pas
+@@ -16,6 +16,7 @@ type
+   private
+     FIndex: Integer;
+     FModule: TModuleContainer;
++    FSilent: Boolean;
+     FItems,
+     FFailedList: TStringList;
+   protected
+@@ -36,6 +37,7 @@ type
+     procedure Add(const S: TStrings); overload;
+     procedure UpdateStatus;    // should be called from mainthread
+     property Items: TStringList read FItems;
++    property Silent: Boolean read FSilent write FSilent;
+   end;
+ 
+ resourcestring
+@@ -201,6 +203,7 @@ end;
+ constructor TDBUpdaterThread.Create;
+ begin
+   inherited Create(True, FormMain, FormMain.IconList, 24);
++  FSilent := False;
+   FItems := TStringList.Create;
+   FFailedList := TStringList.Create;
+   HTTP.OnRedirected := @HTTPRedirected;
+@@ -209,7 +212,7 @@ end;
+ 
+ destructor TDBUpdaterThread.Destroy;
+ begin
+-  if (not Terminated) and (FFailedList.Count <> 0) then
++  if (not FSilent) and (not Terminated) and (FFailedList.Count <> 0) then
+     Synchronize(@SyncShowFailed);
+   Synchronize(@SyncFinal);
+   FFailedList.Free;
+diff --git a/baseunits/SQLiteData.pas b/baseunits/SQLiteData.pas
+index b832af4..d0ece29 100644
+--- a/baseunits/SQLiteData.pas
++++ b/baseunits/SQLiteData.pas
+@@ -115,7 +115,8 @@ type
+     procedure EndUpdate; inline;
+     procedure AppendSQL(const SQL:string); inline;
+     procedure AppendSQLSafe(const SQL:string); inline;
+-    procedure FlushSQL(const UseQueue:Boolean=True); inline;
++    // Keep the database flush as a call: FPC 3.2.2 crashes expanding this body inline.
++    procedure FlushSQL(const UseQueue:Boolean=True);
+     procedure FlushSQLSafe; inline;
+     procedure Commit(const UseQueue:Boolean=True);
+   end;
+diff --git a/baseunits/WebsiteModules.pas b/baseunits/WebsiteModules.pas
+index 50d33a9..a319fe6 100644
+--- a/baseunits/WebsiteModules.pas
++++ b/baseunits/WebsiteModules.pas
+@@ -130,6 +130,7 @@ type
+     SortedList: Boolean;
+     InformationAvailable: Boolean;
+     FavoriteAvailable: Boolean;
++    AllowBypass: Boolean;
+     DynamicPageLink: Boolean;
+     TotalDirectoryPage: array of Integer;
+     CurrentDirectoryIndex: Integer;
+@@ -301,6 +302,7 @@ begin
+   SortedList := False;
+   InformationAvailable := True;
+   FavoriteAvailable := True;
++  AllowBypass := True;
+   DynamicPageLink := False;
+   TotalDirectory := 1;
+   CurrentDirectoryIndex := 0;
+@@ -356,7 +358,10 @@ var
+ begin
+   AHTTP.CookieManager := FCookieManager;
+   AHTTP.ConnectionsQueue := FConnectionsQueue;
+-  AHTTP.OnHTTPRequest := @WebsiteBypassHTTPRequest;
++  if AllowBypass then
++    AHTTP.OnHTTPRequest := @WebsiteBypassHTTPRequest
++  else
++    AHTTP.OnHTTPRequest := nil;
+   AHTTP.OnAfterSetHTTPCookies := @MergeHTTPCookiesFromSetting;
+ 
+   if not Settings.Enabled then exit;
+diff --git a/baseunits/uDownloadsManager.pas b/baseunits/uDownloadsManager.pas
+index 51f5204..d15df12 100644
+--- a/baseunits/uDownloadsManager.pas
++++ b/baseunits/uDownloadsManager.pas
+@@ -133,6 +133,7 @@ type
+     procedure SetStatus(AValue: TDownloadStatusType);
+   public
+     DlId: String;
++    RawOutput: Boolean;
+     Order: Integer;
+     // critical section
+     CS_Container: TRTLCriticalSection;
+@@ -298,6 +299,18 @@ begin
+   Result := SysUtils.IntToStr(QWord(Value));
+ end;
+ 
++function IsYomiraStagingPath(const APath: String): Boolean;
++var
++  Root, Target: String;
++begin
++  Root := GetEnvironmentVariable('YOMIRA_FMD2_STAGING_ROOT');
++  if Root = '' then
++    Root := USERDATA_FOLDER + 'yomira-staging';
++  Root := IncludeTrailingPathDelimiter(ExpandFileName(Root));
++  Target := IncludeTrailingPathDelimiter(ExpandFileName(APath));
++  Result := SameText(Copy(Target, 1, Length(Root)), Root);
++end;
++
+ { TDownloadThread }
+ 
+ constructor TDownloadThread.Create(const ATask: TTaskThread);
+@@ -331,11 +344,31 @@ begin
+     Result := TModuleContainer(Task.Container.DownloadInfo.Module).OnGetImageURL(Self, URL, TModuleContainer(Task.Container.DownloadInfo.Module));
+ end;
+ 
++function YomiraStageHasRoom(const ADirectory: string; const ABytes: Int64): Boolean;
++var
++  Search: TSearchRec;
++  Total: Int64;
++begin
++  Result := False;
++  if (ABytes <= 0) or (ABytes > 67108864) then Exit;
++  Total := ABytes;
++  // ponytail: scan one chapter under its task lock; keep a counter if large jobs need it.
++  if FindFirst(IncludeTrailingPathDelimiter(ADirectory) + '*', faAnyFile, Search) = 0 then
++  begin
++    repeat
++      if (Search.Attr and faDirectory) = 0 then Inc(Total, Search.Size);
++    until FindNext(Search) <> 0;
++    FindClose(Search);
++  end;
++  // The raw copy and Yomira's validated copy fit inside its 2 GiB page reservation.
++  Result := Total <= 536870912;
++end;
++
+ function TDownloadThread.DownloadImage: Boolean;
+ var
+   workFilename,
+   workURL,
+-  savedFilename: String;
++  savedFilename, RawExtension: String;
+ begin
+   Result := False;
+ 
+@@ -386,16 +419,32 @@ begin
+ 
+   if Result then
+   begin
++    if Task.Container.RawOutput then EnterCriticalSection(Task.Container.CS_Container);
++    try
+     savedFilename := FindImageFile(Task.CurrentWorkingDir + workFilename);
+     Result := savedFilename <> '';
+     if not Result then
+     begin
+-      if Assigned(TModuleContainer(Task.Container.DownloadInfo.Module).OnSaveImage) then
++      if Task.Container.RawOutput and not YomiraStageHasRoom(
++        Task.CurrentWorkingDir, HTTP.Document.Size) then Exit(False);
++      if Task.Container.RawOutput then
++      begin
++        RawExtension := GetImageStreamExt(HTTP.Document);
++        if not ((RawExtension = 'jpg') or (RawExtension = 'jpeg') or
++          (RawExtension = 'png') or (RawExtension = 'webp')) then Exit(False);
++        savedFilename := IncludeTrailingPathDelimiter(Task.CurrentWorkingDir) + workFilename + '.' + RawExtension;
++        HTTP.Document.Position := 0;
++        HTTP.Document.SaveToFile(savedFilename);
++      end
++      else if Assigned(TModuleContainer(Task.Container.DownloadInfo.Module).OnSaveImage) then
+         savedFilename := TModuleContainer(Task.Container.DownloadInfo.Module).OnSaveImage(Self, Task.CurrentWorkingDir, workFilename, TModuleContainer(Task.Container.DownloadInfo.Module))
+       else
+         savedFilename := SaveImageStreamToFile(HTTP, Task.CurrentWorkingDir, workFilename);
+       Result := savedFilename <> '';
+     end;
++    finally
++      if Task.Container.RawOutput then LeaveCriticalSection(Task.Container.CS_Container);
++    end;
+   end;
+ 
+   if Result then
+@@ -1142,7 +1191,11 @@ begin
+       end;
+ 
+       //check path
+-      if OptionGenerateChapterFolder then
++      if Container.RawOutput then
++      begin
++        CurrentWorkingDir := Container.DownloadInfo.SaveTo;
++      end
++      else if OptionGenerateChapterFolder then
+       begin
+         CurrentWorkingDir := CorrectPathSys(Container.DownloadInfo.SaveTo) +
+           Container.ChapterNames[Container.CurrentDownloadChapterPtr];
+@@ -1277,20 +1330,23 @@ begin
+         if CheckForFinish then
+         begin
+           Container.DownloadInfo.Progress := '';
+-          Container.Status := STATUS_CONVERT;
+-          if not Convert then
++          if not Container.RawOutput then
+           begin
+-            Container.Status := STATUS_FAILED;
+-          end;
+-
+-          if Container.Status <> STATUS_FAILED then
+-          begin
+-            Container.DownloadInfo.Progress := '';
+-            Container.Status := STATUS_COMPRESS;
+-            if not Compress then
++            Container.Status := STATUS_CONVERT;
++            if not Convert then
+             begin
+               Container.Status := STATUS_FAILED;
+             end;
++
++            if Container.Status <> STATUS_FAILED then
++            begin
++              Container.DownloadInfo.Progress := '';
++              Container.Status := STATUS_COMPRESS;
++              if not Compress then
++              begin
++                Container.Status := STATUS_FAILED;
++              end;
++            end;
+           end;
+         end
+         else
+@@ -1421,6 +1477,7 @@ begin
+   CustomFileName := OptionFilenameCustomRename;
+   FStatus := STATUS_NONE;
+   FEnabled := True;
++  RawOutput := False;
+ end;
+ 
+ destructor TTaskContainer.Destroy;
+@@ -1669,6 +1726,7 @@ begin
+           if Pos('/', DownloadInfo.Progress) <> 0 then
+             DownCounter := StrToIntDef(Trim(ExtractWord(1, DownloadInfo.Progress, ['/'])), 0);
+           DownloadInfo.SaveTo             := Fields[f_saveto].AsString;
++          RawOutput                         := IsYomiraStagingPath(DownloadInfo.SaveTo);
+           DownloadInfo.DateAdded          := Fields[f_dateadded].AsDateTime;
+           DownloadInfo.DateLastDownloaded   := Fields[f_datelastdownloaded].AsDateTime;
+           ChapterLinks.Text               := Fields[f_chapterslinks].AsString;
+diff --git a/lua/modules/CapibaraTraductor.lua b/lua/modules/CapibaraTraductor.lua
+index 2c84cd3..b63dfe7 100644
+--- a/lua/modules/CapibaraTraductor.lua
++++ b/lua/modules/CapibaraTraductor.lua
+@@ -82,14 +82,16 @@ end
+ 
+ -- Get the page count and/or page links for the current chapter.
+ function GetPageNumber()
+-	local site, slug, cid = URL:match('^/([^/]+)/([^/]+)/([^/]+)$')
++	local site, slug, cid = URL:match('^/?([^/]+)/([^/]+)/([^/]+)$')
++	if not site then return false end
+ 	local u = MODULE.RootURL .. '/api/manga-custom/' .. slug .. '/chapter/' .. cid .. '/pages'
+ 	HTTP.Reset()
+ 	HTTP.Headers.Values['X-Organization'] = site
+ 
+ 	if not HTTP.GET(u) then return false end
+ 
+-	CreateTXQuery(HTTP.Document).XPathStringAll('json(*).data().imageUrl', TASK.PageLinks)
++	CreateTXQuery(HTTP.Document).XPathStringAll('parse-json(.)?data?*?imageUrl', TASK.PageLinks)
++	TASK.PageNumber = TASK.PageLinks.Count
+ 
+-	return true
+-end
+\ No newline at end of file
++	return TASK.PageNumber > 0
++end
+diff --git a/lua/modules/InManga.lua b/lua/modules/InManga.lua
+index 5764992..b572d74 100644
+--- a/lua/modules/InManga.lua
++++ b/lua/modules/InManga.lua
+@@ -3,7 +3,7 @@ function getinfo()
+ 	if HTTP.GET(MANGAINFO.URL) then
+ 		local x=CreateTXQuery(HTTP.Document)
+ 		MANGAINFO.Title=x.XPathString('//h1')
+-		MANGAINFO.CoverLink=MaybeFillHost(MODULE.RootURL, x.XPathString('//meta[@property="og:image"]/@content'))
++		MANGAINFO.CoverLink=x.XPathString('(//img[starts-with(@src,"https://cdn1.intomanga.com/i/m/")])[1]/@src')
+ 		MANGAINFO.Summary=x.XPathString('//div/div[h1]/following-sibling::div[@class="panel-body"]')
+ 		local id = x.XPathString('//input[@id="Identification"]/@value')
+ 		local base = x.XPathString('//script[contains(., "var chapterUrl")]')
+diff --git a/lua/modules/WebToons.lua b/lua/modules/WebToons.lua
+index a7e300e..bb450a0 100644
+--- a/lua/modules/WebToons.lua
++++ b/lua/modules/WebToons.lua
+@@ -103,7 +103,7 @@ function GetInfo()
+ 
+ 	if not HTTP.GET('https://m.webtoons.com/api/v1/' .. s .. '/' .. URL:match('title_no=(%d+)') .. '/episodes?pageSize=99999') then return net_problem end
+ 
+-	for v in CreateTXQuery(require 'fmd.crypto'.HTMLEncode(HTTP.Document.ToString())).XPath('json(*).result.episodeList()').Get() do
++	for v in CreateTXQuery(HTTP.Document).XPath('json(*).result.episodeList()').Get() do
+ 		MANGAINFO.ChapterLinks.Add(v.GetProperty('viewerLink').ToString())
+ 		MANGAINFO.ChapterNames.Add(v.GetProperty('episodeTitle').ToString())
+ 	end
+@@ -114,7 +114,6 @@ end
+ -- Get the page count for the current chapter.
+ function GetPageNumber()
+ 	local u = MaybeFillHost(MODULE.RootURL, URL)
+-	HTTP.Cookies.Values['ageGatePass'] = 'True'
+ 
+ 	if not HTTP.GET(u) then return false end
+ 
+@@ -160,4 +159,4 @@ function Init()
+ 	local items = table.concat(GetLangList(), '\r\n')
+ 	m.AddOptionComboBox('lualang', lang.lang, items, 3)
+ 	m.AddOptionCheckBox('luaincludechallengetitles', lang.includechallengetitles, false)
+-end
+\ No newline at end of file
++end
+diff --git a/mangadownloader/forms/frmMain.pas b/mangadownloader/forms/frmMain.pas
+index f75fd8e..be08b9f 100644
+--- a/mangadownloader/forms/frmMain.pas
++++ b/mangadownloader/forms/frmMain.pas
+@@ -1029,7 +1029,8 @@ uses
+   frmImportFavorites, frmShutdownCounter, frmSelectDirectory,
+   frmWebsiteSettings, WebsiteModules, uUpdateThread, FMDVars, RegExpr, sqlite3dyn, Clipbrd,
+   ssl_openssl3_lib, LazFileUtils, LazUTF8, webp, DBUpdater, pcre2, pcre2lib, dynlibs,
+-  LuaWebsiteModules, LuaBase, uBackupSettings, frmCustomMessageDlg, BrotliDec, ZstdDec;
++  LuaWebsiteModules, LuaBase, uBackupSettings, frmCustomMessageDlg, BrotliDec, ZstdDec,
++  uYomiraApi;
+ 
+ var
+   // thread for open db
+@@ -1443,6 +1444,8 @@ end;
+ 
+ procedure TMainForm.CloseNow;
+ begin
++  StopYomiraApi;
++
+   if OptionDeleteCompletedTasksOnClose then
+     miDownloadDeleteCompletedClick(nil);
+ 
+@@ -2081,6 +2084,7 @@ begin
+     FavoriteManager.CheckForNewChapter;
+   end;
+   DLManager.CheckAndActiveTaskAtStartup;
++  StartYomiraApi;
+ 
+   DoBackupToday;
+ 

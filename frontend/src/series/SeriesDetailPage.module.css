@@ -1,0 +1,570 @@
+.page {
+  display: grid;
+  gap: 1.5rem;
+  min-width: 0;
+}
+
+.pageHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.pageHeader h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.secondaryButton {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  background: var(--surface-hover);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.secondaryButton:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.secondaryButton:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.statusMessage {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.detailCard {
+  display: grid;
+  grid-template-columns: minmax(12rem, 20rem) minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(1.25rem, 4vw, 2.5rem);
+  min-width: 0;
+  padding: clamp(1rem, 3vw, 2rem);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  background: var(--surface);
+}
+
+.cover {
+  max-width: 20rem;
+  border-radius: 0.5rem;
+}
+
+.detailContent {
+  display: grid;
+  gap: 1.5rem;
+  min-width: 0;
+}
+
+.provenance {
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.provenance h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.1rem;
+}
+
+.description h2 {
+  margin: 0 0 0.5rem;
+  color: var(--text);
+  font-size: 1.1rem;
+}
+
+.description p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.metadata {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 0;
+}
+
+.metadataItem {
+  display: grid;
+  align-content: start;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  background: var(--surface-soft);
+}
+
+.metadataItem dt {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.metadataItem dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.metadataItem time {
+  font-variant-numeric: tabular-nums;
+}
+
+.synopsis {
+  grid-column: 1 / -1;
+}
+
+.synopsis dd {
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.authorityBadge {
+  width: fit-content;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: #b5c0ca;
+  font-size: 0.75rem;
+}
+
+.conflictMessage {
+  margin: 0;
+  color: #f0c977;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.sourceValues {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sourceValues li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+}
+
+.sourceButton,
+.clearOverrideButton {
+  min-height: 2rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.4rem;
+  background: var(--surface-hover);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.sourceButton:hover,
+.clearOverrideButton:hover {
+  border-color: var(--accent);
+}
+
+.sourceButton:disabled,
+.clearOverrideButton:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.clearOverrideButton {
+  justify-self: start;
+}
+
+.metadataError {
+  padding: 0.75rem;
+  border: 1px solid #754044;
+  border-radius: 0.5rem;
+  background: #211619;
+}
+
+.metadataError p {
+  margin: 0;
+  color: #ffd5d8;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.metadataError p + p {
+  margin-top: 0.4rem;
+}
+
+.errorState {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid #754044;
+  border-radius: 0.75rem;
+  background: #211619;
+}
+
+.errorState h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.25rem;
+  line-height: 1.35;
+}
+
+.errorState p {
+  margin: 0.5rem 0 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.errorDetails {
+  font-size: 0.9rem;
+}
+
+.errorDetails code {
+  color: #ffd5d8;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.chapters {
+  display: grid;
+  align-content: start;
+  gap: 0.9rem;
+  min-width: 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.chaptersHeader h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.25rem;
+  line-height: 1.35;
+}
+
+.chapterCount {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.chapterList {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chapterItem {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 16rem);
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.chapterLink {
+  display: flex;
+  min-height: 3.25rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.55rem;
+  background: var(--surface-soft);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.chapterLink:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.chapterMark {
+  flex: 0 0 auto;
+  width: 0.85rem;
+  height: 1.1rem;
+  border: 1px solid var(--text-muted);
+  border-radius: 0.15rem;
+}
+
+.chapterLabel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chapterPageCount {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+.chapterArrow {
+  color: var(--text-muted);
+  font-size: 1.3rem;
+}
+
+.emptyChapters {
+  display: grid;
+  justify-items: start;
+  gap: 0.85rem;
+  padding: 1.25rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: 0.6rem;
+  background: var(--surface-soft);
+}
+
+.emptyChapters p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.chapterPagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.chapterPagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+:where(.secondaryButton, .chapterLink):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 639px) {
+  .pageHeader {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .detailCard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cover {
+    justify-self: center;
+    max-width: 16rem;
+  }
+
+  .metadata {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chapterLink {
+    flex-wrap: wrap;
+  }
+
+  .chapterItem {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chapterPageCount {
+    margin-left: auto;
+  }
+
+  .chapterPagination {
+    gap: 0.5rem;
+  }
+
+  .errorState {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .actions {
+    justify-content: flex-start;
+  }
+}
+
+.chapterMain {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.cbrSelectionPanel {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.cbrExport {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.6rem;
+  background: var(--surface-soft);
+}
+
+.cbrExport h3 {
+  margin: 0 0 0.35rem;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.cbrExport > button {
+  justify-self: start;
+}
+
+.cbrResult,
+.cbrUsbAction {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.cbrResult p,
+.cbrError p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.cbrError {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid #754044;
+  border-radius: 0.5rem;
+  background: #211619;
+}
+
+.cbrError p {
+  color: #ffd5d8;
+}
+
+.cbrError code {
+  overflow-wrap: anywhere;
+}
+
+.cbrTargetField {
+  display: grid;
+  gap: 0.4rem;
+  max-width: 32rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.cbrTargetField select {
+  min-height: 2.75rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.45rem;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.cbrUsbAction > button {
+  justify-self: start;
+}
+
+:where(.cbrTargetField select):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.exportFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.exportFields > button {
+  justify-self: start;
+  align-self: end;
+}
+
+.exportRange {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+  gap: 0.75rem;
+}
+
+.cbrSelectionPanel > summary {
+  padding: 0.85rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.6rem;
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.cbrExport progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.cbrExport > p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.exportButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}

@@ -1,0 +1,22 @@
+# ADR-0106 — Portadas locales y metadatos efectivos de mangas
+
+- Estado: ACCEPTED para el alcance solicitado por el usuario: «hay que poner portadas y metadatos en los mangas».
+- Fecha: 2026-09-30.
+- Autoridad: SPEC §§24 y 34; ADR-0040, ADR-0041, ADR-0043, ADR-0044, ADR-0087, ADR-0089 y ADR-0104.
+- No modifica la secuencia del plan maestro ni declara nuevos quality gates aprobados.
+
+## Decisión
+
+1. Los conectores extraen los datos públicos de la ficha: portada, autor, sinopsis, géneros, estado e idioma. Un valor ausente permanece ausente. Se normalizan espacios y duplicados; no se inventa información. Las URL de portada deben ser HTTPS, estáticas y sin query, credenciales, fragmentos ni traversal.
+2. Se añaden únicamente `https://img.novelcool.com` y `https://img2mw.xyz` como orígenes de portada. El registro distingue `cover_only_origins`: quedan excluidos de las peticiones y redirects del motor de páginas. Los validadores de páginas conservan sus hosts anteriores. La sesión HTTP sigue siendo GET, sin cookies, con orígenes exactos, redirects validados, respuesta identity y límite existente de 4 MiB. La portada de ManhwaWeb puede enviar solo el `Referer` constante `https://manhwaweb.com/`: es un origen de la misma ficha ya permitido, se limita a su raíz, no incluye path, query ni cookies y solo se habilita para solicitudes de portada estática.
+3. El core adquiere las portadas; el conector nunca escribe en disco. Se reutilizan el validador de imágenes, los límites de dimensiones/píxeles ya vigentes, el gate de almacenamiento, los retries de locks Windows y el publicador atómico sin reemplazo. Cada portada ocupa una reserva real de 4 MiB dentro del mismo presupuesto que los jobs. La reserva no se libera antes de la quiescencia, incluso ante cancelaciones repetidas.
+4. Se preservan hasta tres intentos `temp/covers/<series_uuid>/attempt-N.part`; no se sobrescriben ni se borran los intentos fallidos. Solo se reutilizan si sus bytes y hash coinciden con la respuesta actual. Un slot fijo `library/covers/<series_uuid>.cover` limita a un original por manga también si falla la indexación. Una divergencia se rechaza conservando los archivos. La extensión de almacenamiento no altera los bytes ni el formato original.
+5. Solo se indexa un Asset de tipo COVER con tamaño y SHA-256 comprobados antes y después de publicar. La asignación inicial promueve ese Asset a portada local canónica. Antes de enlazar se relee la autoridad dentro de la transacción final: debe seguir existiendo una portada remota efectiva sin conflicto y con la misma URL. Se respetan las portadas locales y todos los overrides, incluido null. Se preservan los candidatos remotos para trazabilidad.
+6. Library, Home y la ficha muestran los valores efectivos de `USER_OVERRIDE > LOCAL_CANONICAL > SOURCE_METADATA`, conservando conflictos y null explícitos. Una URL remota nunca se devuelve como `cover_asset_id`. Si el título efectivo queda vacío/null, el encabezado usa el título canónico como respaldo de presentación; la resolución de metadatos conserva el valor exacto. Las consultas de listas resuelven sus metadatos en lote, sin consultas por tarjeta.
+7. La API sirve exclusivamente miniaturas locales WebP de ThumbnailService: small/medium/large, caché vigente de 32 MiB y 64 entradas, hash como ETag, `private, no-cache` y `nosniff`. Antes de usar la caché se comprueba el original. La UI utiliza lazy loading, texto alternativo y fallback ante ausencia/error. La decodificación se serializa y respeta la admisión de recursos.
+8. La selección de capítulos refresca los metadatos remotos de asociaciones existentes y realiza una adquisición inicial de portada. Un fallo de portada se registra con código, etapa, causa saneada y trace_id, sin invalidar jobs que ya se crearon de forma durable. El botón «Actualizar metadatos y portada» vuelve a consultar fichas y portada para mangas existentes; no descarga capítulos ni reemplaza ediciones locales.
+9. Los futuros CBZ pueden poblar los campos ya admitidos de ComicInfo con metadatos efectivos. No se añade una página de portada ni se reescribe un CBZ existente. Se conservan el número, orden y bytes de las páginas.
+
+## Verificación necesaria
+
+Pruebas de fichas reales/sintéticas, scopes de red y firmas, autoridad/null/conflictos, portadas inválidas y corruptas, publicación/indexación, presupuestos y cancelación; regresión de descargas y CBZ; API offline/ETag, UI y análisis estático. El smoke visual continúa pendiente conforme a la decisión anterior del usuario.
