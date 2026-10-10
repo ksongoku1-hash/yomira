@@ -1,0 +1,42 @@
+YOMIRA - VERSION DE PRUEBA PARA WINDOWS X64
+
+1. Descarga Yomira-Windows-x64-2026.10.09.zip desde la seccion Releases:
+   https://github.com/ksongoku1-hash/yomira/releases
+2. Extrae TODO el ZIP a una carpeta donde puedas escribir, por ejemplo:
+   Documentos\Yomira. No la pongas dentro de Mangas de Yomira ni Program Files.
+3. Abre "Abrir Yomira.cmd". La primera apertura puede tardar unos segundos.
+4. Se abrira el navegador. Si no lo hace, entra en:
+   http://127.0.0.1:8000/library
+
+No necesitas instalar Python, Node.js ni FMD por separado.
+Puedes minimizar la ventana de Yomira. El motor FMD se abre en segundo plano.
+Para cerrar Yomira, vuelve a su ventana y pulsa Ctrl+C. Cerrar solo la pestana
+del navegador no detiene el servidor ni las descargas.
+
+TU BIBLIOTECA
+Los mangas se guardan en Documentos\Mangas de Yomira (tambien si Windows
+redirige Documentos a OneDrive). Los datos y el historial se guardan en:
+%LOCALAPPDATA%\Yomira\YomiraData
+El paquete no contiene mangas ni datos personales del desarrollador.
+Incluye catalogos publicos de titulos de FMD; no son una biblioteca descargada.
+
+PRIMERA PRUEBA
+Busca una obra, anadela a la biblioteca y descarga un capitulo. Comprueba que
+aparece en la ficha y que el lector muestra las paginas. Tambien puedes poner
+una carpeta con imagenes, un CBZ/ZIP o un EPUB con imagenes en Mangas de Yomira.
+Las fuentes externas pueden cambiar, bloquear conexiones o dejar de responder.
+
+PROBLEMAS
+- Extrae todo el archivo; abrir el programa dentro del ZIP no funciona.
+- Si el puerto 8000 esta ocupado, cierra la otra instancia de Yomira.
+- Para enviar un error, indica que estabas haciendo, el manga y el capitulo.
+  No publiques bases de datos, tokens, cookies ni registros completos.
+- Esta version no esta firmada digitalmente. Comprueba su procedencia y el
+  SHA256 publicado. No desactives el antivirus para ejecutarla.
+
+COMPONENTES
+FMD2 adaptado y avisos: Motor\licenses y Licencias.
+El codigo fuente correspondiente a FMD se ofrece en la misma Release.
+El codigo de Yomira esta en el repositorio. La licencia abierta del codigo
+propio sigue pendiente de eleccion; los componentes externos conservan sus
+licencias. Esta es una distribucion de prueba, no una version estable.

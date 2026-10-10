@@ -1,6 +1,6 @@
 # Componentes externos y distribución
 
-La primera copia de Yomira se prepara para uso privado. No se ha elegido todavía una licencia pública para su código propio. Los archivos externos no adquieren otra licencia por estar en este repositorio.
+Yomira se publica como versión de prueba para uso local. No se ha elegido todavía una licencia abierta para su código propio. Los archivos externos no adquieren otra licencia por estar en este repositorio.
 
 ## FMD2
 
@@ -12,11 +12,13 @@ Antes de distribuir un motor compilado, acompáñalo con su licencia, los avisos
 
 ## Dependencias Python y JavaScript
 
-Las versiones se fijan en `backend/requirements.lock`, `backend/requirements-package.lock` y `frontend/package-lock.json`. Los metadatos de licencias declaradas están inventariados en [third_party/dependency-licenses.json](third_party/dependency-licenses.json): 39 dependencias Python y 227 entradas JavaScript, incluidas dependencias de desarrollo y variantes opcionales de plataforma. Faltan los metadatos de seis herramientas de empaquetado Python en el entorno revisado; están identificadas en el inventario. Esos metadatos no sustituyen las licencias ni constituyen una revisión completa de redistribución. Un paquete público debe incorporar los avisos exigidos por sus componentes.
+Las versiones se fijan en `backend/requirements.lock`, `backend/requirements-package.lock` y `frontend/package-lock.json`. Los metadatos de licencias declaradas están inventariados en [third_party/dependency-licenses.json](third_party/dependency-licenses.json): 39 dependencias Python y 227 entradas JavaScript, incluidas dependencias de desarrollo y variantes opcionales de plataforma. Se completaron los metadatos de las seis herramientas de empaquetado que faltaban en la primera copia. Esos metadatos no sustituyen las licencias ni constituyen una revisión jurídica de redistribución.
+
+El ZIP de prueba incorpora los textos de licencia y metadatos instalados de Python y las dependencias, además de los avisos de FMD en `Motor/licenses`. La Release ofrece un archivo de código fuente de FMD con los cambios aplicados y los paquetes Pascal usados por la compilación de referencia. No incluye herramientas de Lazarus ni certifica una nueva compilación desde cero.
 
 ## Imágenes de marca
 
-Los recursos de `frontend/public/assets/brand` forman parte del diseño local de Yomira. Su origen y los derechos para una distribución pública aún deben documentarse; su presencia en esta copia privada no certifica derechos de terceros ni convierte las imágenes en dominio público.
+Los recursos de `frontend/public/assets/brand` forman parte del diseño de Yomira. No se ofrecen bajo una licencia independiente ni como recursos de dominio público. Las atribuciones y una licencia abierta de marca siguen pendientes; no se certifican derechos sobre personajes u obras de terceros.
 
 ## Mangas y datos personales
 

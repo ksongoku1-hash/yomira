@@ -1,6 +1,8 @@
 # Motor FMD2 adaptado para Yomira
 
-El ejecutable usado por Yomira incorpora una API local autenticada y correcciones de adquisición que no existen en un FMD2 oficial sin modificar. `upstream.json` fija el repositorio, la revisión y los hashes de referencia. `yomira.patch` conserva los cambios de archivos existentes; `baseunits/uYomiraApi.pas` conserva la unidad nueva.
+El ejecutable usado por Yomira incorpora una API local autenticada y correcciones de adquisición que no existen en un FMD2 oficial sin modificar. `upstream.json` fija el repositorio, la revisión y los hashes de referencia. `yomira.patch` conserva los cambios de archivos existentes; `baseunits/uYomiraApi.pas` conserva la unidad nueva. El paquete portable de prueba y un ZIP del código correspondiente están en [Releases](https://github.com/ksongoku1-hash/yomira/releases).
+
+El motor del paquete incorpora carga de módulos Lua mediante rutas Unicode. Se comprobó su arranque desde carpetas con espacios, `ñ` y caracteres japoneses. El cargador conserva el manejo de errores y admite BOM UTF-8 y primera línea de intérprete.
 
 ## Recuperar el código fuente
 
@@ -30,4 +32,4 @@ En un directorio de motor nuevo puedes crear `userdata/settings.json` con:
 
 Si ese archivo ya existe, cambia únicamente `general.MinimizeOnStart` a `true` con FMD cerrado. Es la opción propia de FMD para iniciar sin ventana. Yomira configura el token aleatorio y el puerto de su API al lanzar el proceso; no guardes ni publiques ese token.
 
-Finalmente, usa `scripts/start-yomira.ps1 -FmdExecutable` para indicar el ejecutable. Esta preparación conserva el código y las instrucciones; no incluye un motor listo para descargar ni certifica una compilación en un Windows sin herramientas previas.
+Finalmente, usa `scripts/start-yomira.ps1 -FmdExecutable` para indicar el ejecutable. El ZIP portable ya contiene el motor compilado y un lanzador; no necesita instalar Lazarus, Python ni Node para probarlo. La compilación desde fuentes en un Windows sin herramientas previas aún no está certificada.

@@ -2,6 +2,16 @@
 
 Yomira es una aplicación local para Windows que organiza, descarga y permite leer mangas desde una interfaz web. Los archivos y la biblioteca se guardan en el equipo del usuario.
 
+## Descargar y probar
+
+La versión de prueba para Windows x64 se publica en [Releases](https://github.com/ksongoku1-hash/yomira/releases). Descarga **Yomira-Windows-x64-2026.10.09.zip**, extrae todo su contenido a una carpeta donde puedas escribir y abre **Abrir Yomira.cmd**. No necesitas instalar Python, Node.js ni FMD por separado.
+
+El navegador se abre cuando el servidor está listo. Puedes minimizar la ventana de Yomira; vuelve a ella y pulsa **Ctrl+C** para cerrar la aplicación. Cerrar la pestaña del navegador deja las descargas en marcha. Si el navegador no se abre, entra en http://127.0.0.1:8000/library.
+
+La descarga incluye una biblioteca vacía, FMD adaptado en segundo plano, catálogos públicos de títulos, licencias y un manifiesto de archivos. La misma Release ofrece el código fuente correspondiente a FMD y las sumas SHA-256. Consulta [las instrucciones completas](installer/LEEME.txt).
+
+Esta versión es una prueba local para Windows x64 y no está firmada digitalmente. No se ha certificado en un segundo ordenador. No incluyas mangas, bases de datos, tokens ni cookies cuando comuniques un error; indica la acción, la fuente, la obra y el capítulo afectados.
+
 ## Funciones actuales
 
 - Biblioteca con portadas, metadatos y progreso de lectura.
@@ -64,4 +74,4 @@ Subir el repositorio a GitHub no aloja el servidor ni hace accesibles los mangas
 
 ## Licencias
 
-La licencia pública del código propio de Yomira está pendiente de decisión. Esta primera copia se prepara para un repositorio privado. FMD2 y sus cambios conservan la licencia GPL v2 de su origen; se incluyen las atribuciones y el parche en third_party/fmd2. Consulta [las notas de licencias](THIRD_PARTY_NOTICES.md) antes de distribuir ejecutables o hacer pública una versión.
+El repositorio y la descarga de prueba son públicos. La licencia abierta del código propio de Yomira sigue pendiente de decisión; publicar el código no cambia las licencias de los componentes externos. FMD2 y sus cambios conservan la licencia GPL v2 de su origen; se incluyen las atribuciones y el parche en third_party/fmd2. Consulta [las notas de licencias](THIRD_PARTY_NOTICES.md).

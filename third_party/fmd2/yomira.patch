@@ -81,6 +81,111 @@ index 50d33a9..a319fe6 100644
    AHTTP.OnAfterSetHTTPCookies := @MergeHTTPCookiesFromSetting;
  
    if not Settings.Enabled then exit;
+diff --git a/baseunits/lua/LuaBase.pas b/baseunits/lua/LuaBase.pas
+index 8a87c25..95498cb 100644
+--- a/baseunits/lua/LuaBase.pas
++++ b/baseunits/lua/LuaBase.pas
+@@ -15,6 +15,7 @@ function LuaDoFile(const AFileName: String; const AFuncName: String = ''): Plua_
+ function LuaNewBaseState: Plua_State;
+ procedure LuaCallFunction(const L: Plua_State; const AFuncName: String);
+ function LuaGetReturnString(const ReturnCode: Integer): String;
++function LuaLoadFileUTF8(const L: Plua_State; const AFileName: String): Integer;
+ 
+ function LuaDumpFileToStream(const AFileName: String): TMemoryStream; overload;
+ function LuaDumpFileToStream(const L: Plua_State; const AFileName: String): TMemoryStream; overload;
+@@ -31,6 +32,7 @@ var
+ implementation
+ 
+ uses
++  LazFileUtils,
+   uBaseUnit,
+   LuaPackage, LuaClass, LuaUtils,
+   LuaCriticalSection, LuaMemoryStream,
+@@ -102,7 +104,7 @@ begin
+   try
+     luaL_openlibs(Result);
+     LuaBaseRegisterAll(Result);
+-    r := luaL_loadfile(Result, PAnsiChar(AFileName));
++    r := LuaLoadFileUTF8(Result, AFileName);
+     if r <> 0 then
+       raise Exception.Create('luaL_loadfile ' + LuaGetReturnString(r) + ': ' + luaToString(Result, -1));
+     r := lua_pcall(Result, 0, LUA_MULTRET, 0);
+@@ -192,7 +194,7 @@ begin
+   Result := nil;
+   if not FileExists(AFileName) then Exit;
+   try
+-    r := luaL_loadfile(L, PAnsiChar(AFileName));
++    r := LuaLoadFileUTF8(L, AFileName);
+     if r <> 0 then
+       raise Exception.Create('luaL_loadfile ' + LuaGetReturnString(r) + ': ' + luaToString(L, -1));
+     // disabled strip to print line info
+@@ -215,13 +217,52 @@ begin
+   Result := luaL_loadbuffer(L, AStream.Memory, AStream.Size, PAnsiChar(AName));
+ end;
+ 
++function LuaLoadFileUTF8(const L: Plua_State; const AFileName: String): Integer;
++var
++  Source: THandleStream;
++  SourceHandle: THandle;
++  Buffer: RawByteString;
++  Offset: SizeInt;
++  ChunkName: String;
++begin
++  // Lua's Windows fopen cannot read UTF-8 paths; Lazarus uses the Unicode API.
++  try
++    SourceHandle := FileOpenUTF8(AFileName, fmOpenRead or fmShareDenyWrite);
++    if SourceHandle = THandle(-1) then RaiseLastOSError;
++    try
++      Source := THandleStream.Create(SourceHandle);
++      try
++        SetLength(Buffer, Source.Size);
++        if Length(Buffer) > 0 then Source.ReadBuffer(Buffer[1], Length(Buffer));
++      finally
++        Source.Free;
++      end;
++    finally
++      FileClose(SourceHandle);
++    end;
++  except
++    on E: Exception do
++    begin
++      lua_pushstring(L, PAnsiChar('cannot open ' + AFileName + ': ' + E.Message));
++      Exit(LUA_ERRFILE);
++    end;
++  end;
++  Offset := 1;
++  if Copy(Buffer, 1, 3) = #$EF#$BB#$BF then Offset := 4;
++  if (Offset <= Length(Buffer)) and (Buffer[Offset] = '#') then
++    while (Offset <= Length(Buffer)) and (Buffer[Offset] <> #10) do Inc(Offset);
++  ChunkName := '@' + AFileName;
++  Result := luaL_loadbuffer(L, PAnsiChar(Buffer) + Offset - 1,
++    Length(Buffer) - Offset + 1, PAnsiChar(ChunkName));
++end;
++
+ function LuaLoadFromStreamOrFile(const L: Plua_State;
+   const AStream: TMemoryStream; const AFileName: String): Integer;
+ begin
+   if (not AlwaysLoadLuaFromFile) and (AStream <> nil) then
+     Result := luaL_loadbuffer(L, AStream.Memory, AStream.Size, PAnsiChar(AFileName))
+   else
+-    Result := luaL_loadfile(L, PAnsiChar(AFileName));
++    Result := LuaLoadFileUTF8(L, AFileName);
+ end;
+ 
+ procedure LuaExecute(const L: Plua_State; const AStream: TMemoryStream;
+diff --git a/baseunits/lua/LuaWebsiteModules.pas b/baseunits/lua/LuaWebsiteModules.pas
+index c5183c0..6241d96 100644
+--- a/baseunits/lua/LuaWebsiteModules.pas
++++ b/baseunits/lua/LuaWebsiteModules.pas
+@@ -478,7 +478,7 @@ begin
+   Result := False;
+   L := LuaNewBaseState;
+   try
+-    i := luaL_loadfile(L, PAnsiChar(AFileName));
++    i := LuaLoadFileUTF8(L, AFileName);
+     if i <> 0 then
+       raise Exception.Create('luaL_loadfile ' + LuaGetReturnString(i) + ': ' + luaToString(L, -1));
+     i := lua_pcall(L, 0, 0, 0);
 diff --git a/baseunits/uDownloadsManager.pas b/baseunits/uDownloadsManager.pas
 index 51f5204..d15df12 100644
 --- a/baseunits/uDownloadsManager.pas

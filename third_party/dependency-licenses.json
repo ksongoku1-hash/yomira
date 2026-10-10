@@ -9,8 +9,7 @@
     {
       "name": "altgraph",
       "version": "0.17.5",
-      "declared_license": null,
-      "metadata_available": false
+      "declared_license": "MIT"
     },
     {
       "name": "annotated-doc",
@@ -105,8 +104,7 @@
     {
       "name": "pefile",
       "version": "2024.8.26",
-      "declared_license": null,
-      "metadata_available": false
+      "declared_license": "MIT"
     },
     {
       "name": "pillow",
@@ -141,14 +139,12 @@
     {
       "name": "pyinstaller",
       "version": "6.22.3",
-      "declared_license": null,
-      "metadata_available": false
+      "declared_license": "GPLv2-or-later with a special exception which allows to use PyInstaller to build and distribute non-free programs (including commercial ones)"
     },
     {
       "name": "pyinstaller-hooks-contrib",
       "version": "2026.7",
-      "declared_license": null,
-      "metadata_available": false
+      "declared_license": "OSI Approved :: Apache Software License / OSI Approved :: GNU General Public License v2 (GPLv2)"
     },
     {
       "name": "pyright",
@@ -163,8 +159,7 @@
     {
       "name": "pywin32-ctypes",
       "version": "0.2.3",
-      "declared_license": null,
-      "metadata_available": false
+      "declared_license": "BSD-3-Clause"
     },
     {
       "name": "ruff",
@@ -174,8 +169,7 @@
     {
       "name": "setuptools",
       "version": "84.0.0",
-      "declared_license": null,
-      "metadata_available": false
+      "declared_license": "MIT"
     },
     {
       "name": "SQLAlchemy",
@@ -1341,14 +1335,7 @@
     }
   ],
   "missing_license_metadata": {
-    "python": [
-      "altgraph",
-      "pefile",
-      "pyinstaller",
-      "pyinstaller-hooks-contrib",
-      "pywin32-ctypes",
-      "setuptools"
-    ],
+    "python": [],
     "javascript": []
   }
 }
