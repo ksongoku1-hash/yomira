@@ -41,13 +41,16 @@ export function UsbExportsPage() {
       page.data.some((job) => job.status === "EXPORTING" || job.status === "QUEUED")) ? 2_000 : false,
     retry: false,
   });
+  const manualRefresh = useMutation({
+    mutationFn: () => Promise.all([historyQuery.refetch(), targetsQuery.refetch()]),
+  });
   const jobs = historyQuery.data?.pages.flatMap((page) => page.data) ?? [];
   const total = historyQuery.data?.pages[historyQuery.data.pages.length - 1]?.meta.total ?? 0;
   const historyError = historyQuery.error instanceof ApiError ? historyQuery.error : null;
   const targetsError = targetsQuery.error instanceof ApiError ? targetsQuery.error : null;
 
   return (
-    <section aria-busy={historyQuery.isFetching || targetsQuery.isFetching} className={styles.page}>
+    <section aria-busy={historyQuery.isPending || targetsQuery.isPending || manualRefresh.isPending || historyQuery.isFetchingNextPage} className={styles.page}>
       <header className={styles.pageHeader}>
         <div>
           <h1>Exportaciones USB</h1>
@@ -90,11 +93,8 @@ export function UsbExportsPage() {
           </div>
           <button
             className={styles.secondaryButton}
-            disabled={historyQuery.isFetching || targetsQuery.isFetching}
-            onClick={() => {
-              void historyQuery.refetch();
-              void targetsQuery.refetch();
-            }}
+            disabled={historyQuery.isPending || targetsQuery.isPending || manualRefresh.isPending}
+            onClick={() => manualRefresh.mutate()}
             type="button"
           >
             Actualizar datos

@@ -1,4 +1,4 @@
-# Yomira 0.1.9
+# Yomira 0.1.10
 
 Yomira es una aplicación local para Windows que organiza, descarga y permite leer mangas desde una interfaz web. Los archivos y la biblioteca se guardan en el equipo del usuario.
 
@@ -6,13 +6,13 @@ Yomira es una aplicación local para Windows que organiza, descarga y permite le
 
 **Para usar Yomira en Windows 10/11 de 64 bits:**
 
-1. [Descarga Yomira-Setup-0.1.9.exe](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.9/Yomira-Setup-0.1.9.exe).
+1. [Descarga Yomira-Setup-0.1.10.exe](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.10/Yomira-Setup-0.1.10.exe).
 2. Abre el archivo y pulsa **Instalar**. El instalador está en español y no necesita permisos de administrador.
 3. Pulsa **Finalizar** con **Abrir Yomira** marcado. La página se abre sola en tu navegador.
 
 Después, abre el acceso directo **Yomira** del escritorio o del menú Inicio. **No necesitas comandos, pip, Python, Node.js ni instalar FMD por separado.** Cada persona instala Yomira en su propio PC y tiene su propia biblioteca.
 
-También hay una [versión portátil](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.9/Yomira-Windows-x64-0.1.9.zip): extrae todo el ZIP y abre **Yomira.exe**. No ejecutes el programa dentro del ZIP.
+También hay una [versión portátil](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.10/Yomira-Windows-x64-0.1.10.zip): extrae todo el ZIP y abre **Yomira.exe**. No ejecutes el programa dentro del ZIP.
 
 El navegador se abre cuando el servidor está listo. Puedes minimizar la ventana de Yomira; vuelve a ella y pulsa **Ctrl+C** para cerrar la aplicación. Cerrar la pestaña del navegador deja las descargas en marcha. Si el navegador no se abre, entra en http://127.0.0.1:8000/library.
 

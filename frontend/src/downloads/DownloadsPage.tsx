@@ -316,10 +316,10 @@ function DownloadGroups() {
       {pauseMutation.isError ? <JobActionError error={pauseMutation.error} title="No se pudo cambiar la pausa del grupo" /> : null}
       {total > PAGE_SIZE || offset > 0 ? (
         <nav aria-label="Paginación de grupos" className={styles.pagination}>
-          <button className={styles.secondaryButton} type="button" disabled={offset === 0 || groupsQuery.isFetching}
+          <button className={styles.secondaryButton} type="button" disabled={offset === 0 || groupsQuery.isPending}
             onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Grupos anteriores</button>
           <span>Página {Math.floor(offset / PAGE_SIZE) + 1} de {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
-          <button className={styles.secondaryButton} type="button" disabled={offset + PAGE_SIZE >= total || groupsQuery.isFetching}
+          <button className={styles.secondaryButton} type="button" disabled={offset + PAGE_SIZE >= total || groupsQuery.isPending}
             onClick={() => setOffset(offset + PAGE_SIZE)}>Grupos siguientes</button>
         </nav>
       ) : null}
@@ -335,6 +335,7 @@ export function DownloadsPage() {
     queryKey: ["download-jobs", PAGE_SIZE, offset, archivedView],
     queryFn: () => getDownloadJobsPage({ limit: PAGE_SIZE, offset, archived: archivedView }),
   });
+  const manualRefresh = useMutation({ mutationFn: () => jobsQuery.refetch() });
   const total = jobsQuery.data?.meta.total ?? 0;
   const states = jobsQuery.data?.meta.states;
   const queued = states?.QUEUED ?? 0;
@@ -386,7 +387,7 @@ export function DownloadsPage() {
         <div className={styles.headerActions}>
           <button
             className={styles.secondaryButton}
-            disabled={jobsQuery.isFetching}
+            disabled={jobsQuery.isPending}
             onClick={() => {
               setOffset(0);
               setArchivedView((current) => !current);
@@ -397,11 +398,11 @@ export function DownloadsPage() {
           </button>
           <button
             className={styles.secondaryButton}
-            disabled={jobsQuery.isFetching}
-            onClick={() => void jobsQuery.refetch()}
+            disabled={jobsQuery.isPending || manualRefresh.isPending}
+            onClick={() => manualRefresh.mutate()}
             type="button"
           >
-            {jobsQuery.isFetching ? "Actualizando…" : "Actualizar"}
+            {manualRefresh.isPending ? "Actualizando…" : "Actualizar"}
           </button>
         </div>
       </header>
@@ -503,7 +504,7 @@ export function DownloadsPage() {
             <nav aria-label="Paginación de trabajos" className={styles.pagination}>
               <button
                 className={styles.secondaryButton}
-                disabled={offset === 0 || jobsQuery.isFetching}
+                disabled={offset === 0 || jobsQuery.isPending}
                 onClick={() => setOffset((current) => Math.max(0, current - PAGE_SIZE))}
                 type="button"
               >
@@ -514,7 +515,7 @@ export function DownloadsPage() {
               </span>
               <button
                 className={styles.secondaryButton}
-                disabled={offset + PAGE_SIZE >= total || jobsQuery.isFetching}
+                disabled={offset + PAGE_SIZE >= total || jobsQuery.isPending}
                 onClick={() => setOffset((current) => current + PAGE_SIZE)}
                 type="button"
               >

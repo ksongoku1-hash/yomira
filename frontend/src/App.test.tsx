@@ -172,6 +172,65 @@ afterEach(() => {
 });
 
 describe("App", () => {
+  it.each([
+    ["/library", "Actualizar biblioteca", "/api/v1/library?"],
+    [`/series/${syntheticSeriesId(105)}`, "Actualizar metadatos y portada", `/api/v1/series/${syntheticSeriesId(105)}`],
+    ["/downloads", "Actualizar", "/api/v1/download-jobs?"],
+  ])("keeps controls and content stable during automatic refresh on %s", async (route, buttonName, endpoint) => {
+    vi.useFakeTimers();
+    const seriesId = syntheticSeriesId(105);
+    let holdRefresh = false;
+    let resolveRefresh: ((response: Response) => void) | undefined;
+    const response = (path: string, updated = false) => {
+      const title = updated ? "Título actualizado" : "Título inicial";
+      if (path.startsWith("/api/v1/library?")) return libraryResponse([series(seriesId, title)]);
+      if (path === `/api/v1/series/${seriesId}`) return mockResponse({data: series(seriesId, title), meta: {}});
+      if (path === "/api/v1/library/local-imports") return mockResponse({
+        folder: "C:/Mangas", scanning: holdRefresh, imported_chapters: 3, pending_metadata: 0, errors: [],
+      });
+      if (path.startsWith("/api/v1/download-jobs?")) return mockResponse({
+        data: [{job_id: syntheticSeriesId(101), chapter_source_id: syntheticSeriesId(102),
+          series_id: seriesId, chapter_id: syntheticSeriesId(104), status: "DOWNLOADING", priority: "NORMAL",
+          series_title: title, chapter_label: "Capítulo 1", created_at: "2026-10-07T10:00:00Z",
+          updated_at: "2026-10-07T10:01:00Z", cancel_requested_at: null}],
+        meta: {limit: 50, offset: 0, total: 1},
+      });
+      return mockResponse({data: [], meta: {limit: 100, offset: 0, total: 0}});
+    };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      return holdRefresh && path.startsWith(endpoint)
+        ? new Promise<Response>((resolve) => { resolveRefresh = resolve; })
+        : Promise.resolve(response(path));
+    }));
+    window.history.replaceState({}, "", route);
+    const view = render(<App />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    const button = screen.getByRole("button", {name: buttonName});
+    const titleNode = screen.getByText("Título inicial", {selector: route === "/library" ? "a" : "h1, h3"});
+    holdRefresh = true;
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_010); });
+    expect(resolveRefresh).toBeDefined();
+    expect(button).toBeEnabled();
+    expect(button).toHaveTextContent(buttonName);
+    expect(titleNode).toBeInTheDocument();
+    if (route === "/library") expect(screen.queryByText(/Comprobando archivos/)).not.toBeInTheDocument();
+    resolveRefresh!(response(endpoint, true));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(screen.getByText("Título actualizado", {selector: route === "/library" ? "a" : "h1, h3"})).toBeInTheDocument();
+    if (route === "/downloads") {
+      fireEvent.click(button);
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(button).toBeDisabled();
+      expect(button).toHaveTextContent("Actualizando…");
+      resolveRefresh!(response(endpoint, true));
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(button).toBeEnabled();
+      expect(button).toHaveTextContent("Actualizar");
+    }
+    view.unmount();
+  });
+
   it("updates completed downloads automatically without pressing refresh", async () => {
     vi.useFakeTimers();
     let completed = false;

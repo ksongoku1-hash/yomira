@@ -54,9 +54,13 @@ afterEach(() => {
 
 describe("SearchPage", () => {
   it("selects only missing chapters in numeric order for the linked edition", async () => {
+    let holdAvailability = false;
+    let resolveAvailability: ((response: Response) => void) | undefined;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
-      if (path.endsWith("/availability")) return Promise.resolve(mockResponse({ data: {
+      if (path.endsWith("/availability")) return holdAvailability
+        ? new Promise<Response>((resolve) => { resolveAvailability = resolve; })
+        : Promise.resolve(mockResponse({ data: {
         linked: true, ready_remote_ids: ["chapter-1"], ready_labels: [],
         busy_remote_ids: ["chapter-2"],
       } }));
@@ -73,7 +77,7 @@ describe("SearchPage", () => {
         meta: { connector_id: "yomira.mock", query: "fixture" },
       }));
     }));
-    renderSearchPage({ initialEntries: ["/search?q=fixture"] });
+    const {queryClient} = renderSearchPage({ initialEntries: ["/search?q=fixture"] });
     fireEvent.click(await screen.findByRole("button", { name: /Ver capítulos de Fixture/ }));
     await screen.findByRole("checkbox", { name: "Capítulo 1" });
     const pending = await screen.findByRole("button", { name: /Seleccionar pendientes/ });
@@ -107,6 +111,21 @@ describe("SearchPage", () => {
     expect(screen.getAllByRole("checkbox")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", {name: "Invertir selección visible"}));
     expect(screen.getByRole("button", {name: "Descargar (0)"})).toBeDisabled();
+    holdAvailability = true;
+    const checking = queryClient.invalidateQueries({queryKey: ["chapter-availability"]});
+    await waitFor(() => expect(resolveAvailability).toBeDefined());
+    const checkButton = screen.getByRole("button", {name: "Comprobar descargados y faltantes"});
+    expect(checkButton).toBeEnabled();
+    expect(screen.getByRole("checkbox", {name: "Capítulo 3"})).toBeEnabled();
+    resolveAvailability!(mockResponse({data: {
+      linked: true, ready_remote_ids: ["chapter-1", "chapter-3"], ready_labels: [], busy_remote_ids: ["chapter-2"],
+    }}));
+    await checking;
+    await waitFor(() => expect(screen.queryByRole("checkbox", {name: "Capítulo 3"})).not.toBeInTheDocument());
+    fireEvent.click(checkButton);
+    expect(await screen.findByRole("button", {name: "Comprobando capítulos…"})).toBeDisabled();
+    resolveAvailability!(mockResponse({data: {linked: true, ready_remote_ids: [], ready_labels: [], busy_remote_ids: []}}));
+    await waitFor(() => expect(checkButton).toBeEnabled());
   });
   it.each([
     ["Capítulo 001", ["Capítulo: 1"], true, true],

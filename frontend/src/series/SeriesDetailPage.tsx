@@ -205,7 +205,7 @@ function ReadyChapters({
 
   return (
     <section
-      aria-busy={query.isFetching}
+      aria-busy={query.isPending}
       aria-labelledby="ready-chapters-title"
       className={styles.chapters}
     >
@@ -277,7 +277,7 @@ function ReadyChapters({
             <nav aria-label="Paginación de capítulos" className={styles.chapterPagination}>
               <button
                 className={styles.secondaryButton}
-                disabled={offset === 0 || query.isFetching}
+                disabled={offset === 0 || query.isPending}
                 onClick={() => setOffset(Math.max(0, offset - READER_CHAPTER_PAGE_SIZE))}
                 type="button"
               >
@@ -286,7 +286,7 @@ function ReadyChapters({
               <span aria-live="polite">Página {currentPage} de {totalPages}</span>
               <button
                 className={styles.secondaryButton}
-                disabled={offset + page.data.length >= page.meta.total || query.isFetching}
+                disabled={offset + page.data.length >= page.meta.total || query.isPending}
                 onClick={() => setOffset(offset + READER_CHAPTER_PAGE_SIZE)}
                 type="button"
               >
@@ -389,7 +389,7 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
 
   return (
     <section
-      aria-busy={query.isFetching || metadataBusy}
+      aria-busy={query.isPending || metadataBusy}
       aria-labelledby="series-title"
       className={styles.page}
     >
@@ -407,7 +407,7 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
           {series ? (
             <button
               className={styles.secondaryButton}
-              disabled={query.isFetching || metadataBusy}
+              disabled={query.isPending || metadataBusy}
               onClick={() => {
                 resetMetadataErrors();
                 refreshMetadata.mutate();
@@ -466,7 +466,7 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
               </p> : null}
               <button
                 className={styles.secondaryButton}
-                disabled={query.isFetching || metadataBusy}
+                disabled={query.isPending || metadataBusy}
                 onClick={() => {
                   resetMetadataErrors();
                   externalCandidates.mutate();
@@ -495,7 +495,7 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
                           </span>
                           <button
                             className={styles.sourceButton}
-                            disabled={query.isFetching || metadataBusy}
+                            disabled={query.isPending || metadataBusy}
                             onClick={() => {
                               resetMetadataErrors(true);
                               applyExternalMetadata.mutate(candidate.remoteId);

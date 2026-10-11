@@ -174,6 +174,7 @@ function SearchResultSource({
     staleTime:0, refetchOnMount:"always",
     refetchInterval:5_000, retry:false,
   });
+  const checkAvailability = useMutation({ mutationFn: () => availability.refetch() });
   const chaptersQuery = useQuery({
     queryKey: ["connector-chapters", connectorId, result.remoteId],
     queryFn: () => getConnectorChapters(connectorId, result.remoteId ?? ""),
@@ -466,9 +467,9 @@ function SearchResultSource({
                       </div>
                       <div className={styles.bulkActions}>
                         <button className={styles.secondaryButton} type="button"
-                          disabled={availability.isFetching || createJobsMutation.isPending}
-                          onClick={() => {void availability.refetch();}}>
-                          {availability.isFetching ? "Comprobando capítulos…" : "Comprobar descargados y faltantes"}
+                          disabled={availability.isPending || checkAvailability.isPending || createJobsMutation.isPending}
+                          onClick={() => checkAvailability.mutate()}>
+                          {availability.isPending || checkAvailability.isPending ? "Comprobando capítulos…" : "Comprobar descargados y faltantes"}
                         </button>
                         <button className={styles.secondaryButton} type="button"
                           disabled={!availability.isSuccess || createJobsMutation.isPending || visibleRemoteIds.length === 0}

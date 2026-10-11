@@ -33,7 +33,7 @@ def test_timeout_does_not_open_browser(monkeypatch: MonkeyPatch) -> None:
 def test_other_server_or_not_ready_is_rejected(monkeypatch: MonkeyPatch) -> None:
     for version, readiness in [
         (b'{}', b'{"status":"ready"}'),
-        (b'{"api_version":1,"app_version":"0.1.9"}', b'{"status":"not_ready"}'),
+        (b'{"api_version":1,"app_version":"0.1.10"}', b'{"status":"not_ready"}'),
         (b'not json', b'{"status":"ready"}'),
     ]:
         replies = iter([version, readiness])

@@ -104,6 +104,7 @@ export function LocalImportPanel({ compact = false }: { compact?: boolean }) {
     mutationFn: () => getLocalImportStatus(true),
     onSuccess: () => { void query.refetch(); },
   });
+  const checkFolders = useMutation({ mutationFn: () => query.refetch() });
   const open = useMutation({
     mutationFn: openLibraryFolder,
     onMutate: () => setFolderMessage("Abriendo carpeta en este equipo…"),
@@ -160,7 +161,7 @@ export function LocalImportPanel({ compact = false }: { compact?: boolean }) {
       </details> : null}
       {folderMessage ? <p role="status" aria-live="polite">{folderMessage}</p> : null}
       {compact ? <p><Link to="/settings">Gestionar todas las carpetas en Ajustes</Link></p> : null}
-      <button className={styles.textButton} type="button" disabled={query.isFetching} onClick={() => { void query.refetch(); }}>Comprobar carpetas de nuevo</button>
+      <button className={styles.textButton} type="button" disabled={query.isPending || checkFolders.isPending} onClick={() => checkFolders.mutate()}>Comprobar carpetas de nuevo</button>
       <details className={styles.folderGuide}>
         <summary>Cómo añadir mangas y cuidar tus archivos</summary>
         <p>Copia tus mangas dentro de «Para añadir», con una carpeta por manga. Yomira prepara una copia para el lector y busca su portada y metadatos; conserva tus archivos originales.</p>
@@ -171,7 +172,7 @@ export function LocalImportPanel({ compact = false }: { compact?: boolean }) {
         <p>Si moviste la carpeta principal, vuelve a colocarla en la ruta indicada y reinicia Yomira. La aplicación evita escribir en una carpeta que haya sido sustituida.</p>
         <p>Si un título coincide con varias obras, abre su ficha y elige los metadatos correctos.</p>
       </details>
-      {query.data?.scanning ? <p role="status">Comprobando archivos… {query.data.importedChapters} capítulos incorporados en esta sesión.</p> : null}
+      {query.data ? <p role="status">{query.data.importedChapters} capítulos incorporados en esta sesión.</p> : null}
       {query.data && query.data.pendingMetadata > 0 ? <p role="status">Metadatos en cola o en búsqueda: {query.data.pendingMetadata} manga(s).</p> : null}
       {query.data && query.data.metadataReview > 0 ? <p>La búsqueda terminó. {query.data.metadataReview} manga(s) necesitan revisión de metadatos; abre su ficha para elegir una coincidencia o completar la información.</p> : null}
       {query.isError ? <p role="alert">No se pudo comprobar la importación automática. <button className={styles.textButton} type="button" onClick={() => { void query.refetch(); }}>Comprobar de nuevo</button></p> : null}
@@ -218,13 +219,13 @@ function LibraryPageContent() {
   const totalPages = page === undefined ? 0 : Math.ceil(page.meta.total / page.meta.limit);
   const currentPage = page === undefined ? 0 : Math.floor(page.meta.offset / page.meta.limit) + 1;
 
-  const refresh = () => {
-    void query.refetch();
-  };
+  const manualRefresh = useMutation({ mutationFn: () => query.refetch() });
+  const refresh = () => manualRefresh.mutate();
+  const loadingPage = query.isPending || query.isPlaceholderData;
 
   return (
     <section
-      aria-busy={query.isFetching}
+      aria-busy={loadingPage || manualRefresh.isPending}
       aria-labelledby="library-title"
       className={styles.page}
     >
@@ -236,7 +237,7 @@ function LibraryPageContent() {
         </div>
         <button
           className={styles.secondaryButton}
-          disabled={query.isFetching}
+          disabled={loadingPage || manualRefresh.isPending}
           onClick={refresh}
           type="button"
         >
@@ -324,7 +325,7 @@ function LibraryPageContent() {
           <p>Las series aparecerán aquí cuando se añadan a tu biblioteca local.</p>
           <button
             className={styles.secondaryButton}
-            disabled={query.isFetching}
+            disabled={loadingPage || manualRefresh.isPending}
             onClick={refresh}
             type="button"
           >
@@ -368,7 +369,7 @@ function LibraryPageContent() {
               <button
                 aria-label="Página anterior"
                 className={styles.secondaryButton}
-                disabled={!hasPrevious || query.isFetching}
+                disabled={!hasPrevious || loadingPage}
                 onClick={() => setOffset(Math.max(0, page.meta.offset - page.meta.limit))}
                 type="button"
               >
@@ -380,7 +381,7 @@ function LibraryPageContent() {
               <button
                 aria-label="Página siguiente"
                 className={styles.secondaryButton}
-                disabled={!hasNext || query.isFetching}
+                disabled={!hasNext || loadingPage}
                 onClick={() => setOffset(page.meta.offset + page.meta.limit)}
                 type="button"
               >
