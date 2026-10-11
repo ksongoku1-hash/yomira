@@ -1,14 +1,24 @@
-# Yomira
+# Yomira 0.1.7
 
 Yomira es una aplicación local para Windows que organiza, descarga y permite leer mangas desde una interfaz web. Los archivos y la biblioteca se guardan en el equipo del usuario.
 
 ## Descargar y probar
 
-La versión de prueba para Windows x64 se publica en [Releases](https://github.com/ksongoku1-hash/yomira/releases). Descarga **Yomira-Windows-x64-2026.10.09.zip**, extrae todo su contenido a una carpeta donde puedas escribir y abre **Abrir Yomira.cmd**. No necesitas instalar Python, Node.js ni FMD por separado.
+**Para usar Yomira en Windows 10/11 de 64 bits:**
+
+1. [Descarga Yomira-Setup-0.1.7.exe](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.7/Yomira-Setup-0.1.7.exe).
+2. Abre el archivo y pulsa **Instalar**. El instalador está en español y no necesita permisos de administrador.
+3. Pulsa **Finalizar** con **Abrir Yomira** marcado. La página se abre sola en tu navegador.
+
+Después, abre el acceso directo **Yomira** del escritorio o del menú Inicio. **No necesitas comandos, pip, Python, Node.js ni instalar FMD por separado.** Cada persona instala Yomira en su propio PC y tiene su propia biblioteca.
+
+También hay una [versión portátil](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.7/Yomira-Windows-x64-0.1.7.zip): extrae todo el ZIP y abre **Yomira.exe**. No ejecutes el programa dentro del ZIP.
 
 El navegador se abre cuando el servidor está listo. Puedes minimizar la ventana de Yomira; vuelve a ella y pulsa **Ctrl+C** para cerrar la aplicación. Cerrar la pestaña del navegador deja las descargas en marcha. Si el navegador no se abre, entra en http://127.0.0.1:8000/library.
 
-La descarga incluye una biblioteca vacía, FMD adaptado en segundo plano, catálogos públicos de títulos, licencias y un manifiesto de archivos. La misma Release ofrece el código fuente correspondiente a FMD y las sumas SHA-256. Consulta [las instrucciones completas](installer/LEEME.txt).
+La descarga incluye FMD adaptado en segundo plano, catálogos públicos de títulos y licencias. La misma Release ofrece el código fuente correspondiente a FMD y las sumas SHA-256. Consulta [las instrucciones sencillas](installer/LEEME.txt).
+
+Para actualizar, cierra Yomira e instala la nueva versión. Los mangas, datos y progreso se guardan fuera de la carpeta del programa. Si usabas una versión portátil, cierra la anterior antes de abrir la instalada.
 
 Esta versión es una prueba local para Windows x64 y no está firmada digitalmente. No se ha certificado en un segundo ordenador. No incluyas mangas, bases de datos, tokens ni cookies cuando comuniques un error; indica la acción, la fuente, la obra y el capítulo afectados.
 
@@ -68,7 +78,7 @@ scripts/quality-gate.ps1 agrupa las comprobaciones del proyecto y permite especi
 
 ## Instalador
 
-Existen scripts para construir el paquete con PyInstaller y el instalador con Inno Setup, en backend/build_windows.ps1 e installer/build_installer.ps1. Necesitan las dependencias de empaquetado y las herramientas fijadas por el proyecto. El paquete actual de PyInstaller no incorpora automáticamente el motor FMD2 adaptado: debe suministrarse y configurarse por separado.
+El instalador publicado incorpora la interfaz, Python y el motor FMD2 adaptado. Para mantener o reconstruir la distribución consulta [la guía de empaquetado](docs/BUILD_RELEASE.md). Los scripts backend/build_windows.ps1 e installer/build_installer.ps1 construyen los componentes; scripts/package-release.ps1 reúne el motor verificado, las licencias, el instalador y el ZIP portátil.
 
 Subir el repositorio a GitHub no aloja el servidor ni hace accesibles los mangas por Internet.
 

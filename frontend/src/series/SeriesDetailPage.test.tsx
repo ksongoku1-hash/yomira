@@ -75,6 +75,11 @@ function renderDetail(client: QueryClient) {
   );
 }
 
+function metadataButton() {
+  if (!screen.queryByRole("button", { name: "Buscar datos externos" })) fireEvent.click(screen.getByText("Metadatos y procedencia"));
+  return screen.getByRole("button", { name: "Buscar datos externos" });
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("series metadata refresh", () => {
@@ -95,6 +100,9 @@ describe("series metadata refresh", () => {
       return Promise.resolve(response({ data: [], meta: { limit: 100, offset: 0, total: 0 } }));
     }));
     renderDetail(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    const cover = await screen.findByRole("img", { name: "Portada de Mi título local" });
+    expect(document.querySelector('div[aria-hidden="true"] > img'))
+      .toHaveAttribute("src", cover.getAttribute("src"));
     fireEvent.click(await screen.findByRole("button", { name: "Actualizar metadatos y portada" }));
     expect(await screen.findByText(/Búsqueda terminada. Quedan datos pendientes: Autor/))
       .toBeInTheDocument();
@@ -209,7 +217,7 @@ describe("series metadata refresh", () => {
     renderDetail(client);
     await screen.findByRole("heading", { level: 1, name: "Mi título local" });
     expect(fetchMock.mock.calls.some(([path]) => String(path).includes("metadata/external"))).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Buscar datos externos" }));
+    fireEvent.click(metadataButton());
     const candidates = await screen.findByRole("list", { name: "Fichas encontradas en MangaDex" });
     expect(candidates).toHaveTextContent("Naruto · 1999 · Masashi Kishimoto");
     expect(candidates).toHaveTextContent("Naruto (Official Colored) · 2012");
@@ -220,7 +228,7 @@ describe("series metadata refresh", () => {
     if (firstCandidate === undefined) throw new Error("Expected an external metadata candidate");
     fireEvent.click(within(firstCandidate).getByRole("button", { name: "Usar esta ficha" }));
     expect(await screen.findByRole("button", { name: "Actualizando ficha externa…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Buscar datos externos" })).toBeDisabled();
+    expect(metadataButton()).toBeDisabled();
     expect(screen.getByRole("button", { name: "Actualizar metadatos y portada" })).toBeDisabled();
     for (const button of screen.getAllByRole("button", { name: "Quitar corrección" })) expect(button).toBeDisabled();
     await waitFor(() => expect(finishApply).toBeDefined());
@@ -254,13 +262,13 @@ describe("series metadata refresh", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderDetail(client);
     await screen.findByRole("heading", { level: 1, name: "Mi título local" });
-    fireEvent.click(screen.getByRole("button", { name: "Buscar datos externos" }));
+    fireEvent.click(metadataButton());
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("El catálogo externo no respondió.");
     expect(alert).toHaveTextContent("SRC_NETWORK_ERROR");
     expect(alert).toHaveTextContent("trace-metadata-catalog");
     expect(screen.getByText("Autor elegido por ti")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Buscar datos externos" })).not.toBeDisabled();
+    expect(metadataButton()).not.toBeDisabled();
   });
 
   it("reports an empty catalog result without proposing or applying an arbitrary record", async () => {
@@ -277,7 +285,7 @@ describe("series metadata refresh", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderDetail(client);
     await screen.findByRole("heading", { level: 1, name: "Mi título local" });
-    fireEvent.click(screen.getByRole("button", { name: "Buscar datos externos" }));
+    fireEvent.click(metadataButton());
     expect(await screen.findByText("No se encontraron fichas en MangaDex para esta serie.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Usar esta ficha" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/metadata/external"))).toBe(false);
@@ -322,7 +330,7 @@ describe("series metadata refresh", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderDetail(client);
     await screen.findByRole("heading", { level: 1, name: "Mi título local" });
-    fireEvent.click(screen.getByRole("button", { name: "Buscar datos externos" }));
+    fireEvent.click(metadataButton());
     fireEvent.click(await screen.findByRole("button", { name: "Usar esta ficha" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("IMG_DECODE_FAILED");
@@ -356,13 +364,13 @@ describe("series metadata refresh", () => {
     }));
     renderDetail(client);
     await screen.findByRole("heading", { level: 1, name: "Mi título local" });
-    fireEvent.click(screen.getByRole("button", { name: "Buscar datos externos" }));
+    fireEvent.click(metadataButton());
     expect(await screen.findByRole("button", { name: "Buscando datos externos…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Actualizar metadatos y portada" })).toBeDisabled();
     await waitFor(() => expect(finishSearch).toBeDefined());
     fireEvent.click(screen.getByRole("link", { name: "Abrir segunda serie" }));
     await screen.findByRole("heading", { level: 1, name: "Segunda serie" });
-    expect(screen.getByRole("button", { name: "Buscar datos externos" })).not.toBeDisabled();
+    expect(metadataButton()).not.toBeDisabled();
     finishSearch?.(response({
       data: [{ remote_id: "6b1eb93e-473a-4ab3-9922-1a66d2a29a4a", title: "Naruto", year: 1999, author: null }],
       meta: { provider: "MangaDex", total: 1, limit: 10 },
@@ -441,7 +449,7 @@ describe("series metadata refresh", () => {
     expect(screen.getByText("Fantasía, Acción")).toBeInTheDocument();
     expect(screen.getByText("En publicación")).toBeInTheDocument();
     expect(screen.getByText("es")).toBeInTheDocument();
-    expect(screen.getByText(/Sinopsis guardada/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Sinopsis guardada/)).toHaveLength(2);
     const image = screen.getByRole("img", { name: "Portada de Mi título local" });
     const initialSource = image.getAttribute("src");
     expect(new URL(initialSource ?? "", "http://127.0.0.1:8000").searchParams.get("variant"))
@@ -533,7 +541,7 @@ describe("series metadata refresh", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("IMG_DECODE_FAILED");
     expect(alert).toHaveTextContent("trace-partial-cover-refresh");
-    expect(await screen.findByText(description)).toBeInTheDocument();
+    expect(await screen.findAllByText(description)).toHaveLength(2);
     expect(screen.getByText("Autor elegido por ti")).toBeInTheDocument();
     expect(client.getQueryData(["series", seriesId])).toMatchObject({
       seriesId, description, coverAssetId,

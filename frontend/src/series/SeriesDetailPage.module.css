@@ -1,7 +1,14 @@
 .page {
+  position: relative;
+  isolation: isolate;
   display: grid;
   gap: 1.5rem;
   min-width: 0;
+  padding: clamp(1rem, 3vw, 2rem);
+  border-radius: 1.25rem;
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--panel-shadow);
+  background: var(--background);
 }
 
 .pageHeader {
@@ -9,12 +16,28 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 1.5rem;
+  padding-block: 0.5rem 1.25rem;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.pageHeader > div { min-width: 0; }
+.summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  max-width: 60ch;
+  margin: 0.75rem 0 0;
+  color: var(--text-secondary);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
 }
 
 .pageHeader h1 {
   margin: 0;
   color: var(--text);
-  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  font-size: var(--title-size);
+  letter-spacing: -0.04em;
   line-height: 1.15;
   overflow-wrap: anywhere;
 }
@@ -35,7 +58,7 @@
   justify-content: center;
   padding: 0.6rem 0.9rem;
   border: 1px solid var(--border-strong);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: var(--surface-hover);
   color: var(--text);
   cursor: pointer;
@@ -62,19 +85,22 @@
 
 .detailCard {
   display: grid;
-  grid-template-columns: minmax(12rem, 20rem) minmax(0, 1fr);
+  grid-template-columns: minmax(10rem, 16rem) minmax(0, 1fr);
   align-items: start;
   gap: clamp(1.25rem, 4vw, 2.5rem);
   min-width: 0;
   padding: clamp(1rem, 3vw, 2rem);
-  border: 1px solid var(--border-color);
-  border-radius: 0.75rem;
-  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  border-radius: 1rem;
+  background: linear-gradient(145deg, #131c29d9, #0e1622f5 65%);
+  box-shadow: var(--panel-shadow);
 }
 
 .cover {
-  max-width: 20rem;
-  border-radius: 0.5rem;
+  max-width: 16rem;
+  border: 1px solid #d8efff26;
+  border-radius: var(--radius-panel);
+  box-shadow: 0 12px 28px #00000055;
 }
 
 .detailContent {
@@ -87,13 +113,25 @@
   display: grid;
   gap: 0.9rem;
   min-width: 0;
+  padding: 0 1rem;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-panel);
+  background: #090d1659;
 }
+.provenance[open] { padding-bottom: 1rem; }
 
 .provenance h2 {
   margin: 0;
   color: var(--text);
   font-size: 1.1rem;
 }
+
+.provenance summary { min-height: 2.75rem; padding: 0.65rem 0; cursor: pointer; color: var(--text); }
+.provenance summary h2 { display: inline; margin-left: 0.35rem; }
+.provenance[open] summary { margin-bottom: 0.75rem; border-bottom: 1px solid var(--border-color); }
+.primaryButton { display: inline-flex; align-items: center; justify-content: center; justify-self: start; min-height: 2.75rem; padding: 0.75rem 1.1rem; border-radius: var(--radius-control); background: var(--accent); color: var(--background); font-weight: 700; text-decoration: none; }
+.primaryButton:hover { background: var(--accent-hover); }
+.chapterLink[aria-current="page"] { border-color: var(--accent); background: #75d5ff12; }
 
 .description h2 {
   margin: 0 0 0.5rem;
@@ -122,7 +160,7 @@
   min-width: 0;
   padding: 0.85rem;
   border: 1px solid var(--border-color);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: var(--surface-soft);
 }
 
@@ -215,7 +253,7 @@
 .metadataError {
   padding: 0.75rem;
   border: 1px solid #754044;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: #211619;
 }
 
@@ -237,7 +275,7 @@
   gap: 1rem;
   padding: clamp(1.25rem, 4vw, 2rem);
   border: 1px solid #754044;
-  border-radius: 0.75rem;
+  border-radius: var(--radius-panel);
   background: #211619;
 }
 
@@ -296,6 +334,9 @@
 
 .chapterList {
   display: grid;
+  max-height: min(55vh, 36rem);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   gap: 0.55rem;
   margin: 0;
   padding: 0;
@@ -305,7 +346,7 @@
 .chapterItem {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(12rem, 16rem);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 0.65rem;
 }
@@ -321,12 +362,15 @@
   background: var(--surface-soft);
   color: var(--text);
   text-decoration: none;
+  box-shadow: inset 0 1px 0 #d8efff06;
+  transition: border-color 160ms ease, background 160ms ease;
 }
 
 .chapterLink:hover {
   border-color: var(--accent);
   background: var(--surface-hover);
 }
+.chapterLink[aria-current="page"] .chapterMark { border-color: var(--accent); background: #75d5ff22; }
 
 .chapterMark {
   flex: 0 0 auto;
@@ -401,7 +445,7 @@
 
   .cover {
     justify-self: center;
-    max-width: 16rem;
+    max-width: 8rem;
   }
 
   .metadata {
@@ -484,7 +528,7 @@
   gap: 0.5rem;
   padding: 0.75rem;
   border: 1px solid #754044;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: #211619;
 }
 

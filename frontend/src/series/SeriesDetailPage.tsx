@@ -8,7 +8,9 @@ import {
   clearMetadataOverride,
   getExternalMetadataCandidates,
   getReaderChaptersPage,
+  getRecentReaderProgress,
   getSeriesDetail,
+  getSeriesCoverUrl,
   refreshSeriesMetadata,
   setMetadataOverride,
 } from "../api/client";
@@ -21,6 +23,7 @@ import type {
 import styles from "./SeriesDetailPage.module.css";
 import { SeriesExportAction } from "../usb/SeriesExportAction";
 import { SeriesCover } from "../library/SeriesCover";
+import { IllustratedBackdrop } from "../library/IllustratedBackdrop";
 import { publicationStatus } from "../library/publicationStatus";
 
 const READER_CHAPTER_PAGE_SIZE = 100;
@@ -130,9 +133,11 @@ function ReaderChapterError({ error, onRetry }: { error: unknown; onRetry: () =>
 function ReaderChapterRow({
   chapter,
   seriesId,
+  currentChapterId,
 }: {
   chapter: ReaderChapter;
   seriesId: string;
+  currentChapterId?: string | undefined;
 }) {
   return (
     <li className={styles.chapterItem}>
@@ -142,6 +147,7 @@ function ReaderChapterRow({
           className={styles.chapterLink}
           to={"/reader/" + chapter.chapterId}
           state={{ originatingSeriesId: seriesId }}
+          aria-current={chapter.chapterId === currentChapterId ? "page" : undefined}
         >
           <span className={styles.chapterMark} aria-hidden="true" />
           <span className={styles.chapterLabel}>{chapter.displayLabel}</span>
@@ -177,6 +183,14 @@ function ReadyChapters({
     retry: false,
   });
   const page = query.data;
+  const recentProgress = useQuery({
+    queryKey: ["reader", "progress", "recent", 20],
+    queryFn: () => getRecentReaderProgress(20),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const resume = recentProgress.data?.data.find((item) => item.seriesId === seriesId);
+  const firstChapter = page?.data[0];
   const totalPages = page === undefined
     ? 0
     : Math.ceil(page.meta.total / READER_CHAPTER_PAGE_SIZE);
@@ -223,6 +237,10 @@ function ReadyChapters({
 
       {page !== undefined && page.meta.total > 0 ? (
         <>
+          {resume || firstChapter ? <Link className={styles.primaryButton}
+            to={`/reader/${resume?.chapterId ?? firstChapter!.chapterId}`} state={{ originatingSeriesId: seriesId }}>
+            {resume ? `Continuar ${resume.chapterDisplayLabel} · Página ${resume.pageIndex + 1}` : `Leer primer capítulo · ${firstChapter!.displayLabel}`}
+          </Link> : null}
           <p className={styles.chapterCount}>
             {page.meta.total} {page.meta.total === 1 ? "capítulo listo." : "capítulos listos."}
           </p>
@@ -239,6 +257,7 @@ function ReadyChapters({
                 chapter={chapter}
                 key={chapter.chapterId}
                 seriesId={seriesId}
+                currentChapterId={resume?.chapterId}
               />
             ))}
           </ul>
@@ -333,6 +352,7 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
   if (series && !series.coverAssetId) incompleteMetadata.unshift("Portada");
   const coverMetadata = series?.metadata.find((item) => item.field === "cover");
   const titleMetadata = series?.metadata.find((item) => item.field === "title");
+  const synopsis = series?.metadata.find((item) => item.field === "description")?.value;
   const pageTitle =
     titleMetadata === undefined
       ? series?.displayTitle ?? "Detalle de serie"
@@ -361,10 +381,15 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
       aria-labelledby="series-title"
       className={styles.page}
     >
+      <IllustratedBackdrop source={series?.coverAssetId
+        ? getSeriesCoverUrl(series.seriesId, "large", `${series.coverAssetId}:${series.updatedAt}`)
+        : null} />
       <header className={styles.pageHeader}>
         <div>
           <p className={styles.eyebrow}>Detalle local</p>
           <h1 id="series-title">{pageTitle}</h1>
+          {typeof synopsis === "string" && synopsis.length > 0
+            ? <p className={styles.summary}>{synopsis}</p> : null}
         </div>
         <div className={styles.actions}>
           {series ? (
@@ -419,8 +444,8 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
               searchConnectorId={searchConnectorId}
               seriesId={seriesId}
             />
-            <section aria-labelledby="metadata-title" className={styles.provenance}>
-              <h2 id="metadata-title">Metadatos y procedencia</h2>
+            <details className={styles.provenance}>
+              <summary><h2 id="metadata-title">Metadatos y procedencia</h2></summary>
               <p className={styles.statusMessage}>
                 Solo se completan los campos ausentes. Tus correcciones y los datos de la fuente tienen prioridad.
               </p>
@@ -576,7 +601,7 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
                   ) : null}
                 </div>
               ) : null}
-            </section>
+            </details>
           </div>
         </article>
       ) : null}

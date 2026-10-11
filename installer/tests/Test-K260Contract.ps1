@@ -63,7 +63,10 @@ try {
     $appVersion = $Matches.version
 
     $setup = Get-Content -LiteralPath $setupScript -Raw
-    Assert-True ($setup -match '(?m)^DefaultDirName=\{autopf\}\\Yomira\s*$') "install target is Program Files"
+    Assert-True ($setup -match '(?m)^DefaultDirName=\{localappdata\}\\Programs\\Yomira\s*$') "install target belongs to the current user"
+    Assert-True ($setup -match '(?m)^PrivilegesRequired=lowest\s*$') "installation does not require an administrator"
+    Assert-True ($setup -match 'Name: "\{autodesktop\}\\Yomira"') "the desktop shortcut exists"
+    Assert-True ($setup -match '(?m)^\[Run\]\s*$') "setup offers to open Yomira"
     Assert-True ($setup -match '(?m)^ArchitecturesAllowed=x64os\s*$') "installer is limited to the x64 Windows platform declared by the SPEC"
     Assert-True ($setup -match '(?m)^ArchitecturesInstallIn64BitMode=x64os\s*$') "installer uses 64-bit install mode on x64 Windows"
     Assert-True ($setup -match '(?m)^AppMutex=Local\\Yomira\.V1\.Backend\s*$') "setup uses the backend mutex"

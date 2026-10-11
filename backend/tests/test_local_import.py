@@ -27,6 +27,7 @@ from app.domain.series import Series
 from app.persistence.atomic_file_publisher import ADR_0087_RETRY_POLICY, AtomicFilePublisher
 from app.persistence.disk_budget import DiskBudgetManager
 from app.persistence.migrations.runner import MigrationRunner
+from app.persistence.models.chapter import ChapterRow
 from app.persistence.models.download_job import DownloadJobRow
 from app.persistence.models.download_job_archive import DownloadJobArchiveRow
 from app.persistence.windows_paths import DataRootIdentity
@@ -487,6 +488,56 @@ def test_stability_wait_and_explicit_edition_keep_existing_series(tmp_path: Path
             == "Autor local"
         )
         assert b"".join(reader.open_page(chapters[0].chapter_id, 2).iter_chunks()) == _image("blue")
+        await covers.close()
+        await http.close()
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        database.close()
+
+
+@pytest.mark.parametrize(
+    "language,author,joins",
+    [
+        ("es", "Kishimoto Masashi", True),
+        ("en", "Masashi Kishimoto", False),
+        ("es", "Another Writer", False),
+    ],
+)
+def test_local_import_respects_translation_and_author(
+    tmp_path: Path, language: str, author: str, joins: bool
+) -> None:
+    database, root, reader, covers, http, importer_factory = _fixture(tmp_path)
+    expected = Series.new_local("Naruto", "Naruto", author="Masashi Kishimoto", language="es")
+    LibraryService(database).add_series(expected)
+    original = _comic(root, "cbz", _image("red"), _image("green"))
+    with zipfile.ZipFile(original, "a") as archive:
+        archive.writestr(
+            "ComicInfo.xml",
+            f"<ComicInfo><Series>Naruto (1999)</Series><Number>1</Number>"
+            f"<Writer>{author}</Writer><LanguageISO>{language}</LanguageISO></ComicInfo>",
+        )
+    before = original.read_bytes()
+    importer = importer_factory()
+
+    async def exercise() -> None:
+        await importer.scan_once()
+        await importer.scan_once()
+        page = LibraryService(database).list_series(limit=100, offset=0)
+        assert page.total == (1 if joins else 2)
+        target = (
+            expected.series_id
+            if joins
+            else next(item.series_id for item in page.items if item.series_id != expected.series_id)
+        )
+        chapters = reader.list_chapters_for_series(target).items
+        assert len(chapters) == 1
+        with database.read_session() as session:
+            saved = session.get(ChapterRow, str(chapters[0].chapter_id))
+            assert saved is not None and saved.language == language
+        assert original.read_bytes() == before
+        assert importer.status()["errors"] == []
         await covers.close()
         await http.close()
 

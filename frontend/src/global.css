@@ -1,8 +1,8 @@
 :root {
-  --background: #090d16;
-  --surface: #151d2b;
-  --surface-soft: #101725;
-  --surface-hover: #1c293c;
+  --background: #080c13;
+  --surface: #131c29;
+  --surface-soft: #0e1622;
+  --surface-hover: #1d2c40;
   --text: #eef6ff;
   --text-secondary: #c5d3e5;
   --text-muted: #9aaec7;
@@ -10,6 +10,15 @@
   --accent-hover: #b1e9ff;
   --border-color: #28374c;
   --border-strong: #405572;
+  --panel-background: linear-gradient(145deg, #1c293c99, #0e1622ee 70%);
+  --panel-border: #9bc3ec2b;
+  --panel-shadow: inset 0 1px 0 #d8efff09, 0 14px 36px #00000030;
+  --radius-panel: 1rem;
+  --radius-control: 0.6rem;
+  --title-size: clamp(2rem, 3.2vw, 3rem);
+  --motion-fast: 160ms;
+  --success: #9ce6bb;
+  --warning: #f0d79a;
   color-scheme: dark;
   color: var(--text);
   background: var(--background);
@@ -35,4 +44,22 @@ body {
 button,
 input {
   font: inherit;
+}
+
+button, a, input, select, summary { -webkit-tap-highlight-color: #75d5ff25; }
+button, input, select { accent-color: var(--accent); }
+button, a { touch-action: manipulation; }
+::selection { background: #75d5ff38; color: var(--text); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+@media (prefers-contrast: more) {
+  :root { --border-color: #7a92ae; --border-strong: #9aaec7; --panel-border: #7a92ae; --text-muted: #c5d3e5; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }

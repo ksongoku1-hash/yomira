@@ -4,9 +4,9 @@
   gap: 12px;
   margin: 0 0 24px;
 }
-.queueSummary > div { padding: 14px; border: 1px solid var(--border-color, #283338); border-radius: 10px; }
+.queueSummary > div { padding: 1.25rem; border: 1px solid var(--panel-border); border-radius: var(--radius-panel); background: var(--panel-background); box-shadow: var(--panel-shadow); }
 .queueSummary dt { color: var(--text-muted, #a9b2b8); font-size: 0.85rem; }
-.queueSummary dd { margin: 6px 0 0; font-size: 1.4rem; font-weight: 650; }
+.queueSummary dd { margin: 0.5rem 0 0; color: var(--accent); font-size: 2rem; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.04em; }
 .pageProgress { display: grid; gap: 6px; max-width: 320px; font-size: 0.85rem; }
 .pageProgress progress { width: 100%; accent-color: var(--accent); }
 .pageProgress small, .phaseMessage { color: var(--text-muted, #a9b2b8); font-size: 0.8rem; max-width: 320px; }
@@ -45,7 +45,8 @@
 .pageHeader h1 {
   margin: 0;
   color: var(--text);
-  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  font-size: var(--title-size);
+  letter-spacing: -0.04em;
   line-height: 1.15;
 }
 
@@ -82,6 +83,10 @@
 .queueInfo {
   color: var(--text-muted);
   font-size: 0.85rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-soft);
 }
 
 .queueInfo summary {
@@ -116,7 +121,7 @@
   justify-content: center;
   padding: 0.6rem 0.9rem;
   border: 1px solid var(--border-strong);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: var(--surface-hover);
   color: var(--text);
   cursor: pointer;
@@ -140,22 +145,22 @@
   align-items: center;
   justify-content: center;
   padding: 0.65rem 1rem;
-  border: 1px solid #28d17b;
+  border: 1px solid var(--accent);
   border-radius: 0.55rem;
-  background: #28d17b;
-  color: #07130c;
+  background: var(--accent);
+  color: var(--background);
   cursor: pointer;
   font: inherit;
   font-weight: 750;
 }
 
 .primaryButton:hover {
-  border-color: #53e79a;
-  background: #53e79a;
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
 }
 
 .primaryButton:focus-visible {
-  outline: 3px solid #9ce6bb;
+  outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -166,7 +171,7 @@
   justify-content: center;
   padding: 0.55rem 0.8rem;
   border: 1px solid #743f43;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: #211719;
   color: #ffb4ab;
   cursor: pointer;
@@ -198,7 +203,7 @@
   gap: 1rem;
   padding: 1rem;
   border: 1px solid #743f43;
-  border-radius: 0.75rem;
+  border-radius: var(--radius-panel);
   background: #211719;
 }
 
@@ -280,15 +285,16 @@
   grid-template-columns: minmax(0, 1fr) minmax(15rem, 25rem);
   gap: 1rem;
   min-width: 0;
-  padding: 1.1rem 1.2rem;
-  border: 1px solid var(--border-color);
-  border-radius: 0.75rem;
-  background: var(--surface);
+  padding: 1.4rem;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-panel);
+  background: var(--panel-background);
+  box-shadow: var(--panel-shadow);
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .jobCard:hover {
-  border-color: #394a40;
+  border-color: var(--border-strong);
   box-shadow: 0 0.65rem 1.5rem #0003;
 }
 
@@ -373,6 +379,9 @@
   color: var(--text-muted);
   font-size: 0.82rem;
   text-align: right;
+  padding: 0.85rem;
+  border-radius: var(--radius-control);
+  background: #080c1340;
 }
 
 .jobState > time,
@@ -425,7 +434,7 @@
   margin: 0;
   padding: 0.6rem 0.75rem;
   border: 1px solid #286b4a;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: #102019;
   color: #9ce6bb;
   line-height: 1.45;
@@ -444,9 +453,9 @@
   justify-items: center;
   gap: 0.75rem;
   padding: clamp(2rem, 7vw, 4rem) 1.25rem;
-  border: 1px dashed #354039;
+  border: 1px dashed var(--border-strong);
   border-radius: 1rem;
-  background: radial-gradient(ellipse at top, #132019, #111519 70%);
+  background: var(--panel-background);
   text-align: center;
 }
 
@@ -465,10 +474,10 @@
   width: 3rem;
   height: 3rem;
   place-items: center;
-  border: 1px solid #294834;
+  border: 1px solid var(--panel-border);
   border-radius: 0.9rem;
   background: #102019;
-  color: #58e89d;
+  color: var(--accent);
   font-size: 1.5rem;
 }
 

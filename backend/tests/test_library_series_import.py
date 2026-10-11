@@ -102,7 +102,7 @@ def test_library_import_keeps_same_remote_id_isolated_by_source(tmp_path: Path) 
         second = service.import_library_series(
             connector=replace(_CATALOG, connector_id="fixture.other"),
             remote_series_id="series/1",
-            series_metadata=_METADATA,
+            series_metadata=replace(_METADATA, title="Unrelated work"),
         )
         assert first.series_id != second.series_id
         assert first.created and second.created

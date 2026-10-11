@@ -36,6 +36,7 @@ from app.runtime import RuntimeState
 from app.secrets.vault import WindowsDpapiSecretVault
 from app.services.cbr_builder import CbrExportFailure
 from app.services.cover_assets import CoverAssetError
+from app.services.jobs import AmbiguousLibrarySeries
 from app.settings import Settings, SettingsValidationError, load_settings
 from app.tracing import (
     TRACE_ID_HEADER,
@@ -154,6 +155,18 @@ async def _http_error_handler(
         code=code,
         message=message,
         status_code=exception.status_code,
+    )
+
+
+async def _library_conflict_error_handler(request: Request, exception: Exception) -> JSONResponse:
+    if not isinstance(exception, AmbiguousLibrarySeries):
+        raise exception
+    return _error_response(
+        request,
+        code=ErrorCode.API_REQUEST_REJECTED,
+        message="Hay varias fichas compatibles en la biblioteca; "
+        "especifica la edición antes de añadir capítulos.",
+        status_code=409,
     )
 
 
@@ -346,6 +359,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.runtime = runtime
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, _http_error_handler)
+    app.add_exception_handler(AmbiguousLibrarySeries, _library_conflict_error_handler)
     app.add_exception_handler(SourceConnectorError, _source_connector_error_handler)
     app.add_exception_handler(CbrExportFailure, _cbr_export_error_handler)
     app.add_exception_handler(CoverAssetError, _cover_error_handler)

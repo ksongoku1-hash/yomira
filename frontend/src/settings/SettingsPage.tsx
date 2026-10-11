@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ApiError, getReaderSettings, putReaderSettings } from "../api/client";
 import type { ReaderSettings } from "../api/client";
 import { LocalImportPanel } from "../library/LibraryPage";
+import { useAppearanceStore } from "../app/appearanceStore";
 import styles from "./SettingsPage.module.css";
 
 const READER_SETTINGS_QUERY_KEY = ["reader-settings"] as const;
@@ -63,6 +64,7 @@ function isDraftDirty(draft: ResourceSettingsDraft, saved: ReaderSettings): bool
 }
 
 export function SettingsPage() {
+  const appearance = useAppearanceStore();
   const queryClient = useQueryClient();
   const settingsQuery = useQuery({
     queryKey: READER_SETTINGS_QUERY_KEY,
@@ -114,6 +116,39 @@ export function SettingsPage() {
       </header>
 
       <LocalImportPanel />
+
+      <section aria-labelledby="appearance-title" className={styles.appearanceCard}>
+        <h2 id="appearance-title">Apariencia</h2>
+        <label className={styles.toggleLabel}>
+          <input type="checkbox" checked={appearance.enabled}
+            onChange={(event) => appearance.update({ enabled: event.currentTarget.checked })} />
+          Fondos ilustrados
+        </label>
+        <p className={styles.fieldDescription} id="backdrop-description">
+          Usa las portadas locales en Inicio y en la ficha de cada manga. El lector mantiene su fondo habitual.
+        </p>
+        <label className={styles.fieldLabel} htmlFor="backdrop-intensity">
+          Intensidad del fondo: {appearance.intensity}%
+        </label>
+        <input aria-describedby="backdrop-description" className={styles.rangeInput}
+          id="backdrop-intensity" type="range" min={0} max={100} step={1}
+          disabled={!appearance.enabled} value={appearance.intensity}
+          onChange={(event) => appearance.update({ intensity: Number(event.currentTarget.value) })} />
+        <label className={styles.toggleLabel}>
+          <input type="checkbox" checked={appearance.simpleGraphics}
+            onChange={(event) => appearance.update({ simpleGraphics: event.currentTarget.checked })} />
+          Gráficos sencillos
+        </label>
+        <p className={styles.fieldDescription}>
+          Desactiva los fondos ambientales, desenfoques, sombras y transiciones. Recomendado para equipos modestos y pantallas de tinta electrónica.
+        </p>
+        <p className={styles.fieldDescription}>
+          Los cambios se aplican al instante y se guardan en este navegador.
+        </p>
+        {appearance.storageError ? <p className={styles.fieldDescription} role="alert">
+          El navegador no permite guardar esta preferencia. Se aplicará durante esta sesión.
+        </p> : null}
+      </section>
 
       {settingsQuery.isPending ? (
         <p aria-live="polite" className={styles.statusMessage} role="status">

@@ -59,6 +59,7 @@ from app.services.reader_asset import (
     ReaderAssetLimits,
     ReaderAssetService,
 )
+from app.services.series_matching import matching_library_series
 
 DEFAULT_DOWNLOAD_JOB_PAGE_SIZE = 50
 MAX_DOWNLOAD_JOB_PAGE_SIZE = 100
@@ -76,6 +77,10 @@ class InvalidChapterSelection(ValueError):
 
 class InconsistentConnectorSelection(RuntimeError):
     """Connector lineage cannot be persisted without risking a false association."""
+
+
+class AmbiguousLibrarySeries(ValueError):
+    """Several compatible entries require an explicit edition choice."""
 
 
 class JobRetryNotAllowed(ValueError):
@@ -399,9 +404,7 @@ class DownloadJobService:
                 observed_at=observed_at,
             )
 
-            local_ready = self._ready_local_chapters(
-                session, series.series_id, series_metadata.language
-            )
+            local_ready = self._ready_chapters(session, series.series_id, series_metadata.language)
             saved_chapters: dict[str, ChapterSourceRow] = {}
             if connector.connector_id == FMD2_METADATA.connector_id:
                 rows = session.scalars(
@@ -606,7 +609,7 @@ class DownloadJobService:
             ready_ids = [str(item.chapter_id) for item in ready]
             present = self._present_chapters(session, ready_ids)
             ready_ids = [value for value in ready_ids if value in present]
-            local_ready = self._ready_local_chapters(session, UUID(series_id), language)
+            local_ready = self._ready_chapters(session, UUID(series_id), language)
             remote_ids = list(
                 session.scalars(
                     select(ChapterSourceRow.remote_id)
@@ -670,23 +673,14 @@ class DownloadJobService:
     def _chapter_available(self, session: Session, chapter_id: str) -> bool:
         return chapter_id in self._present_chapters(session, [chapter_id])
 
-    def _ready_local_chapters(
+    def _ready_chapters(
         self, session: Session, series_id: UUID, language: str | None
     ) -> tuple[Chapter, ...]:
         ready, _ = ChapterCbzAssetRepository().list_ready_chapters(
             session, series_id, limit=10_000, offset=0
         )
         present = self._present_chapters(session, [str(item.chapter_id) for item in ready])
-        rows = session.scalars(
-            select(ChapterRow)
-            .join(ChapterSourceRow, ChapterSourceRow.chapter_id == ChapterRow.chapter_id)
-            .join(SourceRow, SourceRow.source_id == ChapterSourceRow.source_id)
-            .where(
-                SourceRow.connector_id == "yomira.local.import",
-                ChapterRow.chapter_id.in_(present),
-            )
-            .distinct()
-        ).all()
+        rows = session.scalars(select(ChapterRow).where(ChapterRow.chapter_id.in_(present))).all()
         counts = Counter(chapter_number(row.display_label) for row in rows)
         return tuple(
             chapter_from_row(row)
@@ -777,9 +771,23 @@ class DownloadJobService:
             return series_from_row(row), False
 
         title = metadata.title if metadata.title else remote_series_id
-        series = Series.new_local(title, title, now=observed_at)
-        session.add(series_to_row(series))
-        session.flush()
+        matches = matching_library_series(
+            session, title=title, author=metadata.author, language=metadata.language
+        )
+        if len(matches) > 1:
+            raise AmbiguousLibrarySeries(
+                "Hay varias fichas compatibles en la biblioteca; "
+                "especifica la edición antes de añadir capítulos."
+            )
+        created = not matches
+        series = (
+            series_from_row(matches[0])
+            if matches
+            else Series.new_local(title, title, now=observed_at)
+        )
+        if created:
+            session.add(series_to_row(series))
+            session.flush()
         series_source = SeriesSource.new_local(
             series.series_id,
             source.source_id,
@@ -795,7 +803,7 @@ class DownloadJobService:
         )
         session.add(series_source_to_row(series_source))
         session.flush()
-        return series, True
+        return series, created
 
     @staticmethod
     def _get_or_create_chapter(

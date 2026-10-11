@@ -12,6 +12,7 @@ import {
 } from "../api/client";
 import styles from "./HomePage.module.css";
 import { SeriesCover } from "../library/SeriesCover";
+import { IllustratedBackdrop } from "../library/IllustratedBackdrop";
 import { publicationStatus } from "../library/publicationStatus";
 
 const RECENT_LIMIT = 4;
@@ -119,18 +120,30 @@ function HomePageContent() {
   const resume = serviceReady
     ? recentProgress.data?.data.find((progress) => Number(progress.percentage) < 100)
     : undefined;
+  const featured = serviceReady
+    ? recentLibrary.data?.data.find((series) => series.coverAssetId !== null)
+    : undefined;
+  const backdropSource = resume
+    ? getSeriesCoverUrl(resume.seriesId, "medium", resume.updatedAt)
+    : featured
+      ? getSeriesCoverUrl(featured.seriesId, "medium", `${featured.coverAssetId}:${featured.updatedAt}`)
+      : null;
 
   return (
     <div className={styles.page}>
       <section aria-labelledby="home-title" className={styles.welcome}>
+        <IllustratedBackdrop source={backdropSource} />
         <div className={styles.welcomeCopy}>
           <p className={styles.eyebrow}>Tu biblioteca de manga</p>
-          <h1 id="home-title">Tu próxima historia <span>empieza aquí.</span></h1>
+          <h1 id="home-title">{resume?.seriesDisplayTitle ?? featured?.displayTitle ?? <>Tu próxima historia <span>empieza aquí.</span></>}</h1>
           <p className={styles.intro}>
             Lee, descubre y continúa tus mangas favoritos. Tu mundo entre páginas, en Yomira.
           </p>
-          {resume ? <p className={styles.resumeTitle}>{resume.seriesDisplayTitle}
-            <span>{resume.chapterDisplayLabel} · Página {resume.pageIndex + 1}</span></p> : null}
+          {resume ? <p className={styles.resumeTitle}>Tu siguiente capítulo
+            <span>{resume.chapterDisplayLabel} · Página {resume.pageIndex + 1}</span></p>
+            : featured ? <Link className={styles.featuredTitle} to={`/series/${featured.seriesId}`}>
+              <span>Destacado de tu biblioteca</span>{" "}{featured.displayTitle}
+            </Link> : null}
           <div className={styles.heroActions}>
             {resume ? <Link className={styles.primaryAction} to={`/reader/${resume.chapterId}`}
               state={{ originatingSeriesId: resume.seriesId }}>
@@ -139,6 +152,18 @@ function HomePageContent() {
             <Link className={styles.secondaryAction} to="/library">Ver biblioteca</Link>
           </div>
         </div>
+
+        {resume || featured ? (
+          <Link className={styles.heroPoster}
+            aria-label={`Abrir ficha destacada de ${resume?.seriesDisplayTitle ?? featured!.displayTitle}`}
+            to={`/series/${resume?.seriesId ?? featured!.seriesId}`}>
+            <span aria-hidden="true">
+              {resume ? <ProgressCover progress={resume} />
+                : <SeriesCover series={featured!} variant="medium" />}
+            </span>
+            <span className={styles.posterCaption}>Explorar esta historia <span aria-hidden="true">↗</span></span>
+          </Link>
+        ) : null}
 
         <aside aria-labelledby="service-title" className={serviceReady ? styles.serviceReadyCard : styles.serviceCard}>
           <h2 id="service-title">Servicio local</h2>

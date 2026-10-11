@@ -342,6 +342,7 @@ def get_chapter_availability(
     response_model=LibrarySeriesImportEnvelope,
     responses={
         404: {"model": ApiErrorEnvelope},
+        409: {"model": ApiErrorEnvelope},
         422: {"model": ApiErrorEnvelope},
         501: {"model": ApiErrorEnvelope},
         502: {"model": ApiErrorEnvelope},
@@ -386,6 +387,7 @@ async def import_connector_library_series(
     response_model=DownloadJobsEnvelope,
     responses={
         404: {"model": ApiErrorEnvelope},
+        409: {"model": ApiErrorEnvelope},
         422: {"model": ApiErrorEnvelope},
         501: {"model": ApiErrorEnvelope},
         502: {"model": ApiErrorEnvelope},

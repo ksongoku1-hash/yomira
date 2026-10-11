@@ -7,7 +7,8 @@
 .pageHeader h1 {
   margin: 0;
   color: var(--text);
-  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  font-size: var(--title-size);
+  letter-spacing: -0.04em;
   line-height: 1.15;
 }
 
@@ -36,10 +37,11 @@
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 0.75rem;
-  padding: 1rem;
-  border: 1px solid var(--border-color);
-  border-radius: 0.75rem;
-  background: var(--surface-soft);
+  padding: clamp(1rem, 2.5vw, 1.5rem);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-panel);
+  background: var(--panel-background);
+  box-shadow: var(--panel-shadow);
 }
 
 .searchField {
@@ -61,7 +63,7 @@
   min-height: 2.75rem;
   padding: 0.65rem 0.8rem;
   border: 1px solid var(--border-strong);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: var(--background);
   color: var(--text);
   font: inherit;
@@ -85,7 +87,7 @@
   justify-content: center;
   padding: 0.6rem 0.9rem;
   border: 1px solid var(--border-strong);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: var(--surface-hover);
   color: var(--text);
   cursor: pointer;
@@ -100,7 +102,7 @@
 }
 
 .primaryButton:hover:not(:disabled) {
-  background: #30e887;
+  background: var(--accent-hover);
 }
 
 .secondaryButton:hover:not(:disabled) {
@@ -123,6 +125,10 @@
   display: grid;
   justify-items: start;
   gap: 0.75rem;
+  padding: 1.5rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-panel);
+  background: var(--panel-background);
 }
 
 .errorState {
@@ -133,7 +139,7 @@
   gap: 1rem;
   padding: 1rem;
   border: 1px solid #743f43;
-  border-radius: 0.75rem;
+  border-radius: var(--radius-panel);
   background: #211719;
 }
 
@@ -185,7 +191,7 @@
 }
 
 .resultList {
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 22rem));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
   justify-content: start;
   align-items: stretch;
 }
@@ -223,16 +229,20 @@
   min-width: 0;
   width: 100%;
   padding: 0.85rem;
-  border: 1px solid var(--border-color);
-  border-radius: 0.75rem;
-  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-panel);
+  background: var(--panel-background);
+  box-shadow: var(--panel-shadow);
   transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
 }
 
-.resultCard:hover {
-  transform: translateY(-2px);
+.resultCard:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0.8rem 1.8rem #0004;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .resultCard:hover { border-color: var(--accent); }
+  .resultCard:not(:has([aria-expanded="true"])):hover { transform: translateY(-2px); }
 }
 
 .coverFrame {
@@ -252,7 +262,7 @@
 .coverFrame img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .resultDetails {
@@ -307,10 +317,10 @@
   align-items: center;
   gap: 0.4rem;
   padding: 0.3rem 0.5rem;
-  border: 1px solid #286b4a;
+  border: 1px solid var(--panel-border);
   border-radius: 999px;
-  background: #102019;
-  color: #9ce6bb;
+  background: #75d5ff0c;
+  color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: 0.78rem;
@@ -320,8 +330,8 @@
 .sourceToggle:hover:not(:disabled),
 .sourceToggle[aria-expanded="true"] {
   border-color: var(--accent);
-  background: #163324;
-  color: #d6ffe6;
+  background: #75d5ff1a;
+  color: var(--accent-hover);
 }
 
 .sourceToggle:disabled {
@@ -403,7 +413,7 @@
   min-height: 2.5rem;
   padding: 0.4rem 0.7rem;
   border: 1px solid var(--border-strong);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: var(--background);
   color: var(--text);
   font: inherit;
@@ -422,7 +432,7 @@
   overflow-y: auto;
   list-style: none;
   border: 1px solid var(--border-color);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
 }
 
 .chapterChoice {
@@ -436,7 +446,7 @@
 }
 
 .chapterChoice:has(input:checked) {
-  background: #163324;
+  background: #75d5ff16;
 }
 
 .chapterChoice input {
@@ -465,7 +475,7 @@
   min-height: 2.5rem;
   padding: 0.4rem 0.7rem;
   border: 1px solid var(--border-strong);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: var(--background);
   color: var(--text);
 }
@@ -491,7 +501,7 @@
   margin: 0;
   padding: 0.75rem;
   border: 1px solid #286b4a;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   background: #102019;
   color: #9ce6bb;
 }

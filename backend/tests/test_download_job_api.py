@@ -66,6 +66,36 @@ async def _post_without_body(app: FastAPI, path: str) -> Response:
         return await client.post(path)
 
 
+@pytest.mark.parametrize("action", ["library-series", "download-jobs"])
+def test_ambiguous_library_entry_returns_conflict_without_writing(
+    tmp_path: Path, action: str
+) -> None:
+    from app.domain.series import Series
+    from app.persistence.mappers.series import series_to_row
+    from app.persistence.models.series_source import SeriesSourceRow
+
+    app, database = _ready_app(tmp_path)
+    try:
+        with database.write_session() as session:
+            for year in (2000, 2020):
+                title = f"Mock Fixture Series ({year})"
+                session.add(series_to_row(Series.new_local(title, title)))
+        path = f"/api/v1/connectors/yomira.mock/series/mock-series-1/{action}"
+        response = asyncio.run(
+            _post(app, path, {"chapter_remote_ids": ["mock-chapter-1"]})
+            if action == "download-jobs"
+            else _post_without_body(app, path)
+        )
+        assert response.status_code == 409
+        assert "Hay varias fichas compatibles" in response.json()["error"]["message"]
+        with database.read_session() as session:
+            assert session.scalar(select(func.count()).select_from(SeriesRow)) == 2
+            assert session.scalar(select(func.count()).select_from(SeriesSourceRow)) == 0
+            assert session.scalar(select(func.count()).select_from(DownloadJobRow)) == 0
+    finally:
+        database.close()
+
+
 def test_batch_downloads_dispatch_and_display_in_numeric_chapter_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -147,7 +177,7 @@ def test_sequential_queue_finishes_current_series_across_sources_and_batches(
         second = service.create_selected_jobs(
             connector=replace(connector.metadata, connector_id="yomira.second-source"),
             remote_series_id="series-b",
-            series_metadata=metadata,
+            series_metadata=replace(metadata, title="Another manga"),
             chapters=(template,),
             selected_remote_ids=(template.remote_id,),
             now=observed_at + timedelta(seconds=1),

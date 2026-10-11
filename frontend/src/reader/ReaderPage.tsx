@@ -1,22 +1,25 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import {
   ApiError,
   getReaderChapter,
+  getReaderChaptersPage,
+  getSeriesDetail,
   getReaderPageBlob,
   getReaderProgress,
   getReaderSettings,
   putReaderProgress,
   putReaderSettings,
 } from "../api/client";
-import type { ReaderSettings } from "../api/client";
+import type { ReaderChapter, ReaderSettings } from "../api/client";
+import { anchorAt, readVerticalAnchor, saveVerticalAnchor, verticalLayout } from "./readerPresentation";
 import { ReaderPageCache } from "./readerPageCache";
 import type { CachedReaderPage, EvictedReaderPage } from "./readerPageCache";
 import styles from "./ReaderPage.module.css";
@@ -280,27 +283,6 @@ function initialVerticalPageHeight(): number {
   return Math.max(320, Math.min(Math.floor(window.innerHeight * 0.8), 864));
 }
 
-function visiblePageRangeForViewport(
-  chapterId: string,
-  scrollTop: number,
-  viewportHeight: number,
-  pageStep: number,
-  pageCount: number,
-): ReaderVisiblePageRange | null {
-  if (viewportHeight <= 0 || pageCount < 1) return null;
-  const safePageStep = Math.max(1, pageStep);
-  const safeScrollTop = Math.max(0, scrollTop);
-  const firstPage = Math.min(
-    pageCount,
-    Math.max(1, Math.floor(safeScrollTop / safePageStep) + 1),
-  );
-  const lastPage = Math.min(
-    pageCount,
-    Math.max(1, Math.floor((safeScrollTop + viewportHeight - 1) / safePageStep) + 1),
-  );
-  return { chapterId, firstPage, lastPage };
-}
-
 function sameVisiblePageRange(
   left: ReaderVisiblePageRange | null,
   right: ReaderVisiblePageRange | null,
@@ -339,8 +321,25 @@ function pageImageClass(vertical: boolean, fit: ReaderFit): string {
   ].filter(Boolean).join(" ");
 }
 
+async function adjacentChapters(seriesId: string, chapterId: string) {
+  let previous: ReaderChapter | null = null;
+  let found = false;
+  for (let offset = 0; ; offset += 100) {
+    const result = await getReaderChaptersPage({ seriesId, offset, limit: 100 });
+    for (const item of result.data) {
+      if (found) return { previous, next: item };
+      if (item.chapterId === chapterId) found = true;
+      else previous = item;
+    }
+    if (result.data.length === 0 || offset + result.data.length >= result.meta.total) {
+      return { previous: found ? previous : null, next: null };
+    }
+  }
+}
+
 export function ReaderPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { chapterId = "" } = useParams();
   const [page, setPage] = useState(1);
   const [readerSettingsDraft, setReaderSettingsDraft] = useState<ReaderSettings | null>(null);
@@ -360,12 +359,34 @@ export function ReaderPage() {
   );
   const [visiblePageRange, setVisiblePageRange] = useState<ReaderVisiblePageRange | null>(null);
   const [verticalPageHeight, setVerticalPageHeight] = useState(initialVerticalPageHeight);
+  const [verticalWidth, setVerticalWidth] = useState(768);
+  const [pageRatios, setPageRatios] = useState<ReadonlyMap<number, number>>(() => new Map());
+  const [immersive, setImmersive] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const [jumpPage, setJumpPage] = useState(1);
+  const [continuous, setContinuous] = useState(false);
+  const [autoChapter, setAutoChapter] = useState(false);
+  const [atVerticalEnd, setAtVerticalEnd] = useState(false);
+  const [activity, setActivity] = useState(0);
+  const [anchorRevision, setAnchorRevision] = useState(0);
+  const [screenWidth, setScreenWidth] = useState(() => window.innerWidth);
+  const activityRef = useRef(0);
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef({ chapterId, page: 1, fraction: 0 });
+  const anchorSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const gestureRef = useRef<{ distance: number; zoom: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+  const lastTapRef = useRef(0);
   const pageResourcesRef = useRef(new Map<number, ReaderPageResource>());
   const pageCacheRef = useRef(new ReaderPageCache(DEFAULT_READER_SETTINGS.cache_limit_mb * 1_000_000));
   const suppressedPreloadPagesRef = useRef(new Set<number>());
   const cacheChapterIdRef = useRef<string | null>(null);
   const touchStartRef = useRef<ReaderTouchStart | null>(null);
   const verticalViewportRef = useRef<HTMLDivElement | null>(null);
+  const programScrollRef = useRef<number | null>(null);
+  const scrollInteractionRef = useRef(false);
   const readerRootRef = useRef<HTMLElement | null>(null);
   const pendingScrollPageRef = useRef<number | null>(null);
   const pageRef = useRef(1);
@@ -381,6 +402,17 @@ export function ReaderPage() {
     enabled: chapterId.length > 0,
   });
   const chapter = chapterQuery.data;
+  const seriesQuery = useQuery({
+    queryKey: ["series", chapter?.seriesId],
+    queryFn: () => getSeriesDetail(chapter!.seriesId),
+    enabled: chapter !== undefined,
+  });
+  const adjacentQuery = useQuery({
+    queryKey: ["reader-adjacent", chapter?.seriesId, chapterId],
+    queryFn: () => adjacentChapters(chapter!.seriesId, chapterId),
+    enabled: chapter !== undefined,
+    staleTime: 30_000,
+  });
   const returnSeriesId = chapter?.seriesId ?? originatingSeriesIdFromState(location.state);
   const readerReturnHref = returnSeriesId === null ? "/downloads" : `/series/${returnSeriesId}`;
   const readerReturnLabel = returnSeriesId === null
@@ -393,27 +425,29 @@ export function ReaderPage() {
     retry: false,
   });
   const readerSettings = readerSettingsDraft ?? readerSettingsQuery.data ?? DEFAULT_READER_SETTINGS;
-  const mode = readerSettings.mode;
+  const mode = readerSettings.mode === "double" && screenWidth < 700 ? "single" : readerSettings.mode;
   const rtl = readerSettings.rtl;
   const eReader = readerSettings.e_reader;
   const settingsAvailable = readerSettingsQuery.isSuccess;
   const effectivePreloadAhead = eReader ? 0 : readerSettings.preload_ahead;
   const verticalPageStep = verticalPageHeight * Math.max(1, zoom);
+  const layout = useMemo(() => verticalLayout(
+    chapter?.pageCount ?? 1, verticalWidth, verticalPageHeight,
+    pageRatios, zoom, continuous ? 0 : 12, fit === "height",
+  ), [chapter?.pageCount, verticalWidth, verticalPageHeight, pageRatios, zoom, continuous, fit]);
   const refreshVisiblePageRange = useCallback((scrollTop: number, viewportHeight: number) => {
     const nextRange =
       mode === "vertical" && chapter !== undefined && readerChapterId !== undefined
-        ? visiblePageRangeForViewport(
-          readerChapterId,
-          scrollTop,
-          viewportHeight,
-          verticalPageStep,
-          chapter.pageCount,
-        )
+        ? viewportHeight > 0 ? {
+          chapterId: readerChapterId,
+          firstPage: anchorAt(layout.offsets, scrollTop).page,
+          lastPage: anchorAt(layout.offsets, scrollTop + viewportHeight - 1).page,
+        } : null
         : null;
     setVisiblePageRange((currentRange) =>
       sameVisiblePageRange(currentRange, nextRange) ? currentRange : nextRange,
     );
-  }, [chapter?.pageCount, mode, readerChapterId, verticalPageStep]);
+  }, [chapter, mode, readerChapterId, layout]);
   const progressQuery = useQuery({
     queryKey: ["reader-progress", readerChapterId ?? chapterId],
     queryFn: () => readerChapterId === undefined
@@ -432,12 +466,8 @@ export function ReaderPage() {
       const pinned = new Set([page]);
       const viewport = verticalViewportRef.current;
       if (viewport === null || viewport.clientHeight <= 0) return pinned;
-      const pageStep = Math.max(1, verticalPageStep);
-      const firstVisible = Math.max(1, Math.floor(viewport.scrollTop / pageStep) + 1);
-      const lastVisible = Math.min(
-        chapter.pageCount,
-        Math.floor((viewport.scrollTop + viewport.clientHeight - 1) / pageStep) + 1,
-      );
+      const firstVisible = anchorAt(layout.offsets, viewport.scrollTop).page;
+      const lastVisible = anchorAt(layout.offsets, viewport.scrollTop + viewport.clientHeight - 1).page;
       for (let pageNumber = firstVisible; pageNumber <= lastVisible; pageNumber += 1) {
         pinned.add(pageNumber);
       }
@@ -445,6 +475,10 @@ export function ReaderPage() {
     }
     return new Set([page]);
   };
+  const previewPages = navigatorOpen && chapter !== undefined
+    ? Array.from({ length: Math.min(3, chapter.pageCount) }, (_, index) =>
+      Math.min(Math.max(1, jumpPage - 1), Math.max(1, chapter.pageCount - 2)) + index)
+    : [];
 
   const updateReaderSettings = (updates: Partial<ReaderSettings>) => {
     if (!settingsAvailable) return;
@@ -487,6 +521,13 @@ export function ReaderPage() {
     restoredProgressChapterRef.current = null;
     initialProgressSavedChapterRef.current = null;
     interactedChapterRef.current = null;
+    anchorRef.current = { chapterId, page: 1, fraction: 0 };
+    setPageRatios(new Map());
+    setAtVerticalEnd(false);
+    setControlsVisible(true);
+    setNavigatorOpen(false);
+    programScrollRef.current = null;
+    scrollInteractionRef.current = false;
     setZoom(1);
     setFit(null);
     setProgressSaveView({ chapterId, status: "idle" });
@@ -510,6 +551,7 @@ export function ReaderPage() {
         void queryClient.invalidateQueries({
           queryKey: ["reader-progress", readerChapterId],
         });
+        void queryClient.invalidateQueries({ queryKey: ["reader", "progress", "recent"] });
       }
     });
     return () => {
@@ -533,6 +575,10 @@ export function ReaderPage() {
     const restoredPage = progressQuery.data === null
       ? 1
       : Math.min(chapter.pageCount, progressQuery.data.pageIndex + 1);
+    const savedAnchor = progressQuery.data === null ? null : readVerticalAnchor(readerChapterId, restoredPage);
+    anchorRef.current = { chapterId: readerChapterId, page: restoredPage, fraction: savedAnchor?.fraction ?? 0 };
+    pendingScrollPageRef.current = restoredPage;
+    setAnchorRevision((current) => current + 1);
     updatePagePosition(restoredPage, false);
   }, [
     chapter,
@@ -577,6 +623,7 @@ export function ReaderPage() {
     const updatePageHeight = () => {
       pendingScrollPageRef.current = pageRef.current;
       setVerticalPageHeight(initialVerticalPageHeight());
+      setScreenWidth(window.innerWidth);
     };
     window.addEventListener("resize", updatePageHeight);
     return () => window.removeEventListener("resize", updatePageHeight);
@@ -649,6 +696,7 @@ export function ReaderPage() {
     for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
       desiredPages.add(pageNumber);
     }
+    for (const pageNumber of previewPages) desiredPages.add(pageNumber);
 
     const currentOrVisiblePages = new Set([page]);
     if (
@@ -762,17 +810,66 @@ export function ReaderPage() {
     visiblePageRange?.firstPage,
     visiblePageRange?.lastPage,
     retryCount,
+    navigatorOpen,
+    jumpPage,
   ]);
 
-  useEffect(() => {
-    if (mode !== "vertical" || pendingScrollPageRef.current !== page) return;
+  useLayoutEffect(() => {
+    if (mode !== "vertical") return;
     const viewport = verticalViewportRef.current;
     if (viewport !== null) {
-      viewport.scrollTop = (page - 1) * verticalPageStep;
+      const anchor = anchorRef.current;
+      const targetPage = Math.min(chapter?.pageCount ?? 1, pendingScrollPageRef.current ?? anchor.page);
+      const fraction = targetPage === anchor.page ? anchor.fraction : 0;
+      viewport.scrollTop = layout.offsets[targetPage - 1]! + layout.heights[targetPage - 1]! * fraction;
+      programScrollRef.current = viewport.scrollTop;
       refreshVisiblePageRange(viewport.scrollTop, viewport.clientHeight);
     }
     pendingScrollPageRef.current = null;
-  }, [mode, page, refreshVisiblePageRange, verticalPageStep]);
+  }, [mode, layout, refreshVisiblePageRange, chapter?.pageCount, anchorRevision]);
+
+  useEffect(() => {
+    const viewport = verticalViewportRef.current;
+    if (mode !== "vertical" || viewport === null) return;
+    const resize = () => setVerticalWidth(Math.max(1, Math.min(1100, viewport.clientWidth || 768)));
+    resize();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
+    observer?.observe(viewport);
+    window.addEventListener("resize", resize);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", resize); };
+  }, [mode]);
+
+  useEffect(() => {
+    const flush = () => {
+      const anchor = anchorRef.current;
+      if (anchor.chapterId === chapterId && mode === "vertical") saveVerticalAnchor(chapterId, anchor);
+      if (anchorSaveTimerRef.current !== null) clearTimeout(anchorSaveTimerRef.current);
+    };
+    const onVisibility = () => { if (document.visibilityState === "hidden") flush(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { flush(); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [chapterId, mode]);
+
+  useEffect(() => {
+    if (!immersive || optionsOpen || navigatorOpen || progressQuery.isError || readerSettingsQuery.isError || fullscreenMessage.length > 0 || progressSaveView.status === "error" || settingsSaveStatus === "error") return;
+    const timer = setTimeout(() => {
+      if (!controlsRef.current?.contains(document.activeElement)) setControlsVisible(false);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [immersive, controlsVisible, optionsOpen, navigatorOpen, page, activity, progressQuery.isError, readerSettingsQuery.isError, fullscreenMessage, progressSaveView.status, settingsSaveStatus]);
+
+  useEffect(() => {
+    if (settingsSaveStatus !== "saved") return;
+    const timer = setTimeout(() => setSettingsSaveStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [settingsSaveStatus]);
+
+  useEffect(() => {
+    if (!autoChapter || !atVerticalEnd || mode !== "vertical" || adjacentQuery.data?.next == null || progressSaveView.status !== "saved") return;
+    const next = adjacentQuery.data.next;
+    const timer = setTimeout(() => navigate(`/reader/${next.chapterId}`, { state: { originatingSeriesId: next.seriesId } }), 5000);
+    return () => clearTimeout(timer);
+  }, [autoChapter, atVerticalEnd, mode, adjacentQuery.data, navigate, progressSaveView.status]);
 
   useEffect(() => () => {
     clearReaderPageResources(pageCacheRef.current, pageResourcesRef.current);
@@ -851,11 +948,15 @@ export function ReaderPage() {
     : `Página ${page} de ${chapter.pageCount}`;
 
   const goToPage = (requestedPage: number) => {
-    const nextPage = Math.max(1, Math.min(chapter.pageCount, requestedPage));
+    if (!Number.isFinite(requestedPage)) return;
+    const nextPage = Math.max(1, Math.min(chapter.pageCount, Math.trunc(requestedPage)));
+    anchorRef.current = { chapterId, page: nextPage, fraction: 0 };
+    setAtVerticalEnd(false);
     pendingScrollPageRef.current = nextPage;
     updatePagePosition(nextPage, true);
     if (mode === "vertical" && verticalViewportRef.current !== null) {
-      verticalViewportRef.current.scrollTop = (nextPage - 1) * verticalPageStep;
+      verticalViewportRef.current.scrollTop = layout.offsets[nextPage - 1]!;
+      programScrollRef.current = verticalViewportRef.current.scrollTop;
       refreshVisiblePageRange(
         verticalViewportRef.current.scrollTop,
         verticalViewportRef.current.clientHeight,
@@ -866,8 +967,22 @@ export function ReaderPage() {
 
   const handleVerticalScroll = (scrollTop: number, viewportHeight: number) => {
     refreshVisiblePageRange(scrollTop, viewportHeight);
-    const pageAtViewportTop = Math.floor(scrollTop / verticalPageStep) + 1;
-    updatePagePosition(Math.max(1, Math.min(chapter.pageCount, pageAtViewportTop)), true);
+    if (programScrollRef.current !== null && Math.abs(scrollTop - programScrollRef.current) < 1) {
+      programScrollRef.current = null;
+      return;
+    }
+    if (!scrollInteractionRef.current) return;
+    const anchor = anchorAt(layout.offsets, scrollTop);
+    anchorRef.current = { chapterId, ...anchor };
+    const viewport = verticalViewportRef.current;
+    const reachedEnd = viewport !== null && viewport.clientHeight > 0 && viewport.scrollHeight > 0
+      && scrollTop + viewportHeight >= viewport.scrollHeight - 8
+      && pageResources.get(chapter.pageCount)?.kind === "ready";
+    setAtVerticalEnd(reachedEnd);
+    updatePagePosition(anchor.page, true);
+    if (reachedEnd && readerChapterId !== undefined) enqueueChapterProgressSave(readerChapterId, chapter.pageCount - 1);
+    if (anchorSaveTimerRef.current !== null) clearTimeout(anchorSaveTimerRef.current);
+    anchorSaveTimerRef.current = setTimeout(() => saveVerticalAnchor(chapterId, anchorRef.current), 400);
   };
 
   const changeZoom = (nextZoom: number) => {
@@ -906,8 +1021,11 @@ export function ReaderPage() {
   };
 
   const changeMode = (nextMode: ReaderMode) => {
-    if (mode === nextMode) return;
-    if (nextMode === "vertical") pendingScrollPageRef.current = page;
+    if (readerSettings.mode === nextMode) return;
+    if (nextMode === "vertical") {
+      pendingScrollPageRef.current = page;
+      anchorRef.current = { chapterId, page, fraction: readVerticalAnchor(chapterId, page)?.fraction ?? 0 };
+    }
     updateReaderSettings({ mode: nextMode });
   };
 
@@ -935,6 +1053,12 @@ export function ReaderPage() {
     let nextPage: number | null = null;
     let handled = true;
     switch (event.key) {
+      case "Escape":
+        setOptionsOpen(false);
+        setNavigatorOpen(false);
+        setImmersive(false);
+        setControlsVisible(true);
+        break;
       case "ArrowRight":
       case "ArrowLeft":
         if (mode === "vertical") {
@@ -984,7 +1108,7 @@ export function ReaderPage() {
   };
 
   const handleTouchPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType !== "touch" || mode === "vertical") return;
+    if (event.pointerType !== "touch") return;
     const target = event.target as HTMLElement;
     if (target.closest("button,a,input,textarea,select,[contenteditable='true']") !== null) return;
     touchStartRef.current = {
@@ -995,29 +1119,78 @@ export function ReaderPage() {
     };
   };
 
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("button,a,input,summary") !== null) return;
+    handleTouchPointerDown(event);
+    if (event.pointerType !== "touch" && zoom <= 1) return;
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const points = [...pointersRef.current.values()];
+    const distance = points.length === 2 ? Math.hypot(points[0]!.x - points[1]!.x, points[0]!.y - points[1]!.y) : 0;
+    gestureRef.current = { distance, zoom, x: event.clientX, y: event.clientY,
+      scrollLeft: event.currentTarget.scrollLeft, scrollTop: event.currentTarget.scrollTop };
+    if (points.length > 1) touchStartRef.current = null;
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!pointersRef.current.has(event.pointerId)) return;
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const gesture = gestureRef.current;
+    if (gesture === null) return;
+    const points = [...pointersRef.current.values()];
+    if (points.length === 2 && gesture.distance > 0) {
+      changeZoom(gesture.zoom * Math.hypot(points[0]!.x - points[1]!.x, points[0]!.y - points[1]!.y) / gesture.distance);
+    } else if (zoom > 1 && mode !== "vertical") {
+      event.currentTarget.scrollLeft = gesture.scrollLeft + gesture.x - event.clientX;
+      event.currentTarget.scrollTop = gesture.scrollTop + gesture.y - event.clientY;
+    }
+  };
+
   const handleTouchPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const wasPinching = pointersRef.current.size > 1;
+    pointersRef.current.delete(event.pointerId);
+    gestureRef.current = null;
     const start = touchStartRef.current;
     touchStartRef.current = null;
     if (
-      start === null ||
+      start === null || wasPinching ||
       event.pointerType !== "touch" ||
       event.pointerId !== start.pointerId ||
-      mode === "vertical" ||
       event.timeStamp - start.startedAt > 350 ||
-      Math.hypot(event.clientX - start.x, event.clientY - start.y) >= 12
+      Math.abs(event.clientY - start.y) >= 60
     ) return;
 
     const target = event.target as HTMLElement;
     if (target.closest("button,a,input,textarea,select,[contenteditable='true']") !== null) return;
+    if (mode === "vertical") {
+      if (Math.hypot(event.clientX - start.x, event.clientY - start.y) < 12) setControlsVisible((visible) => !visible);
+      return;
+    }
     const bounds = event.currentTarget.getBoundingClientRect();
     if (bounds.width <= 0) return;
+    const deltaX = event.clientX - start.x;
+    if (Math.abs(deltaX) >= 50 && Math.abs(deltaX) > Math.abs(event.clientY - start.y) * 1.5) {
+      goToPage(page + ((deltaX < 0) !== rtl ? 1 : -1) * (mode === "double" ? 2 : 1));
+      return;
+    }
+    if (Math.hypot(deltaX, event.clientY - start.y) >= 12) return;
     const relativeX = (event.clientX - bounds.left) / bounds.width;
+    if (zoom > 1) {
+      if (event.timeStamp - lastTapRef.current < 300 && lastTapRef.current > 0) changeZoom(1);
+      lastTapRef.current = event.timeStamp;
+      return;
+    }
     const isForward = relativeX >= 0.7
       ? !rtl
       : relativeX <= 0.3
         ? rtl
         : null;
-    if (isForward === null) return;
+    if (isForward === null) {
+      if (event.timeStamp - lastTapRef.current < 300 && lastTapRef.current > 0) changeZoom(zoom > 1 ? 1 : 2);
+      else setControlsVisible((visible) => !visible);
+      lastTapRef.current = event.timeStamp;
+      return;
+    }
 
     const spreadStep = mode === "double" ? 2 : 1;
     const canMoveForward = mode === "double"
@@ -1032,6 +1205,9 @@ export function ReaderPage() {
     naturalWidth: number,
     naturalHeight: number,
   ) => {
+    if (naturalWidth > 0 && naturalHeight > 0 && pageRatios.get(pageNumber) !== naturalWidth / naturalHeight) {
+      setPageRatios((current) => new Map(current).set(pageNumber, naturalWidth / naturalHeight));
+    }
     const resource = pageResourcesRef.current.get(pageNumber);
     if (
       resource?.kind !== "ready" ||
@@ -1110,9 +1286,11 @@ export function ReaderPage() {
         )}
         onError={() => markPageDecodeError(pageNumber)}
         src={resource.url}
+        draggable={false}
         style={{
-          transform: fit === null ? `scale(${zoom})` : undefined,
-          transformOrigin: "center",
+          width: vertical && fit !== "height" ? `${verticalWidth * zoom}px` : undefined,
+          transform: !vertical && fit === null ? `scale(${zoom})` : undefined,
+          transformOrigin: "top left",
           "--reader-page-height": `${verticalPageHeight}px`,
         } as CSSProperties}
       />
@@ -1121,18 +1299,37 @@ export function ReaderPage() {
 
   return (
     <section
-      className={`${styles.page} ${eReader ? styles.ereaderProfile : ""}`}
+      className={`${styles.page} ${eReader ? styles.ereaderProfile : ""} ${immersive ? styles.immersive : ""} ${continuous ? styles.continuous : ""}`}
       aria-labelledby="reader-title"
       onKeyDown={handleReaderKeyDown}
+      onMouseMove={() => {
+        if (Date.now() - activityRef.current < 500) return;
+        activityRef.current = Date.now();
+        setActivity(activityRef.current);
+        setControlsVisible(true);
+      }}
       ref={readerRootRef}
+      tabIndex={-1}
     >
+      <div className={styles.readerChrome} ref={controlsRef}
+        inert={immersive && !controlsVisible ? true : undefined}
+        aria-hidden={immersive && !controlsVisible ? true : undefined}>
       <header className={styles.pageHeader}>
         <div>
           <Link className={styles.textLink} to={`/series/${chapter.seriesId}`}>
             ← Volver a la serie
           </Link>
-          <p className={styles.eyebrow}>Lector</p>
+          <p className={styles.eyebrow}>{seriesQuery.data?.displayTitle ?? "Lector"}</p>
           <h1 id="reader-title">{chapter.displayLabel}</h1>
+        </div>
+        <div className={styles.headerActions}>
+          <button className={styles.secondaryButton} aria-pressed={immersive}
+            onClick={(event) => {
+              setImmersive(!immersive); setControlsVisible(true);
+              if (event.detail > 0) readerRootRef.current?.focus();
+            }} type="button">Modo inmersivo</button>
+          <button className={styles.secondaryButton} aria-expanded={optionsOpen} aria-controls="reader-options"
+            onClick={() => setOptionsOpen(!optionsOpen)} type="button">Opciones de lectura</button>
         </div>
       </header>
 
@@ -1259,7 +1456,9 @@ export function ReaderPage() {
           Doble página
         </button>
       </div>
+      {readerSettings.mode === "double" && mode === "single" ? <p className={styles.shortcuts}>La doble página se recuperará al ampliar la pantalla.</p> : null}
 
+      <div id="reader-options" hidden={!optionsOpen} className={styles.optionsPanel}>
       <div className={styles.readerTools} role="group" aria-label="Controles de vista">
         <button
           aria-label="Derecha a izquierda"
@@ -1331,6 +1530,12 @@ export function ReaderPage() {
           Perfil e-reader
         </button>
       </div>
+      <div className={styles.readerTools}>
+        <button className={styles.secondaryButton} aria-pressed={continuous} onClick={() => setContinuous(!continuous)} type="button">Webtoon sin separación</button>
+        <label><input type="checkbox" checked={autoChapter} onChange={(event) => setAutoChapter(event.target.checked)} /> Continuar al siguiente capítulo automáticamente</label>
+        <p className={styles.shortcuts}>Atajos: ← → páginas · + − zoom · 0 restablecer · F pantalla completa · Escape mostrar controles.</p>
+      </div>
+      </div>
 
       <nav aria-label="Navegación de páginas" className={styles.controls}>
         <button
@@ -1341,18 +1546,42 @@ export function ReaderPage() {
         >
           Página anterior
         </button>
-        <span aria-live="polite" className={styles.pageNumber}>
+        <button type="button" className={`${styles.secondaryButton} ${styles.pageNumber}`} aria-expanded={navigatorOpen}
+          aria-controls="reader-navigator" onClick={() => { setJumpPage(page); setNavigatorOpen(!navigatorOpen); }}>
           {pagePositionLabel}
-        </span>
+        </button>
         <button
           className={styles.secondaryButton}
-          disabled={nextDisabled}
-          onClick={() => goToPage(page + (mode === "double" ? 2 : 1))}
+          disabled={nextDisabled && !(autoChapter && adjacentQuery.data?.next)}
+          onClick={() => {
+            if (nextDisabled && autoChapter && adjacentQuery.data?.next) navigate(`/reader/${adjacentQuery.data.next.chapterId}`, { state: { originatingSeriesId: chapter.seriesId } });
+            else goToPage(page + (mode === "double" ? 2 : 1));
+          }}
           type="button"
         >
           Página siguiente
         </button>
       </nav>
+      {navigatorOpen ? <form id="reader-navigator" className={styles.navigator} onSubmit={(event) => {
+        event.preventDefault(); goToPage(jumpPage); setNavigatorOpen(false);
+      }}>
+        <label>Ir a la página <input type="number" min={1} max={chapter.pageCount} required
+          value={jumpPage} onChange={(event) => setJumpPage(Math.max(1, Math.min(chapter.pageCount, Number(event.target.value) || 1)))} /></label>
+        <button className={styles.secondaryButton} type="submit">Ir</button>
+        <button className={styles.secondaryButton} type="button" onClick={() => setNavigatorOpen(false)}>Cerrar páginas</button>
+        <div className={styles.thumbnails}>{previewPages.map((number) => {
+          const resource = pageResources.get(number);
+          return <button className={styles.thumbnail} type="button" key={number} aria-label={`Ir a página ${number}`}
+            onClick={() => { goToPage(number); setNavigatorOpen(false); }}>
+            {resource?.kind === "ready" ? <img src={resource.url} alt={`Miniatura de página ${number}`} draggable={false}
+              onLoad={(event) => markPageDecoded(number, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)} /> : <span>Vista previa</span>}
+            <span>{number}</span>
+          </button>;
+        })}</div>
+      </form> : null}
+      </div>
+      {immersive && !controlsVisible ? <button type="button" className={styles.revealControls}
+        onClick={() => setControlsVisible(true)}>Mostrar controles</button> : null}
 
       {mode === "single" ? (
         <div
@@ -1362,9 +1591,12 @@ export function ReaderPage() {
             pageResources.get(page)?.chapterId !== readerChapterId ||
             pageResources.get(page)?.kind === "loading"
           }
-          onPointerCancel={() => { touchStartRef.current = null; }}
-          onPointerDown={handleTouchPointerDown}
+          onPointerCancel={() => { touchStartRef.current = null; pointersRef.current.clear(); gestureRef.current = null; }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
           onPointerUp={handleTouchPointerUp}
+          onDoubleClick={() => changeZoom(zoom > 1 ? 1 : 2)}
+          style={{ touchAction: zoom > 1 ? "none" : "pan-y" }}
           role="region"
           tabIndex={0}
         >
@@ -1378,9 +1610,12 @@ export function ReaderPage() {
             pageResources.get(pageNumber)?.chapterId !== readerChapterId ||
             pageResources.get(pageNumber)?.kind === "loading"
           ))}
-          onPointerCancel={() => { touchStartRef.current = null; }}
-          onPointerDown={handleTouchPointerDown}
+          onPointerCancel={() => { touchStartRef.current = null; pointersRef.current.clear(); gestureRef.current = null; }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
           onPointerUp={handleTouchPointerUp}
+          onDoubleClick={() => changeZoom(zoom > 1 ? 1 : 2)}
+          style={{ touchAction: zoom > 1 ? "none" : "pan-y" }}
           role="region"
           tabIndex={0}
         >
@@ -1397,6 +1632,11 @@ export function ReaderPage() {
           ref={verticalViewportRef}
           aria-label="Páginas en lectura vertical"
           className={styles.verticalViewport}
+          onWheel={() => { scrollInteractionRef.current = true; programScrollRef.current = null; }}
+          onPointerDown={(event) => { scrollInteractionRef.current = true; programScrollRef.current = null; handleTouchPointerDown(event); }}
+          onKeyDown={() => { scrollInteractionRef.current = true; programScrollRef.current = null; }}
+          onPointerUp={handleTouchPointerUp}
+          onPointerCancel={() => { touchStartRef.current = null; }}
           onScroll={(event) => handleVerticalScroll(
             event.currentTarget.scrollTop,
             event.currentTarget.clientHeight,
@@ -1412,7 +1652,7 @@ export function ReaderPage() {
             <div
               aria-hidden="true"
               className={styles.verticalSpacer}
-              style={{ height: `${(firstVerticalPage - 1) * verticalPageStep}px` }}
+              style={{ height: `${layout.offsets[firstVerticalPage - 1]}px` }}
             />
             {verticalPages.map((pageNumber) => (
               <article
@@ -1425,6 +1665,7 @@ export function ReaderPage() {
                 data-testid="reader-page-slot"
                 key={pageNumber}
                 role="group"
+                style={{ height: `${layout.heights[pageNumber - 1]}px` }}
               >
                 {renderPage(pageNumber, true)}
               </article>
@@ -1432,11 +1673,19 @@ export function ReaderPage() {
             <div
               aria-hidden="true"
               className={styles.verticalSpacer}
-              style={{ height: `${(chapter.pageCount - lastVerticalPage) * verticalPageStep}px` }}
+              style={{ height: `${layout.offsets[chapter.pageCount]! - layout.offsets[lastVerticalPage]!}px` }}
             />
           </div>
         </div>
       )}
+      {nextDisabled || atVerticalEnd ? <footer className={styles.chapterEnd}>
+        <div><strong>Final del capítulo</strong><span>{chapter.displayLabel}</span></div>
+        {adjacentQuery.isError ? <button className={styles.secondaryButton} type="button" onClick={() => void adjacentQuery.refetch()}>Reintentar capítulos</button> : null}
+        {adjacentQuery.data?.previous ? <Link className={styles.secondaryButton} to={`/reader/${adjacentQuery.data.previous.chapterId}`} state={{ originatingSeriesId: chapter.seriesId }}>Capítulo anterior</Link> : null}
+        {adjacentQuery.data?.next ? <Link className={styles.primaryButton} to={`/reader/${adjacentQuery.data.next.chapterId}`} state={{ originatingSeriesId: chapter.seriesId }}>Siguiente capítulo · {adjacentQuery.data.next.displayLabel}</Link>
+          : <Link className={styles.secondaryButton} to={readerReturnHref}>Volver a la ficha</Link>}
+        {autoChapter && atVerticalEnd && adjacentQuery.data?.next ? <span>El siguiente capítulo se abrirá en 5 segundos. <button type="button" className={styles.secondaryButton} onClick={() => setAutoChapter(false)}>Cancelar avance automático</button></span> : null}
+      </footer> : null}
     </section>
   );
 }

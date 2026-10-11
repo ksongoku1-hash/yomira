@@ -269,8 +269,11 @@ def test_fallback_preserves_user_actions_and_storage_failures(tmp_path, state):
                 service.import_library_series(
                     connector=FMD2_METADATA,
                     remote_series_id=reference(INMANGA),
-                    series_metadata=connector.normalize_metadata(
-                        await connector.get_series(reference(INMANGA))
+                    series_metadata=replace(
+                        connector.normalize_metadata(
+                            await connector.get_series(reference(INMANGA))
+                        ),
+                        title="Unrelated work",
                     ),
                 )
             else:

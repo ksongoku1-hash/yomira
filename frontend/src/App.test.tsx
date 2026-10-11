@@ -499,7 +499,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Tu próxima historia empieza aquí." }))
+    expect(await screen.findByRole("heading", { level: 1, name: "Berserk" }))
       .toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "Continuar Capítulo 8" })).toHaveAttribute(
       "href", `/reader/${syntheticSeriesId(11)}`,
@@ -543,7 +543,8 @@ describe("App", () => {
       "href",
       `/series/${syntheticSeriesId(1)}`,
     );
-    fireEvent.click(screen.getByRole("link", { name: "Inicio" }));
+    fireEvent.click(screen.getByRole("link", { name: /Volver a/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Inicio" }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) =>
       String(input) === "/api/v1/reader/progress/recent?limit=4"
     )).toHaveLength(2));
@@ -1323,7 +1324,8 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("link", { name: "Berserk" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "Berserk" })).toBeInTheDocument();
-    expect(screen.getByText("A detailed local description.")).toBeInTheDocument();
+    expect(screen.getAllByText("A detailed local description.")[0]).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Metadatos y procedencia"));
     expect(screen.getByText("En publicación")).toBeInTheDocument();
     expect(screen.getByText("ja")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Volver a Biblioteca" })).toHaveAttribute(

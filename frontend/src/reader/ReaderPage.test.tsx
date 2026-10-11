@@ -94,6 +94,9 @@ function renderReaderPage(
   }
   vi.stubGlobal("URL", TestURL);
   const fetchWithReaderSettings = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).startsWith("/api/v1/series/") || String(input).startsWith("/api/v1/reader/series/")) {
+      return Promise.resolve(jsonResponse({ data: null, meta: {} }, 404));
+    }
     if (String(input) === READER_SETTINGS_PATH && init?.method !== "PUT") {
       return Promise.resolve(readerSettings === "error"
         ? jsonResponse({
@@ -125,7 +128,13 @@ function renderReaderPage(
   return { ...view, queryClient };
 }
 
+function viewButton(name: string) {
+  if (!screen.queryByRole("button", { name })) fireEvent.click(screen.getByRole("button", { name: "Opciones de lectura" }));
+  return screen.getByRole("button", { name });
+}
+
 afterEach(() => {
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -436,6 +445,8 @@ describe("ReaderPage", () => {
     expect(verticalRegion.querySelectorAll("[data-testid='reader-page-slot']")).toHaveLength(3);
     expect(screen.getAllByRole("img").length).toBeLessThanOrEqual(4);
 
+    fireEvent.wheel(verticalRegion, { deltaY: 100 });
+
     fireEvent.scroll(verticalRegion, { target: { scrollTop: Number.MAX_SAFE_INTEGER } });
     await screen.findByRole("img", { name: "Capítulo 8, página 2000 de 2000" });
     await waitFor(() => {
@@ -480,6 +491,7 @@ describe("ReaderPage", () => {
     await waitFor(() => expect(pendingSignals.size).toBe(2));
     const createObjectURL = vi.mocked(URL.createObjectURL);
     const revokeObjectURL = vi.mocked(URL.revokeObjectURL);
+    fireEvent.wheel(verticalRegion, { deltaY: 100 });
     fireEvent.scroll(verticalRegion, { target: { scrollTop: Number.MAX_SAFE_INTEGER } });
 
     await screen.findByRole("img", { name: "Capítulo 8, página 500 de 500" });
@@ -680,7 +692,7 @@ describe("ReaderPage", () => {
       "Capítulo 8, página 2 de 4",
       "Capítulo 8, página 1 de 4",
     ]);
-    expect(screen.getByRole("button", { name: "Derecha a izquierda" }))
+    expect(viewButton("Derecha a izquierda"))
       .toHaveAttribute("aria-pressed", "true");
   });
 
@@ -696,22 +708,22 @@ describe("ReaderPage", () => {
     renderReaderPage(fetchMock);
     const image = await screen.findByRole("img", { name: "Capítulo 8, página 1 de 2" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Acercar" }));
+    fireEvent.click(viewButton("Acercar"));
     expect(screen.getByText("125 %")).toBeInTheDocument();
     expect(image).toHaveStyle({ transform: "scale(1.25)" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Ajustar al ancho" }));
-    expect(screen.getByRole("button", { name: "Ajustar al ancho" }))
+    fireEvent.click(viewButton("Ajustar al ancho"));
+    expect(viewButton("Ajustar al ancho"))
       .toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByRole("button", { name: "Ajustar al alto" }));
-    expect(screen.getByRole("button", { name: "Ajustar al alto" }))
+    fireEvent.click(viewButton("Ajustar al alto"));
+    expect(viewButton("Ajustar al alto"))
       .toHaveAttribute("aria-pressed", "true");
 
-    fireEvent.click(screen.getByRole("button", { name: "Restablecer zoom" }));
+    fireEvent.click(viewButton("Restablecer zoom"));
     expect(screen.getByText("100 %")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ajustar al alto" }))
+    expect(viewButton("Ajustar al alto"))
       .toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("button", { name: "Acercar" })).toBeEnabled();
+    expect(viewButton("Acercar")).toBeEnabled();
   });
 
   it("keeps the reader usable when fullscreen is unsupported", async () => {
@@ -726,7 +738,7 @@ describe("ReaderPage", () => {
     renderReaderPage(fetchMock);
     await screen.findByRole("img", { name: "Capítulo 8, página 1 de 2" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Pantalla completa" }));
+    fireEvent.click(viewButton("Pantalla completa"));
     expect(await screen.findByRole("status"))
       .toHaveTextContent("Este navegador no admite pantalla completa para el lector.");
     expect(screen.getByRole("img", { name: "Capítulo 8, página 1 de 2" }))
@@ -826,8 +838,8 @@ describe("ReaderPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Vertical" }));
     const viewport = await screen.findByRole("region", { name: "Páginas en lectura vertical" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Alejar" }));
-    fireEvent.click(screen.getByRole("button", { name: "Alejar" }));
+    fireEvent.click(viewButton("Alejar"));
+    fireEvent.click(viewButton("Alejar"));
 
     expect(screen.getByText("50 %")).toBeInTheDocument();
     expect(viewport.style.getPropertyValue("--reader-vertical-page-height"))
@@ -861,7 +873,7 @@ describe("ReaderPage", () => {
       expect(fetchMock.mock.calls.filter(([input]) => String(input).match(/\/pages\/\d+$/)))
         .toHaveLength(3);
     });
-    const profile = await screen.findByRole("button", { name: "Perfil e-reader" });
+    const profile = await waitFor(() => viewButton("Perfil e-reader"));
     fireEvent.click(profile);
 
     await waitFor(() => expect(settingsWrites.at(-1)).toMatchObject({
@@ -922,8 +934,9 @@ describe("ReaderPage", () => {
     await screen.findByRole("img", { name: "Capítulo 8, página 1 de 4" });
     const viewport = screen.getByRole("region", { name: "Páginas en lectura vertical" });
     Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 553 });
-    fireEvent.click(screen.getByRole("button", { name: "Alejar" }));
-    fireEvent.click(screen.getByRole("button", { name: "Alejar" }));
+    fireEvent.click(viewButton("Alejar"));
+    fireEvent.click(viewButton("Alejar"));
+    fireEvent.wheel(viewport, { deltaY: 100 });
     fireEvent.scroll(viewport, { target: { scrollTop: 200 } });
 
     expect(await screen.findByRole("img", { name: "Capítulo 8, página 2 de 4" }))
@@ -1101,7 +1114,7 @@ describe("ReaderPage", () => {
     expect(await screen.findByText(/No se pudieron cargar las preferencias del lector/))
       .toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Vertical" }));
-    fireEvent.click(screen.getByRole("button", { name: "Derecha a izquierda" }));
+    fireEvent.click(viewButton("Derecha a izquierda"));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(fetchMock.mock.calls.filter(([input, init]) => (

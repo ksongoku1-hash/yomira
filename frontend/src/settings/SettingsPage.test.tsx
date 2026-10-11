@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsPage } from "./SettingsPage";
+import { useAppearanceStore } from "../app/appearanceStore";
 
 function mockResponse(payload: unknown, status = 200): Response {
   return {
@@ -36,6 +37,25 @@ afterEach(() => {
 });
 
 describe("SettingsPage", () => {
+  it("applies appearance immediately without submitting reader settings", async () => {
+    useAppearanceStore.setState({ enabled: true, intensity: 60, simpleGraphics: false, storageError: false });
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(mockResponse(null, 500));
+    vi.stubGlobal("fetch", fetchMock);
+    renderSettingsPage();
+    const slider = screen.getByRole("slider", { name: "Intensidad del fondo: 60%" });
+    fireEvent.change(slider, { target: { value: "35" } });
+    expect(useAppearanceStore.getState().intensity).toBe(35);
+    expect(screen.getByRole("slider", { name: "Intensidad del fondo: 35%" })).toHaveValue("35");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Fondos ilustrados" }));
+    expect(slider).toBeDisabled();
+    expect(useAppearanceStore.getState().enabled).toBe(false);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Gráficos sencillos" }));
+    expect(useAppearanceStore.getState().simpleGraphics).toBe(true);
+    await screen.findByRole("alert");
+    expect(fetchMock.mock.calls.every((call) => call[1]?.method !== "PUT")).toBe(true);
+    useAppearanceStore.setState({ enabled: true, intensity: 60, simpleGraphics: false, storageError: false });
+  });
   it("edits only cache and bounded preload settings while preserving the full DTO", async () => {
     const settings = {
       cache_limit_mb: 256,

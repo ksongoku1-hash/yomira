@@ -1,0 +1,42 @@
+.backdrop {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  max-height: 44rem;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--background);
+}
+
+.illustration {
+  position: absolute;
+  inset: -4px -4px -4px auto;
+  width: 86%;
+  height: calc(100% + 8px);
+  object-fit: cover;
+  object-position: center 22%;
+  filter: blur(3px) saturate(0.65);
+  transition: opacity 240ms ease;
+}
+
+.shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(0deg, var(--background), #080c139c 22%, transparent 65%),
+    linear-gradient(90deg, var(--background) 3%, #080c13ed 24%, #080c1399 60%, #080c1366);
+}
+
+@media (max-width: 700px) {
+  .illustration { width: calc(100% + 8px); object-position: 60% 25%; }
+  .shade {
+    background:
+      linear-gradient(0deg, var(--background), #090d16eb 35%, #090d168c),
+      linear-gradient(90deg, #090d16a6, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .illustration { transition: none; }
+}

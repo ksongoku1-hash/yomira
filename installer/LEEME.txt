@@ -1,42 +1,34 @@
-YOMIRA - VERSION DE PRUEBA PARA WINDOWS X64
+YOMIRA 0.1.7 — INSTALACION SENCILLA EN WINDOWS 10/11 DE 64 BITS
 
-1. Descarga Yomira-Windows-x64-2026.10.09.zip desde la seccion Releases:
-   https://github.com/ksongoku1-hash/yomira/releases
-2. Extrae TODO el ZIP a una carpeta donde puedas escribir, por ejemplo:
-   Documentos\Yomira. No la pongas dentro de Mangas de Yomira ni Program Files.
-3. Abre "Abrir Yomira.cmd". La primera apertura puede tardar unos segundos.
-4. Se abrira el navegador. Si no lo hace, entra en:
-   http://127.0.0.1:8000/library
+1. Descarga Yomira-Setup-0.1.7.exe:
+   https://github.com/ksongoku1-hash/yomira/releases/tag/v0.1.7
+2. Abre el archivo y pulsa Instalar.
+3. Pulsa Finalizar dejando marcada la casilla Abrir Yomira.
 
-No necesitas instalar Python, Node.js ni FMD por separado.
-Puedes minimizar la ventana de Yomira. El motor FMD se abre en segundo plano.
-Para cerrar Yomira, vuelve a su ventana y pulsa Ctrl+C. Cerrar solo la pestana
-del navegador no detiene el servidor ni las descargas.
+La pagina se abre automaticamente en tu navegador. Para usarla otro dia,
+abre el acceso directo Yomira del escritorio o del menu Inicio.
+No necesitas comandos, pip, Python, Node.js ni instalar FMD por separado.
 
-TU BIBLIOTECA
-Los mangas se guardan en Documentos\Mangas de Yomira (tambien si Windows
-redirige Documentos a OneDrive). Los datos y el historial se guardan en:
+Cada amigo instala Yomira en su propio PC. Cada PC tiene su propia biblioteca.
+Los mangas se guardan en Documentos\Mangas de Yomira (incluida la ubicacion
+redirigida a OneDrive). Los datos y el progreso se guardan en:
 %LOCALAPPDATA%\Yomira\YomiraData
-El paquete no contiene mangas ni datos personales del desarrollador.
-Incluye catalogos publicos de titulos de FMD; no son una biblioteca descargada.
 
-PRIMERA PRUEBA
-Busca una obra, anadela a la biblioteca y descarga un capitulo. Comprueba que
-aparece en la ficha y que el lector muestra las paginas. Tambien puedes poner
-una carpeta con imagenes, un CBZ/ZIP o un EPUB con imagenes en Mangas de Yomira.
-Las fuentes externas pueden cambiar, bloquear conexiones o dejar de responder.
+Puedes minimizar la ventana de Yomira. Para detener el programa y las
+descargas, vuelve a su ventana y pulsa Ctrl+C. Cerrar la pestana del navegador
+no detiene Yomira. Si no se abre la pagina, entra en:
+http://127.0.0.1:8000/library
 
-PROBLEMAS
-- Extrae todo el archivo; abrir el programa dentro del ZIP no funciona.
-- Si el puerto 8000 esta ocupado, cierra la otra instancia de Yomira.
-- Para enviar un error, indica que estabas haciendo, el manga y el capitulo.
-  No publiques bases de datos, tokens, cookies ni registros completos.
-- Esta version no esta firmada digitalmente. Comprueba su procedencia y el
-  SHA256 publicado. No desactives el antivirus para ejecutarla.
+ACTUALIZAR: cierra Yomira e instala la nueva version. Tus mangas y progreso
+estan fuera de la carpeta del programa. Cierra cualquier version portatil
+anterior antes de usar la instalada.
 
-COMPONENTES
-FMD2 adaptado y avisos: Motor\licenses y Licencias.
-El codigo fuente correspondiente a FMD se ofrece en la misma Release.
-El codigo de Yomira esta en el repositorio. La licencia abierta del codigo
-propio sigue pendiente de eleccion; los componentes externos conservan sus
-licencias. Esta es una distribucion de prueba, no una version estable.
+VERSION PORTATIL: descarga Yomira-Windows-x64-0.1.7.zip, extrae TODO su
+contenido en una carpeta y abre Yomira.exe. No lo abras dentro del ZIP.
+
+Esta es una version de prueba sin firma digital. Windows puede mostrar
+un aviso. Comprueba que la descarga procede del GitHub indicado. Las fuentes
+externas pueden cambiar o dejar de responder.
+
+Se incluyen licencias y avisos en Licencias y Motor\licenses. El codigo
+fuente correspondiente de FMD se ofrece en la misma Release.

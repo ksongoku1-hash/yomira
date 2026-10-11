@@ -62,7 +62,6 @@ from app.services.cover_assets import (  # pyright: ignore[reportPrivateUsage]
     _completed_io,  # pyright: ignore[reportPrivateUsage]
 )
 from app.services.external_metadata import (  # pyright: ignore[reportPrivateUsage]
-    _query_title,  # pyright: ignore[reportPrivateUsage]
     _title_key,  # pyright: ignore[reportPrivateUsage]
 )
 from app.services.image_validation import (
@@ -72,6 +71,7 @@ from app.services.image_validation import (
     validate_image_file,
 )
 from app.services.reader_asset import ReaderAssetLimits, ReaderAssetService
+from app.services.series_matching import matching_library_series
 from app.tracing import create_trace_id
 
 logger = logging.getLogger("yomira.local_import")
@@ -805,30 +805,18 @@ class LocalImportService:
                     association.remote_url = input_reference
                 return existing_series, False
             with self._database.read_session() as session:
-                rows = list(session.scalars(select(SeriesRow)))
-                matches = [
-                    row
-                    for row in rows
-                    if _title_key(title)
-                    in {_title_key(row.canonical_title), _title_key(row.display_title)}
-                ]
-                if not matches:
-                    base, year = _query_title(title)
-                    matches = [
-                        row
-                        for row in rows
-                        if _title_key(_query_title(row.canonical_title)[0]) == _title_key(base)
-                        and (year is None or _query_title(row.canonical_title)[1] == year)
-                    ]
+                language = metadata.get("LanguageISO")
+                matches = matching_library_series(
+                    session, title=title, author=metadata.get("Writer"), language=language
+                )
                 if restore_chapter is not None:
-                    matches = [
-                        row for row in rows if row.series_id == str(restore_chapter.series_id)
-                    ]
+                    restored_series = session.get(SeriesRow, str(restore_chapter.series_id))
+                    assert restored_series is not None
+                    matches = [restored_series]
                 if len(matches) > 1:
                     raise ValueError(
                         "Hay varias ediciones con ese nombre; usa un nombre más específico"
                     )
-                language = metadata.get("LanguageISO")
                 series = (
                     series_from_row(matches[0])
                     if matches
@@ -853,7 +841,7 @@ class LocalImportService:
                 chapter_major=sort_key[0] if label.startswith("Capítulo ") else None,
                 chapter_minor=sort_key[1] if len(sort_key) > 1 else None,
                 chapter_type="CHAPTER",
-                language=series.language,
+                language=language[:64] if language and language != "und" else series.language,
             )
             target_dir = self._directory(f"chapters/{series.series_id}", library=True)
             destination = target_dir / f"{chapter.chapter_id}-{job_id}.cbz"
@@ -868,7 +856,7 @@ class LocalImportService:
                     writer=series.author,
                     summary=series.description,
                     genres=series.genres,
-                    language_iso=series.language,
+                    language_iso=chapter.language,
                 ),
                 pages=tuple(pages),
                 job_id=job_id,

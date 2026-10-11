@@ -12,10 +12,10 @@ AppId={{10ECACF2-F35D-4E4E-A962-6F4E7B11E01E}
 AppName=Yomira
 AppVersion={#AppVersion}
 AppPublisher=Yomira
-DefaultDirName={autopf}\Yomira
+DefaultDirName={localappdata}\Programs\Yomira
 DisableDirPage=yes
 UsePreviousAppDir=yes
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
 AppMutex=Local\Yomira.V1.Backend
@@ -28,9 +28,16 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 
+[Languages]
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+
 [Files]
 ; The K258 onedir tree is the only installed payload. DataRoot and library_root stay external.
 Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\Yomira"; Filename: "{app}\Yomira.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\Yomira"; Filename: "{app}\Yomira.exe"; WorkingDir: "{app}"
+
+[Run]
+Filename: "{app}\Yomira.exe"; WorkingDir: "{app}"; Description: "Abrir Yomira"; Flags: postinstall nowait skipifsilent

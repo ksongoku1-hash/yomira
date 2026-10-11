@@ -1,14 +1,23 @@
 
 .page { display: grid; gap: 2.25rem; min-width: 0; }
-.welcome { position: relative; isolation: isolate; min-width: 0; overflow: hidden; border: 1px solid #75d5ff22; border-radius: 1.25rem; background: var(--background) url("/assets/brand/yomira-manga-hero-v2.png") right center / cover no-repeat; }
-.welcomeCopy { display: grid; align-content: center; justify-items: start; gap: 0.75rem; min-height: 24rem; width: 65%; padding: clamp(1.5rem, 3vw, 2.5rem); background: linear-gradient(90deg, #090d16dc, #090d1666 80%, transparent); }
+.welcome { position: relative; isolation: isolate; min-width: 0; overflow: hidden; border: 1px solid var(--panel-border); border-radius: 1.25rem; background: var(--background); box-shadow: var(--panel-shadow); }
+.welcome::after { position: absolute; inset: 0 8% auto; height: 1px; background: linear-gradient(90deg, transparent, #75d5ff55, transparent); content: ""; pointer-events: none; }
+.welcomeCopy { position: relative; z-index: 1; display: grid; align-content: center; justify-items: start; gap: 1rem; min-height: 29rem; width: 64%; padding: clamp(1.5rem, 4vw, 3.5rem); }
 .eyebrow { margin: 0; color: var(--accent); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; }
-.welcomeCopy h1 { max-width: 16ch; margin: 0; color: var(--text); font-size: clamp(2.3rem, 4.3vw, 4rem); letter-spacing: -0.045em; line-height: 1.04; }
+.welcomeCopy h1 { max-width: 15ch; margin: 0; color: var(--text); font-size: clamp(2.5rem, 4.8vw, 4.75rem); letter-spacing: -0.055em; line-height: 1.06; overflow-wrap: anywhere; text-wrap: balance; }
 .welcomeCopy h1 span { color: var(--accent); }
 .intro { max-width: 43ch; margin: 0; color: var(--text-secondary); line-height: 1.65; }
-.resumeTitle { max-width: 100%; overflow-wrap: anywhere; display: grid; gap: 0.25rem; margin: 0.5rem 0 0; color: var(--text); font-weight: 700; }
+.resumeTitle { max-width: 100%; overflow-wrap: anywhere; display: grid; gap: 0.25rem; margin: 0.5rem 0 0; padding: 0.3rem 0 0.3rem 0.85rem; border-left: 2px solid var(--accent); color: var(--text); font-size: 1.1rem; font-weight: 700; }
 .resumeTitle span { color: var(--text-muted); font-size: 0.85rem; font-weight: 400; }
+.featuredTitle { display: grid; gap: 0.25rem; max-width: 100%; margin-top: 0.5rem; color: var(--text); font-weight: 700; text-decoration: none; overflow-wrap: anywhere; }
+.featuredTitle span { color: var(--text-muted); font-size: 0.75rem; font-weight: 400; }
+.featuredTitle:hover { color: var(--accent); }
 .heroActions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.35rem; }
+.heroPoster { position: absolute; top: 50%; right: 8%; width: clamp(10rem, 19vw, 15rem); transform: translateY(-50%); border: 1px solid #d8efff38; border-radius: 0.85rem; overflow: hidden; background: var(--surface-soft); box-shadow: 0 24px 56px #0009; color: var(--text); text-decoration: none; }
+.heroPoster > span:first-child { display: block; }
+.heroPoster img, .heroPoster [role="img"] { display: block; width: 100%; border: 0; border-radius: 0; aspect-ratio: 2 / 3; object-fit: contain; }
+.posterCaption { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.75rem; font-size: 0.75rem; background: var(--panel-background); }
+.posterCaption > span { color: var(--accent); font-size: 1rem; }
 .primaryAction, .secondaryAction, .libraryLink, .diagnosticsLink { display: inline-flex; min-height: 2.75rem; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.7rem 1.1rem; border: 1px solid transparent; border-radius: 0.45rem; font: inherit; font-size: 0.9rem; font-weight: 650; text-decoration: none; }
 .primaryAction { background: var(--accent); color: var(--background); box-shadow: 0 4px 24px #75d5ff22; }
 .primaryAction:hover { background: var(--accent-hover); }
@@ -30,24 +39,25 @@
 .errorDetails { font-size: 0.85rem; }
 .errorDetails code { color: #ffd5d8; overflow-wrap: anywhere; }
 .recentSections { display: flex; flex-direction: column; gap: 2.25rem; min-width: 0; }
-.recentSection { display: grid; gap: 1rem; min-width: 0; }
+.recentSection { display: grid; gap: 1.25rem; min-width: 0; padding: clamp(1rem, 2vw, 1.5rem); border-top: 1px solid var(--panel-border); }
 .sectionHeader { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .sectionHeader > div { display: grid; gap: 0.3rem; }
 .sectionDescription { font-size: 0.82rem; }
 .recentList { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.25rem; margin: 0; padding: 0.25rem 0.1rem 0.75rem; list-style: none; }
-.recentItem { min-width: 0; }
-.seriesLink { display: grid; gap: 0.7rem; color: var(--text); text-decoration: none; border-radius: 0.6rem; }
+.recentItem { min-width: 0; border: 1px solid var(--panel-border); border-radius: 0.85rem; background: #090d1670; box-shadow: inset 0 1px 0 #d8efff06, 0 6px 16px #00000020; transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease; }
+.recentItem:focus-within { border-color: var(--accent); }
+.seriesLink { display: grid; gap: 0.7rem; padding: 0.65rem; color: var(--text); text-decoration: none; border-radius: 0.85rem; }
 .recentCover { width: 100%; aspect-ratio: 2 / 3; border: 1px solid var(--border-color); border-radius: 0.6rem; background: var(--surface-soft); transition: transform 160ms, border-color 160ms; }
-.seriesLink:hover .recentCover, .progressChapterLink:hover .progressCover { border-color: var(--accent); transform: translateY(-3px); }
+.seriesLink:hover .recentCover, .progressChapterLink:hover .progressCover { border-color: #75d5ff66; }
 .seriesCopy { display: grid; gap: 0.3rem; min-width: 0; }
 .itemTitle { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; min-width: 0; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
 .itemMetadata { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; color: var(--text-muted); font-size: 0.75rem; }
 .seriesArrow { display: none; }
-.progressItem { display: grid; gap: 0.5rem; min-width: 0; }
+.progressItem { display: grid; gap: 0.5rem; min-width: 0; padding: 0.65rem; }
 .progressChapterLink { position: relative; display: grid; color: var(--text); text-decoration: none; }
 .progressCover, .coverPlaceholder { width: 100%; aspect-ratio: 2 / 3; border: 1px solid var(--border-color); border-radius: 0.6rem; object-fit: contain; background: var(--surface-soft); transition: transform 160ms, border-color 160ms; }
 .coverPlaceholder { display: grid; align-content: center; justify-items: center; gap: 1rem; padding: 1rem; color: var(--text-muted); font-size: 0.85rem; text-align: center; overflow-wrap: anywhere; }
-.chapterCaption { position: absolute; right: 0.5rem; bottom: 0.5rem; left: 0.5rem; padding: 0.5rem 0.65rem; border-radius: 0.4rem; background: #090d16ec; font-size: 0.8rem; }
+.chapterCaption { position: absolute; right: 0.5rem; bottom: 0.5rem; left: 0.5rem; padding: 0.5rem 0.65rem; border: 1px solid #d8efff18; border-radius: 0.4rem; background: linear-gradient(135deg, #151d2bf5, #090d16f5); font-size: 0.8rem; }
 .chapterCaption > span { color: var(--accent); margin-right: 0.3rem; }
 .progressSeriesLink { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 0.95rem; font-weight: 650; text-decoration: none; }
 .progressSeriesLink:hover { color: var(--accent); }
@@ -61,15 +71,17 @@
 .emptyState p { max-width: 38rem; margin: 0; color: var(--text-secondary); }
 .emptyMark { width: 2rem; height: 2rem; background: url("/assets/brand/yomira-ice-mark.svg") center / contain no-repeat; }
 .sectionError { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+@media (hover: hover) and (pointer: fine) {
+  .recentItem:hover { transform: translateY(-3px); border-color: #75d5ff66; box-shadow: inset 0 1px 0 #d8efff10, 0 12px 24px #00000040; }
+}
 @media (max-width: 900px) {
-  .welcomeCopy { width: 76%; min-height: 25rem; }
-  .welcome { background-position: 65% center; }
+  .welcomeCopy { width: 64%; min-height: 26rem; }
+  .heroPoster { right: 4%; width: 27%; }
   .recentList { gap: 0.8rem; }
 }
 @media (max-width: 700px) {
-  .welcome::before { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, transparent 12rem, var(--background) 22rem); pointer-events: none; }
-  .welcome { background-position: 70% top; background-size: auto 22rem; }
-  .welcomeCopy { width: 100%; min-height: 29rem; padding: 9rem 1.25rem 2.75rem; background: linear-gradient(0deg, #090d16 15%, #090d16dd 45%, #090d1644 90%); }
+  .welcomeCopy { width: 100%; min-height: 24rem; padding: 2rem 1.25rem 3rem; }
+  .heroPoster { display: none; }
   .welcomeCopy h1 { font-size: 2.4rem; }
   .serviceReadyCard { bottom: 0.75rem; right: 1rem; }
   .recentList { grid-template-columns: repeat(4, minmax(9.5rem, 43vw)); overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }

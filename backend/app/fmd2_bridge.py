@@ -27,6 +27,7 @@ from app.connectors.metadata import ConnectorCapability, ConnectorMetadata
 from app.connectors.pages import ConnectorPageReference, PageFetchRequest
 from app.connectors.search import ConnectorSearchQuery, ConnectorSearchResult
 from app.connectors.series_metadata import ConnectorSeriesMetadata
+from app.domain.chapter import chapter_number
 from app.domain.source import SourceHealthStatus
 from app.errors import ErrorCode
 from app.platform.windows_process_job import WindowsChildJob
@@ -274,16 +275,20 @@ def fmd2_chapter_location(remote_reference: str) -> tuple[str, str, str]:
 def _chapter(
     remote_reference: str, title: str, ordinal: int | None, language: str = "en"
 ) -> ConnectorChapter:
+    number = chapter_number(title)
+    parts = (
+        tuple(int(part) for part in format(number, "f").split(".")) if number is not None else ()
+    )
     return ConnectorChapter(
         remote_id=remote_reference,
         remote_url=None,
         remote_label=title,
         chapter_raw_label=title,
-        chapter_major=ordinal,
-        chapter_minor=None,
+        chapter_major=parts[0] if parts else ordinal,
+        chapter_minor=parts[1] if len(parts) > 1 else None,
         chapter_variant=None,
         chapter_type=None,
-        chapter_sort_key=(ordinal,) if ordinal is not None else (0,),
+        chapter_sort_key=parts or ((ordinal,) if ordinal is not None else (0,)),
         volume_number=None,
         language=language,
         display_label=title,

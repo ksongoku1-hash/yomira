@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
 import styles from "./App.module.css";
 import { useShellStore } from "./app/shellStore";
+import { useAppearanceStore } from "./app/appearanceStore";
 import { DownloadsPage } from "./downloads/DownloadsPage";
 import { DiagnosticsPage } from "./diagnostics/DiagnosticsPage";
 import { HomePage } from "./home/HomePage";
@@ -62,6 +63,8 @@ const navigationSections = [
 ] as const;
 
 function AppShell() {
+  const reading = useLocation().pathname.startsWith("/reader/");
+  const simpleGraphics = useAppearanceStore((state) => state.simpleGraphics);
   const isNavigationOpen = useShellStore((state) => state.isNavigationOpen);
   const toggleNavigation = useShellStore((state) => state.toggleNavigation);
   const closeNavigation = useShellStore((state) => state.closeNavigation);
@@ -79,8 +82,9 @@ function AppShell() {
   }, [isNavigationOpen, closeNavigation]);
 
   return (
-    <div className={styles.appShell}>
-      <header className={styles.topBar}>
+    <div className={`${styles.appShell} ${reading ? styles.readerShell : ""} ${simpleGraphics ? styles.simpleGraphics : ""}`}>
+      <a className={styles.skipLink} href="#main-content">Saltar al contenido</a>
+      <header className={styles.topBar} hidden={reading}>
         <NavLink className={[styles.brand].filter(Boolean).join(" ")} to="/" onClick={closeNavigation}>
           <img alt="" className={styles.brandMark} src="/assets/brand/yomira-manga-portrait-v2.png" width="56" height="56" />
           <span>
@@ -146,7 +150,7 @@ function AppShell() {
           </nav>
       </header>
       <div className={styles.appMain}>
-        <main className={styles.mainContent}>
+        <main className={styles.mainContent} id="main-content" tabIndex={-1}>
           <Outlet />
         </main>
       </div>
