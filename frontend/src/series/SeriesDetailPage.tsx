@@ -214,13 +214,15 @@ function ReadyChapters({
           <p className={styles.eyebrow}>Guardados y comprobados</p>
           <h2 id="ready-chapters-title">Capítulos listos para leer</h2>
         </div>
-        <button type="button" className={styles.secondaryButton}
+        <button type="button" className={`${styles.secondaryButton} ${styles.orderButton}`}
           aria-label="Cambiar orden de capítulos para leer"
+          aria-pressed={chapterOrder === "desc"}
+          title={chapterOrder === "asc" ? "Ascendente: primero los capítulos iniciales" : "Descendente: primero los capítulos finales"}
           onClick={() => {
             setOffset(0);
             setChapterOrder((current) => current === "asc" ? "desc" : "asc");
           }}>
-          {chapterOrder === "asc" ? "↑ Ascendente · primero los iniciales" : "↓ Descendente · primero los últimos"}
+          <span aria-hidden="true">{chapterOrder === "asc" ? "↑" : "↓"}</span>
         </button>
       </header>
 

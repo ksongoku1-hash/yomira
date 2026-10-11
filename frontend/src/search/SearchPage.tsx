@@ -363,10 +363,12 @@ function SearchResultSource({
               ) : (
                 <>
                   <div className={styles.bulkActions}>
-                    <button className={styles.secondaryButton} type="button"
+                    <button className={`${styles.secondaryButton} ${styles.orderButton}`} type="button"
                       aria-label="Cambiar orden de capítulos para descargar"
+                      aria-pressed={chapterOrder === "desc"}
+                      title={chapterOrder === "asc" ? "Ascendente: primero los capítulos iniciales" : "Descendente: primero los capítulos finales"}
                       onClick={() => setChapterOrder((current) => current === "asc" ? "desc" : "asc")}>
-                      {chapterOrder === "asc" ? "↑ Ascendente · primero los iniciales" : "↓ Descendente · primero los últimos"}
+                      <span aria-hidden="true">{chapterOrder === "asc" ? "↑" : "↓"}</span>
                     </button>
                     <span className={styles.chapterMetadata} role="status">
                       {visibleChapters.length} de {chapters.length} capítulos visibles

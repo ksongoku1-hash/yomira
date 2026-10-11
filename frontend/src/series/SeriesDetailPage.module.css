@@ -334,6 +334,21 @@
   line-height: 1.35;
 }
 
+.chaptersHeader > div { flex: 1; min-width: 0; }
+
+.orderButton {
+  flex: 0 0 2rem;
+  width: 2rem;
+  height: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 50%;
+  background: transparent;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
 .chapterCount {
   margin: 0;
   color: var(--text-muted);

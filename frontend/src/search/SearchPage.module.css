@@ -121,6 +121,19 @@
   color: #ffb4ab;
 }
 
+.orderButton {
+  flex: 0 0 2rem;
+  width: 2rem;
+  height: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 50%;
+  background: transparent;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
 .searchEmptyState {
   display: grid;
   justify-items: start;
