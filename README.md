@@ -1,4 +1,4 @@
-# Yomira 0.1.10
+# Yomira 0.1.11
 
 Yomira es una aplicación local para Windows que organiza, descarga y permite leer mangas desde una interfaz web. Los archivos y la biblioteca se guardan en el equipo del usuario.
 
@@ -6,13 +6,13 @@ Yomira es una aplicación local para Windows que organiza, descarga y permite le
 
 **Para usar Yomira en Windows 10/11 de 64 bits:**
 
-1. [Descarga Yomira-Setup-0.1.10.exe](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.10/Yomira-Setup-0.1.10.exe).
+1. [Descarga Yomira-Setup-0.1.11.exe](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.11/Yomira-Setup-0.1.11.exe).
 2. Abre el archivo y pulsa **Instalar**. El instalador está en español y no necesita permisos de administrador.
 3. Pulsa **Finalizar** con **Abrir Yomira** marcado. La página se abre sola en tu navegador.
 
 Después, abre el acceso directo **Yomira** del escritorio o del menú Inicio. **No necesitas comandos, pip, Python, Node.js ni instalar FMD por separado.** Cada persona instala Yomira en su propio PC y tiene su propia biblioteca.
 
-También hay una [versión portátil](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.10/Yomira-Windows-x64-0.1.10.zip): extrae todo el ZIP y abre **Yomira.exe**. No ejecutes el programa dentro del ZIP.
+También hay una [versión portátil](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.11/Yomira-Windows-x64-0.1.11.zip): extrae todo el ZIP y abre **Yomira.exe**. No ejecutes el programa dentro del ZIP.
 
 El navegador se abre cuando el servidor está listo. Puedes minimizar la ventana de Yomira; vuelve a ella y pulsa **Ctrl+C** para cerrar la aplicación. Cerrar la pestaña del navegador deja las descargas en marcha. Si el navegador no se abre, entra en http://127.0.0.1:8000/library.
 
@@ -36,9 +36,9 @@ La aplicación sigue en desarrollo. Las fuentes externas pueden cambiar o dejar 
 
 ## Ordenar capítulos y organizar descargas
 
-En Buscar, abre **Ver capítulos** y pulsa la flecha **↑ / ↓** para ver primero los capítulos iniciales o los últimos. Puedes filtrar por nombre, estado e idioma. **Seleccionar pendientes visibles** marca hasta 100 capítulos que faltan y coinciden con los filtros. También puedes seleccionar un intervalo, invertir los visibles o limpiar la selección. Cambiar el orden o los filtros conserva lo que marcaste; la selección muestra si hay capítulos ocultos por los filtros. El orden de visualización no cambia el orden numérico de procesamiento de la cola.
+En Buscar, abre **Ver capítulos** y pulsa el triángulo **▲ / ▼** para ver primero los capítulos iniciales o los últimos. Puedes filtrar por nombre, estado e idioma. **Seleccionar pendientes visibles** marca hasta 100 capítulos que faltan y coinciden con los filtros. También puedes seleccionar un intervalo, invertir los visibles o limpiar la selección. Cambiar el orden o los filtros conserva lo que marcaste; la selección muestra si hay capítulos ocultos por los filtros. El orden de visualización no cambia el orden numérico de procesamiento de la cola.
 
-En Biblioteca, abre un manga y usa la misma flecha sobre **Capítulos listos para leer**. El orden se aplica al listado completo, incluso cuando tiene varias páginas.
+En Biblioteca, abre un manga y pulsa el triángulo a la derecha, justo encima de la lista de **Capítulos listos para leer**. El orden se aplica al listado completo, incluso cuando tiene varias páginas.
 
 En Descargas, **Descargas por manga** reúne todos los trabajos pendientes de cada manga, aunque estén en distintas páginas de la cola. Pulsa **Pausar grupo**: termina el capítulo en curso y deja avanzar a otros mangas. Pulsa **Reanudar grupo** para continuar con los mismos trabajos. La pausa queda guardada al cerrar Yomira y también se aplica a nuevos capítulos de ese manga mientras siga pausado. No se borran archivos ni se duplican trabajos.
 

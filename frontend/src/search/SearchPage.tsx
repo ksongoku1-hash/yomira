@@ -369,7 +369,10 @@ function SearchResultSource({
                       aria-pressed={chapterOrder === "desc"}
                       title={chapterOrder === "asc" ? "Ascendente: primero los capítulos iniciales" : "Descendente: primero los capítulos finales"}
                       onClick={() => setChapterOrder((current) => current === "asc" ? "desc" : "asc")}>
-                      <span aria-hidden="true">{chapterOrder === "asc" ? "↑" : "↓"}</span>
+                      <svg aria-hidden="true" viewBox="0 0 24 20">
+                        <path d="M12 2 22 18H2Z" fill="currentColor" />
+                        <path d="M12 2v16H2Z" fill="#fff" opacity=".3" />
+                      </svg>
                     </button>
                     <span className={styles.chapterMetadata} role="status">
                       {visibleChapters.length} de {chapters.length} capítulos visibles

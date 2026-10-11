@@ -181,6 +181,7 @@ function ReadyChapters({
       offset,
       order: chapterOrder,
     }),
+    placeholderData: (previousData) => previousData,
     staleTime: 30_000,
     retry: false,
   });
@@ -205,7 +206,7 @@ function ReadyChapters({
 
   return (
     <section
-      aria-busy={query.isPending}
+      aria-busy={query.isPending || query.isPlaceholderData}
       aria-labelledby="ready-chapters-title"
       className={styles.chapters}
     >
@@ -214,16 +215,6 @@ function ReadyChapters({
           <p className={styles.eyebrow}>Guardados y comprobados</p>
           <h2 id="ready-chapters-title">Capítulos listos para leer</h2>
         </div>
-        <button type="button" className={`${styles.secondaryButton} ${styles.orderButton}`}
-          aria-label="Cambiar orden de capítulos para leer"
-          aria-pressed={chapterOrder === "desc"}
-          title={chapterOrder === "asc" ? "Ascendente: primero los capítulos iniciales" : "Descendente: primero los capítulos finales"}
-          onClick={() => {
-            setOffset(0);
-            setChapterOrder((current) => current === "asc" ? "desc" : "asc");
-          }}>
-          <span aria-hidden="true">{chapterOrder === "asc" ? "↑" : "↓"}</span>
-        </button>
       </header>
 
       {query.isPending ? (
@@ -257,12 +248,28 @@ function ReadyChapters({
             {page.meta.total} {page.meta.total === 1 ? "capítulo listo." : "capítulos listos."}
           </p>
           <Link className={styles.secondaryButton} to={searchHref}>Buscar capítulos faltantes</Link>
-          <details className={styles.cbrSelectionPanel} onToggle={(event) => {
-            if (event.currentTarget.open) setExportOpen(true);
-          }}>
-            <summary>Exportar manga a USB o lector conectado</summary>
-            {exportOpen ? <SeriesExportAction seriesId={seriesId} /> : null}
-          </details>
+          <div className={styles.chapterTools}>
+            <details className={styles.cbrSelectionPanel} onToggle={(event) => {
+              if (event.currentTarget.open) setExportOpen(true);
+            }}>
+              <summary>Exportar manga a USB o lector conectado</summary>
+              {exportOpen ? <SeriesExportAction seriesId={seriesId} /> : null}
+            </details>
+            <button type="button" className={`${styles.secondaryButton} ${styles.orderButton}`}
+              aria-label="Cambiar orden de capítulos para leer"
+              aria-pressed={chapterOrder === "desc"}
+              disabled={query.isPlaceholderData}
+              title={chapterOrder === "asc" ? "Ascendente: primero los capítulos iniciales" : "Descendente: primero los capítulos finales"}
+              onClick={() => {
+                setOffset(0);
+                setChapterOrder((current) => current === "asc" ? "desc" : "asc");
+              }}>
+              <svg aria-hidden="true" viewBox="0 0 24 20">
+                <path d="M12 2 22 18H2Z" fill="currentColor" />
+                <path d="M12 2v16H2Z" fill="#fff" opacity=".3" />
+              </svg>
+            </button>
+          </div>
           <ul aria-label="Capítulos disponibles para lectura" className={styles.chapterList}>
             {page.data.map((chapter) => (
               <ReaderChapterRow
@@ -277,7 +284,7 @@ function ReadyChapters({
             <nav aria-label="Paginación de capítulos" className={styles.chapterPagination}>
               <button
                 className={styles.secondaryButton}
-                disabled={offset === 0 || query.isPending}
+                disabled={offset === 0 || query.isPending || query.isPlaceholderData}
                 onClick={() => setOffset(Math.max(0, offset - READER_CHAPTER_PAGE_SIZE))}
                 type="button"
               >
@@ -286,7 +293,7 @@ function ReadyChapters({
               <span aria-live="polite">Página {currentPage} de {totalPages}</span>
               <button
                 className={styles.secondaryButton}
-                disabled={offset + page.data.length >= page.meta.total || query.isPending}
+                disabled={offset + page.data.length >= page.meta.total || query.isPending || query.isPlaceholderData}
                 onClick={() => setOffset(offset + READER_CHAPTER_PAGE_SIZE)}
                 type="button"
               >
