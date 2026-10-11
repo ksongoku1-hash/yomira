@@ -163,6 +163,9 @@ function SearchResultSource({
   const [rangeEndId, setRangeEndId] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [chapterFilter, setChapterFilter] = useState("");
+  const [chapterOrder, setChapterOrder] = useState<"asc" | "desc">("asc");
+  const [stateFilter, setStateFilter] = useState("all");
+  const [languageFilter, setLanguageFilter] = useState("all");
   const [priority, setPriority] = useState<DownloadPriority>("NORMAL");
   const availability = useQuery({
     queryKey:["chapter-availability", connectorId, result.remoteId],
@@ -240,9 +243,13 @@ function SearchResultSource({
   const createdJobCount = createJobsMutation.data?.data.filter((job) => job.created).length ?? 0;
   const reusedJobCount = createJobsMutation.data?.data.filter((job) => !job.created).length ?? 0;
   const selectedRemoteIds = selectableRemoteIds.filter((id) => selectedIds.includes(id));
-  const visibleChapters = chapters.filter((chapter) =>
-    normalizedTitle(chapter.displayLabel).includes(normalizedTitle(chapterFilter)),
+  const languages = [...new Set(chapters.map((chapter) => chapter.language ?? "unknown"))].sort();
+  const filteredChapters = chapters.filter((chapter) =>
+    normalizedTitle(chapter.displayLabel).includes(normalizedTitle(chapterFilter)) &&
+    (stateFilter === "all" || chapterState(chapter) === stateFilter) &&
+    (languageFilter === "all" || (chapter.language ?? "unknown") === languageFilter),
   );
+  const visibleChapters = chapterOrder === "desc" ? [...filteredChapters].reverse() : filteredChapters;
   const visibleRemoteIds = visibleChapters.flatMap((chapter) =>
     chapter.remoteId === null || !selectableRemoteIds.includes(chapter.remoteId) ? [] : [chapter.remoteId],
   );
@@ -355,6 +362,16 @@ function SearchResultSource({
                 </p>
               ) : (
                 <>
+                  <div className={styles.bulkActions}>
+                    <button className={styles.secondaryButton} type="button"
+                      aria-label="Cambiar orden de capítulos para descargar"
+                      onClick={() => setChapterOrder((current) => current === "asc" ? "desc" : "asc")}>
+                      {chapterOrder === "asc" ? "↑ Ascendente · primero los iniciales" : "↓ Descendente · primero los últimos"}
+                    </button>
+                    <span className={styles.chapterMetadata} role="status">
+                      {visibleChapters.length} de {chapters.length} capítulos visibles
+                    </span>
+                  </div>
                   {canDownloadChapters ? (
                     <>
                       <div className={styles.chapterSummary}>
@@ -419,12 +436,32 @@ function SearchResultSource({
                           </select>
                         </label>
                       </div>
+                      <div className={styles.chapterFilters}>
                       <label className={styles.rangeField}>
                         Filtrar capítulos
                         <input type="search" value={chapterFilter}
                           onChange={(event) => setChapterFilter(event.currentTarget.value)}
                           placeholder="Número o título" />
                       </label>
+                      <label className={styles.rangeField}>
+                        Estado del capítulo
+                        <select value={stateFilter} onChange={(event) => setStateFilter(event.currentTarget.value)}>
+                          <option value="all">Todos los estados</option>
+                          <option value="missing">Sin descargar</option>
+                          <option value="ready">Ya descargados</option>
+                          <option value="busy">En cola o en curso</option>
+                        </select>
+                      </label>
+                      <label className={styles.rangeField}>
+                        Idioma del capítulo
+                        <select value={languageFilter} onChange={(event) => setLanguageFilter(event.currentTarget.value)}>
+                          <option value="all">Todos los idiomas</option>
+                          {languages.map((language) => <option value={language} key={language}>
+                            {language === "unknown" ? "Sin idioma indicado" : language}
+                          </option>)}
+                        </select>
+                      </label>
+                      </div>
                       <div className={styles.bulkActions}>
                         <button className={styles.secondaryButton} type="button"
                           disabled={availability.isFetching || createJobsMutation.isPending}
@@ -432,11 +469,11 @@ function SearchResultSource({
                           {availability.isFetching ? "Comprobando capítulos…" : "Comprobar descargados y faltantes"}
                         </button>
                         <button className={styles.secondaryButton} type="button"
-                          disabled={!availability.isSuccess || createJobsMutation.isPending || missingChapters.length === 0}
+                          disabled={!availability.isSuccess || createJobsMutation.isPending || visibleRemoteIds.length === 0}
                           onClick={() => {
                             createJobsMutation.reset(); setRangeStartId(""); setRangeEndId("");
-                            setSelectedIds(missingChapters.slice(0,100).map((chapter) => chapter.remoteId!));
-                          }}>Seleccionar pendientes{missingChapters.length > 100 ? " (primeros 100)" : ""}</button>
+                            setSelectedIds(visibleRemoteIds.slice(0, 100));
+                          }}>Seleccionar pendientes visibles{visibleRemoteIds.length > 100 ? " (primeros 100)" : ""}</button>
                         <button className={styles.secondaryButton} type="button"
                           disabled={rangeStartIndex < 0 || createJobsMutation.isPending}
                           onClick={() => {
@@ -453,6 +490,14 @@ function SearchResultSource({
                           }}>
                           {visibleRemoteIds.length > 100 ? "Seleccionar primeros 100" : "Seleccionar visibles"}
                         </button>
+                        <button className={styles.secondaryButton} type="button"
+                          disabled={createJobsMutation.isPending || visibleRemoteIds.length === 0}
+                          onClick={() => {
+                            createJobsMutation.reset(); setRangeStartId(""); setRangeEndId("");
+                            const hidden = selectedRemoteIds.filter((id) => !visibleRemoteIds.includes(id));
+                            const inverted = visibleRemoteIds.filter((id) => !selectedRemoteIds.includes(id));
+                            setSelectedIds([...hidden, ...inverted].slice(0, 100));
+                          }}>Invertir selección visible</button>
                         <button className={styles.secondaryButton} type="button"
                           disabled={createJobsMutation.isPending || selectedRemoteIds.length === 0}
                           onClick={() => {
@@ -486,6 +531,12 @@ function SearchResultSource({
                           </li>
                         ))}
                       </ul>
+                      {visibleChapters.length === 0 ? <p role="status" className={styles.chapterMetadata}>
+                        No hay capítulos con estos filtros. Cambia el estado, idioma o búsqueda.
+                      </p> : null}
+                      {selectedRemoteIds.some((id) => !visibleRemoteIds.includes(id)) ? <p role="status" className={styles.chapterMetadata}>
+                        Hay capítulos seleccionados fuera de los filtros actuales; también se descargarán.
+                      </p> : null}
                       {visibleChapters.length === 0 ? <p role="status">No hay capítulos que coincidan.</p> : null}
                       <p className={styles.chapterMetadata} aria-live="polite">
                         {selectedRemoteIds.length} {selectedRemoteIds.length === 1
@@ -526,7 +577,7 @@ function SearchResultSource({
                   ) : (
                     <>
                       <ol aria-label={`Lista de capítulos de ${title}`} className={styles.chapterList}>
-                        {chapters.map((chapter, index) => (
+                        {visibleChapters.map((chapter, index) => (
                           <li className={styles.chapterItem} key={`${chapter.remoteId ?? "chapter"}-${index}`}>
                             <span>{chapter.displayLabel}</span>
                             <span className={styles.chapterMetadata}>

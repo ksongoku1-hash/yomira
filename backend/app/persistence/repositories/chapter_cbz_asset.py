@@ -67,6 +67,7 @@ class ChapterCbzAssetRepository:
         *,
         limit: int,
         offset: int,
+        descending: bool = False,
     ) -> tuple[tuple[ReaderChapterRecord, ...], int]:
         predicate = (
             ChapterRow.series_id == str(series_id),
@@ -113,10 +114,15 @@ class ChapterCbzAssetRepository:
             )
             .where(*predicate)
             .order_by(
-                func.json_extract(ChapterRow.chapter_sort_key, "$[0]").asc(),
-                func.json_extract(ChapterRow.chapter_sort_key, "$[1]").asc(),
-                func.json_extract(ChapterRow.chapter_sort_key, "$[2]").asc(),
-                ChapterRow.chapter_id.asc(),
+                *(
+                    column.desc() if descending else column.asc()
+                    for column in (
+                        func.json_extract(ChapterRow.chapter_sort_key, "$[0]"),
+                        func.json_extract(ChapterRow.chapter_sort_key, "$[1]"),
+                        func.json_extract(ChapterRow.chapter_sort_key, "$[2]"),
+                        ChapterRow.chapter_id,
+                    )
+                ),
             )
             .limit(limit)
             .offset(offset)

@@ -262,7 +262,7 @@ def test_availability_requires_verified_reader_asset_and_exact_series_link(tmp_p
         assert jobs.chapter_availability("reader-fixture", "reader-series") == {
             "linked": True,
             "ready_remote_ids": ["chapter-1"],
-            "ready_labels": [],
+            "ready_labels": ["Chapter 1"],
             "busy_remote_ids": [],
         }
         assert jobs.chapter_availability("reader-fixture", "reader-full-color")["linked"] is False

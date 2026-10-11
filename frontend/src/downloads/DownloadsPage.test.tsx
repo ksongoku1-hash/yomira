@@ -31,7 +31,14 @@ function job(index: number, status = "QUEUED") {
   };
 }
 
-function renderDownloadsPage() {
+function renderDownloadsPage(withGroups = false) {
+  if (!withGroups) {
+    const fetchJobs = globalThis.fetch;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).includes("/download-jobs/groups?")
+        ? Promise.resolve(mockResponse({data: [], meta: {limit: 50, offset: 0, total: 0}}))
+        : fetchJobs(input, init));
+  }
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   });
@@ -52,6 +59,50 @@ afterEach(() => {
 });
 
 describe("DownloadsPage", () => {
+  it("pauses and resumes an entire manga group even across job pages", async () => {
+    const seriesId = job(1).series_id;
+    let paused = false;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/pause")) {
+        paused = JSON.parse(String(init?.body)).paused;
+        return Promise.resolve(mockResponse(null, 204));
+      }
+      if (path.includes("/download-jobs/groups?")) return Promise.resolve(mockResponse({
+        data: [{series_id: seriesId, series_title: "Grupo de prueba", queued: 75, active: 1, paused}],
+        meta: {limit: 50, offset: 0, total: 1},
+      }));
+      return Promise.resolve(mockResponse({data: [job(1)], meta: {limit: 50, offset: 0, total: 1}}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDownloadsPage(true);
+    fireEvent.click(await screen.findByRole("button", {name: "Pausar grupo de Grupo de prueba"}));
+    expect(await screen.findByText("Pausa solicitada; termina el capítulo en curso.")).toBeInTheDocument();
+    expect(screen.getByText("75 pendientes · 1 en curso")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", {name: "Reanudar grupo de Grupo de prueba"}));
+    expect(await screen.findByRole("button", {name: "Pausar grupo de Grupo de prueba"})).toBeEnabled();
+    expect(fetchMock.mock.calls.filter(([path]) => String(path).endsWith("/pause")).map(([, init]) =>
+      [init?.method, JSON.parse(String(init?.body))])).toEqual([["PUT", {paused: true}], ["PUT", {paused: false}]]);
+  });
+
+  it("keeps the group active when the server rejects the pause", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/pause")) return Promise.resolve(mockResponse({error: {
+        code: "API_NOT_READY", message: "No disponible", trace_id: "pause-test", retryable: true,
+      }}, 503));
+      if (path.includes("/groups?")) return Promise.resolve(mockResponse({
+        data: [{series_id: job(1).series_id, series_title: "Grupo de prueba", queued: 2, active: 0, paused: false}],
+        meta: {limit: 50, offset: 0, total: 1},
+      }));
+      return Promise.resolve(mockResponse({data: [job(1)], meta: {limit: 50, offset: 0, total: 1}}));
+    }));
+    renderDownloadsPage(true);
+    fireEvent.click(await screen.findByRole("button", {name: "Pausar grupo de Grupo de prueba"}));
+    expect(await screen.findByText("No se pudo cambiar la pausa del grupo")).toBeInTheDocument();
+    expect(screen.queryByRole("button", {name: /Reanudar grupo/})).not.toBeInTheDocument();
+    expect(screen.getByRole("button", {name: "Pausar grupo de Grupo de prueba"})).toBeEnabled();
+  });
 
   it("explains an automatic alternate-source search while preserving the failed chapter", async () => {
     const failed = job(1, "FAILED");

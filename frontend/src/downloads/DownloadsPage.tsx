@@ -7,6 +7,8 @@ import {
   archiveDownloadJob,
   cancelDownloadJob,
   getDownloadJobsPage,
+  getDownloadGroupsPage,
+  setDownloadGroupPaused,
   restoreDownloadJob,
   retryDownloadJob,
   type DownloadJobSummary,
@@ -264,6 +266,67 @@ function DownloadJobCard({
   );
 }
 
+function DownloadGroups() {
+  const [offset, setOffset] = useState(0);
+  const queryClient = useQueryClient();
+  const groupsQuery = useQuery({
+    queryKey: ["download-groups", offset],
+    queryFn: () => getDownloadGroupsPage({limit: PAGE_SIZE, offset}),
+    refetchInterval: 2000,
+  });
+  const pauseMutation = useMutation({
+    mutationFn: ({seriesId, paused}: {seriesId: string; paused: boolean}) => setDownloadGroupPaused(seriesId, paused),
+    retry: false,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({queryKey: ["download-groups"]});
+      void queryClient.invalidateQueries({queryKey: ["download-jobs"]});
+    },
+  });
+  const total = groupsQuery.data?.meta.total ?? 0;
+  return (
+    <section aria-labelledby="download-groups-title" className={styles.groups}>
+      <h2 id="download-groups-title">Descargas por manga</h2>
+      <p className={styles.statusMessage}>Cada grupo incluye todos los capítulos pendientes del manga.
+        Al pausar, termina el capítulo en curso y continúa con otros mangas.
+        La pausa se conserva al cerrar Yomira.</p>
+      {groupsQuery.isPending ? <p role="status">Cargando grupos…</p> : groupsQuery.isError ? (
+        <div role="alert"><p>No se pudieron cargar los grupos de descargas.</p>
+          <button className={styles.secondaryButton} type="button" onClick={() => void groupsQuery.refetch()}>Reintentar grupos</button>
+        </div>
+      ) : groupsQuery.data.data.length === 0 ? <p className={styles.statusMessage}>No hay grupos pendientes en esta página.</p> : (
+        <ul className={styles.groupList} aria-label="Grupos de descargas">
+          {groupsQuery.data.data.map((group) => (
+            <li className={styles.groupCard} key={group.seriesId}>
+              <div><h3>{group.seriesTitle}</h3>
+                <p>{group.queued} pendientes · {group.active} en curso</p>
+                <p role="status">{group.paused ? group.active > 0
+                  ? "Pausa solicitada; termina el capítulo en curso." : "En pausa" : "Activa"}</p>
+              </div>
+              <button className={styles.secondaryButton} type="button"
+                aria-label={`${group.paused ? "Reanudar" : "Pausar"} grupo de ${group.seriesTitle}`}
+                disabled={pauseMutation.isPending}
+                onClick={() => pauseMutation.mutate({seriesId: group.seriesId, paused: !group.paused})}>
+                {pauseMutation.isPending && pauseMutation.variables?.seriesId === group.seriesId
+                  ? "Guardando…" : group.paused ? "Reanudar grupo" : "Pausar grupo"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {pauseMutation.isError ? <JobActionError error={pauseMutation.error} title="No se pudo cambiar la pausa del grupo" /> : null}
+      {total > PAGE_SIZE || offset > 0 ? (
+        <nav aria-label="Paginación de grupos" className={styles.pagination}>
+          <button className={styles.secondaryButton} type="button" disabled={offset === 0 || groupsQuery.isFetching}
+            onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Grupos anteriores</button>
+          <span>Página {Math.floor(offset / PAGE_SIZE) + 1} de {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
+          <button className={styles.secondaryButton} type="button" disabled={offset + PAGE_SIZE >= total || groupsQuery.isFetching}
+            onClick={() => setOffset(offset + PAGE_SIZE)}>Grupos siguientes</button>
+        </nav>
+      ) : null}
+    </section>
+  );
+}
+
 export function DownloadsPage() {
   const [offset, setOffset] = useState(0);
   const [archivedView, setArchivedView] = useState(false);
@@ -353,6 +416,8 @@ export function DownloadsPage() {
         {jobsQuery.data?.meta.retryAfterSeconds ? ` de nuevo en ${jobsQuery.data.meta.retryAfterSeconds} segundos` : ""}.
         Puedes reintentar el capítulo fallido cuando vuelva a estar disponible.
       </p> : null}
+
+      {!archivedView && jobsQuery.isSuccess ? <DownloadGroups /> : null}
 
       {states ? (
         <dl aria-label="Resumen de todas las descargas" className={styles.queueSummary}>

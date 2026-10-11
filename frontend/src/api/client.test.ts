@@ -10,6 +10,8 @@ import {
   getConnectorSearch,
   getChapterAvailability,
   getDownloadJobsPage,
+  getDownloadGroupsPage,
+  setDownloadGroupPaused,
   getConnectors,
   getLibraryPage,
   getLocalImportStatus,
@@ -110,6 +112,22 @@ function series(id: string, displayTitle: string) {
 }
 
 describe("typed local API client", () => {
+  it("validates download groups and sends an explicit pause state", async () => {
+    const seriesId = "123e4567-e89b-42d3-a456-426614174000";
+    const group = {series_id: seriesId, series_title: "Manga", queued: 2, active: 1, paused: true};
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse({data: [group], meta: {limit: 50, offset: 0, total: 1}}));
+    vi.stubGlobal("fetch", fetchMock);
+    expect((await getDownloadGroupsPage()).data[0]).toEqual({seriesId, seriesTitle: "Manga", queued: 2, active: 1, paused: true});
+    for (const invalid of [{...group, queued: -1}, {...group, paused: "true"}, {...group, series_id: "bad-id"}]) {
+      fetchMock.mockResolvedValueOnce(mockResponse({data: [invalid], meta: {limit: 50, offset: 0, total: 1}}));
+      await expect(getDownloadGroupsPage()).rejects.toThrow();
+    }
+    fetchMock.mockResolvedValueOnce(mockResponse({data: [group, group], meta: {limit: 50, offset: 0, total: 2}}));
+    await expect(getDownloadGroupsPage()).rejects.toThrow();
+    fetchMock.mockResolvedValueOnce(mockResponse(null, 204));
+    await setDownloadGroupPaused(seriesId, false);
+    expect(fetchMock).toHaveBeenLastCalledWith(`/api/v1/download-jobs/groups/${seriesId}/pause`, expect.objectContaining({method: "PUT", body: '{"paused":false}'}));
+  });
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {

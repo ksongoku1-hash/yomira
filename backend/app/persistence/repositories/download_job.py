@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import case, exists, func, or_, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -23,6 +23,7 @@ from app.domain.job_fairness import (
     DispatchWindow,
     QueuedJobCandidate,
 )
+from app.domain.job_pause import SERIES_PAUSE_KEY_PREFIX
 from app.domain.job_state_machine import IllegalJobTransition, assert_transition_allowed
 from app.domain.timestamps import normalise_utc
 from app.persistence.mappers.download_job import download_job_from_row, download_job_to_row
@@ -31,6 +32,7 @@ from app.persistence.models.chapter import ChapterRow
 from app.persistence.models.chapter_source import ChapterSourceRow
 from app.persistence.models.download_job import DownloadJobRow
 from app.persistence.models.download_manifest_state import DownloadManifestStateRow
+from app.persistence.models.setting import SettingRow
 
 MAX_DISPATCH_BATCH_SIZE = 8
 MAX_RECOVERY_BATCH_SIZE = 64
@@ -223,6 +225,10 @@ class DownloadJobRepository:
             .where(
                 DownloadJobRow.status == DownloadJobStatus.QUEUED.value,
                 DownloadJobRow.recovery_blocked.is_(False),
+                ~exists().where(
+                    SettingRow.setting_key == SERIES_PAUSE_KEY_PREFIX + ChapterRow.series_id,
+                    SettingRow.value_json == "true",
+                ),
                 or_(
                     DownloadManifestStateRow.job_id.is_(None),
                     DownloadManifestStateRow.publication_pending.is_(False),

@@ -83,6 +83,32 @@ function metadataButton() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("series metadata refresh", () => {
+  it("loads chapters in descending order and restores ascending order", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === `/api/v1/series/${seriesId}`) return Promise.resolve(response({data: seriesRecord(), meta: {}}));
+      if (path.includes(`/reader/series/${seriesId}/chapters?`)) {
+        const numbers = path.includes("order=desc") ? [10, 1] : [1, 10];
+        return Promise.resolve(response({data: numbers.map((number) => ({
+          chapter_id: `123e4567-e89b-42d3-a456-${number.toString().padStart(12, "0")}`,
+          series_id: seriesId, display_label: `Capítulo ${number}`, page_count: 2,
+        })), meta: {limit: 100, offset: 0, total: 2}}));
+      }
+      return Promise.resolve(response({data: [], meta: {limit: 20}}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail(new QueryClient({defaultOptions: {queries: {retry: false}}}));
+    await screen.findByRole("list", {name: "Capítulos disponibles para lectura"});
+    const labels = () => within(screen.getByRole("list", {name: "Capítulos disponibles para lectura"}))
+      .getAllByRole("link").map((link) => link.textContent);
+    expect(labels()[0]).toContain("Capítulo 1");
+    fireEvent.click(screen.getByRole("button", {name: "Cambiar orden de capítulos para leer"}));
+    await waitFor(() => expect(labels()[0]).toContain("Capítulo 10"));
+    expect(await screen.findByRole("link", {name: /Leer capítulo más reciente/})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Cambiar orden de capítulos para leer"}));
+    await waitFor(() => expect(labels()[0]).toContain("Capítulo 1"));
+    expect(fetchMock.mock.calls.some(([path]) => String(path).includes("offset=0&order=desc"))).toBe(true);
+  });
   it("reports metadata still missing after a successful refresh", async () => {
     const base = seriesRecord();
     const record = {

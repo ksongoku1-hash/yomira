@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from datetime import UTC
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -164,6 +164,7 @@ def list_reader_chapters(
     request: Request,
     limit: int = Query(default=100, ge=1, le=MAX_READER_PAGE_SIZE),
     offset: int = Query(default=0, ge=0),
+    order: Literal["asc", "desc"] = "asc",
 ) -> ReaderChapterListEnvelope:
     service = _reader_service(request)
     try:
@@ -171,6 +172,7 @@ def list_reader_chapters(
             UUID(str(series_id)),
             limit=limit,
             offset=offset,
+            order=order,
         )
     except ReaderAssetError as error:
         raise _translate_reader_error(error) from None

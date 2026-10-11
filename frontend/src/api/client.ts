@@ -1006,6 +1006,56 @@ export async function getDownloadJobsPage({
   } };
 }
 
+export interface DownloadGroup {
+  seriesId: string;
+  seriesTitle: string;
+  queued: number;
+  active: number;
+  paused: boolean;
+}
+
+export async function getDownloadGroupsPage({limit = 50, offset = 0} = {}): Promise<{
+  data: DownloadGroup[]; meta: {limit: number; offset: number; total: number};
+}> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+      !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000_000) {
+    throw new RangeError("Invalid group pagination");
+  }
+  const {payload, response} = await requestJson(`/download-jobs/groups?limit=${limit}&offset=${offset}`);
+  if (!isRecord(payload) || !hasExactKeys(payload, ["data", "meta"]) ||
+      !Array.isArray(payload.data) || !isRecord(payload.meta) ||
+      !hasExactKeys(payload.meta, ["limit", "offset", "total"]) ||
+      payload.meta.limit !== limit || payload.meta.offset !== offset ||
+      typeof payload.meta.total !== "number" || !Number.isSafeInteger(payload.meta.total) ||
+      payload.meta.total < 0 || payload.data.length > limit ||
+      payload.data.length !== Math.min(limit, Math.max(0, payload.meta.total - offset))) {
+    throw invalidDownloadJobsResponse(response);
+  }
+  const seen = new Set<string>();
+  const data = payload.data.map((item: unknown) => {
+    if (!isRecord(item) || !hasExactKeys(item, ["series_id", "series_title", "queued", "active", "paused"]) ||
+        typeof item.series_id !== "string" || !UUID_V4_PATTERN.test(item.series_id) || seen.has(item.series_id) ||
+        !isNonEmptyString(item.series_title) || typeof item.paused !== "boolean" ||
+        typeof item.queued !== "number" || !Number.isSafeInteger(item.queued) || item.queued < 0 ||
+        typeof item.active !== "number" || !Number.isSafeInteger(item.active) || item.active < 0 ||
+        item.queued + item.active < 1) throw invalidDownloadJobsResponse(response);
+    seen.add(item.series_id);
+    return {seriesId: item.series_id, seriesTitle: item.series_title, queued: item.queued,
+      active: item.active, paused: item.paused};
+  });
+  return {data, meta: {limit, offset, total: payload.meta.total}};
+}
+
+export async function setDownloadGroupPaused(seriesId: string, paused: boolean): Promise<void> {
+  if (!UUID_V4_PATTERN.test(seriesId) || typeof paused !== "boolean") {
+    throw new RangeError("Invalid download group pause");
+  }
+  const {payload, response} = await requestJson(`/download-jobs/groups/${encodeURIComponent(seriesId)}/pause`, {
+    method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({paused}),
+  });
+  if (response.status !== 204 || payload !== null) throw invalidDownloadJobsResponse(response);
+}
+
 export interface ChapterAvailability {
   linked: boolean;
   readyRemoteIds: string[];
@@ -1350,10 +1400,12 @@ export async function getReaderChaptersPage({
   seriesId,
   limit,
   offset,
+  order = "asc",
 }: {
   seriesId: string;
   limit: number;
   offset: number;
+  order?: "asc" | "desc";
 }): Promise<ReaderChaptersPage> {
   if (!UUID_V4_PATTERN.test(seriesId)) {
     throw new RangeError("seriesId must be a UUID v4");
@@ -1366,6 +1418,8 @@ export async function getReaderChaptersPage({
   }
 
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (order !== "asc" && order !== "desc") throw new RangeError("Invalid chapter order");
+  if (order === "desc") params.set("order", order);
   const { payload, response } = await requestJson(
     `/reader/series/${encodeURIComponent(seriesId)}/chapters?${params.toString()}`,
   );

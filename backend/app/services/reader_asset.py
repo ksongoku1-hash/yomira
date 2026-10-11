@@ -12,7 +12,7 @@ from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO, TypeGuard, cast
+from typing import BinaryIO, Literal, TypeGuard, cast
 from uuid import UUID
 from xml.etree import ElementTree as ET
 
@@ -337,18 +337,22 @@ class ReaderAssetService:
         *,
         limit: int = DEFAULT_READER_PAGE_SIZE,
         offset: int = 0,
+        order: Literal["asc", "desc"] = "asc",
     ) -> ReaderChapterPage:
         self._validate_uuid4(series_id, "series_id")
         if type(limit) is not int or not 1 <= limit <= MAX_READER_PAGE_SIZE:
             raise ValueError("limit must be between 1 and 500")
         if type(offset) is not int or offset < 0:
             raise ValueError("offset must be a non-negative integer")
+        if order not in {"asc", "desc"}:
+            raise ValueError("order must be asc or desc")
         with self._database.read_session() as session:
             records, total = self._repository.list_ready_chapters(
                 session,
                 series_id,
                 limit=limit,
                 offset=offset,
+                descending=order == "desc",
             )
         return ReaderChapterPage(
             items=tuple(self._public_chapter(record) for record in records),

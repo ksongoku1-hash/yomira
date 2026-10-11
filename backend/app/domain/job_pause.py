@@ -8,6 +8,8 @@ from uuid import UUID
 from app.domain.download_job import DownloadJobStatus
 from app.domain.job_fairness import MAX_DISPATCH_WINDOW_SIZE
 
+SERIES_PAUSE_KEY_PREFIX = "downloads.paused_series."
+
 
 class JobPauseState(StrEnum):
     RUNNING = "RUNNING"

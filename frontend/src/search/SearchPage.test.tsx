@@ -94,6 +94,19 @@ describe("SearchPage", () => {
     expect(screen.getByRole("button", { name: "Descargar (2)" })).toBeEnabled();
     expect(screen.queryByRole("option", { name: "Capítulo 1" })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Capítulo 2" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Cambiar orden de capítulos para descargar"}));
+    expect(screen.getAllByRole("checkbox").map((element) => element.parentElement?.textContent))
+      .toEqual(["Capítulo 10Sin descargar", "Capítulo 3Sin descargar", "Capítulo 2En cola o en curso", "Capítulo 1Ya descargado"]);
+    expect(screen.getByRole("checkbox", {name: "Capítulo 3"})).toBeChecked();
+    fireEvent.change(screen.getByRole("combobox", {name: "Estado del capítulo"}), {target: {value: "ready"}});
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.getByRole("checkbox", {name: "Capítulo 1"})).toBeDisabled();
+    expect(screen.getByRole("button", {name: /Seleccionar pendientes/})).toBeDisabled();
+    expect(screen.getByRole("button", {name: "Descargar (2)"})).toBeEnabled();
+    fireEvent.change(screen.getByRole("combobox", {name: "Estado del capítulo"}), {target: {value: "missing"}});
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", {name: "Invertir selección visible"}));
+    expect(screen.getByRole("button", {name: "Descargar (0)"})).toBeDisabled();
   });
   it.each([
     ["Capítulo 001", ["Capítulo: 1"], true, true],

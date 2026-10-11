@@ -4,6 +4,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from typing import TypedDict
 from uuid import UUID
 
 from sqlalchemy import case, exists, func, select
@@ -20,6 +21,7 @@ from app.domain.download_job import (
     DownloadPriority,
 )
 from app.domain.job_cancellation import JobCancellationNotAllowed
+from app.domain.job_pause import SERIES_PAUSE_KEY_PREFIX
 from app.domain.metadata import MetadataField, resolve_series_metadata
 from app.domain.series import Series
 from app.domain.series_source import SeriesSource
@@ -44,6 +46,7 @@ from app.persistence.models.download_job_archive import DownloadJobArchiveRow
 from app.persistence.models.download_page import DownloadPageRow
 from app.persistence.models.series import SeriesRow
 from app.persistence.models.series_source import SeriesSourceRow
+from app.persistence.models.setting import SettingRow
 from app.persistence.models.source import SourceRow
 from app.persistence.repositories.chapter_cbz_asset import ChapterCbzAssetRepository
 from app.persistence.repositories.download_job import (
@@ -116,6 +119,25 @@ class DownloadJobPage:
     offset: int
     states: dict[str, int] = field(default_factory=lambda: dict[str, int]())
     page_progress: tuple[dict[str, object], ...] = ()
+
+
+class DownloadGroup(TypedDict):
+    series_id: str
+    series_title: str
+    queued: int
+    active: int
+    paused: bool
+
+
+class DownloadGroupMeta(TypedDict):
+    limit: int
+    offset: int
+    total: int
+
+
+class DownloadGroupPage(TypedDict):
+    data: list[DownloadGroup]
+    meta: DownloadGroupMeta
 
 
 class DownloadJobService:
@@ -471,6 +493,74 @@ class DownloadJobService:
                     )
                 )
         return tuple(results)
+
+    def list_groups(self, *, limit: int = 50, offset: int = 0) -> DownloadGroupPage:
+        if type(limit) is not int or not 1 <= limit <= MAX_DOWNLOAD_JOB_PAGE_SIZE:
+            raise ValueError("limit must be between 1 and 100")
+        if type(offset) is not int or not 0 <= offset <= MAX_DOWNLOAD_JOB_OFFSET:
+            raise ValueError("offset is out of range")
+        terminal = ("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED")
+        paused = exists().where(
+            SettingRow.setting_key == SERIES_PAUSE_KEY_PREFIX + SeriesRow.series_id,
+            SettingRow.value_json == "true",
+        )
+        groups = (
+            select(
+                SeriesRow.series_id,
+                SeriesRow.display_title.label("series_title"),
+                paused.label("paused"),
+                func.sum(case((DownloadJobRow.status == "QUEUED", 1), else_=0)).label("queued"),
+                func.sum(case((DownloadJobRow.status != "QUEUED", 1), else_=0)).label("active"),
+            )
+            .join(ChapterRow, ChapterRow.series_id == SeriesRow.series_id)
+            .join(ChapterSourceRow, ChapterSourceRow.chapter_id == ChapterRow.chapter_id)
+            .join(
+                DownloadJobRow,
+                DownloadJobRow.chapter_source_id == ChapterSourceRow.chapter_source_id,
+            )
+            .where(DownloadJobRow.status.not_in(terminal))
+            .group_by(SeriesRow.series_id, SeriesRow.display_title)
+        )
+        with self._database.read_session() as session:
+            total = session.scalar(select(func.count()).select_from(groups.subquery())) or 0
+            rows = session.execute(
+                groups.order_by(SeriesRow.display_title.asc(), SeriesRow.series_id.asc())
+                .limit(limit)
+                .offset(offset)
+            ).mappings()
+            return {
+                "data": [
+                    {
+                        "series_id": row["series_id"],
+                        "series_title": row["series_title"],
+                        "queued": row["queued"],
+                        "active": row["active"],
+                        "paused": row["paused"],
+                    }
+                    for row in rows
+                ],
+                "meta": {"limit": limit, "offset": offset, "total": total},
+            }
+
+    def set_group_paused(self, series_id: UUID, paused: bool) -> bool:
+        if type(series_id) is not UUID or series_id.version != 4:
+            raise ValueError("series_id must be a UUIDv4")
+        if type(paused) is not bool:
+            raise TypeError("paused must be a bool")
+        with self._database.write_session() as session:
+            if session.get(SeriesRow, str(series_id)) is None:
+                return False
+            key = SERIES_PAUSE_KEY_PREFIX + str(series_id)
+            row = session.get(SettingRow, key)
+            if paused:
+                if row is None:
+                    row = SettingRow(setting_key=key, schema_version=1)
+                    session.add(row)
+                row.value_json = "true"
+                row.updated_at_us = datetime_to_epoch_us(datetime.now(UTC))
+            elif row is not None:
+                session.delete(row)
+        return True
 
     def list_jobs(
         self,

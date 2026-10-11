@@ -397,6 +397,13 @@
   gap: 0.6rem;
 }
 
+.chapterFilters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: 0.6rem;
+  align-items: end;
+}
+
 .rangeField {
   display: grid;
   min-width: 0;

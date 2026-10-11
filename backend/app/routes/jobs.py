@@ -17,6 +17,7 @@ from app.runtime import RuntimeState
 from app.services.jobs import (
     DEFAULT_DOWNLOAD_JOB_PAGE_SIZE,
     MAX_DOWNLOAD_JOB_PAGE_SIZE,
+    DownloadGroupPage,
     DownloadJobService,
     DownloadJobSummary,
     JobArchiveNotAllowed,
@@ -76,6 +77,43 @@ def _job_service(request: Request) -> DownloadJobService:
     return service
 
 
+class DownloadGroupPauseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    paused: bool
+
+
+@router.get("/groups", summary="List download groups across the whole queue")
+def list_download_groups(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=10_000_000),
+) -> DownloadGroupPage:
+    return _job_service(request).list_groups(limit=limit, offset=offset)
+
+
+@router.put(
+    "/groups/{series_id}/pause",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Pause a manga after its current chapter, or resume its queued chapters",
+)
+async def set_download_group_paused(
+    series_id: UUID4,
+    body: DownloadGroupPauseRequest,
+    request: Request,
+) -> Response:
+    found = await asyncio.to_thread(
+        _job_service(request).set_group_paused,
+        UUID(str(series_id)),
+        body.paused,
+    )
+    if not found:
+        raise HTTPException(status_code=404, detail="The series was not found.")
+    dispatcher = cast(RuntimeState, request.app.state.runtime).download_dispatcher
+    if dispatcher is not None:
+        dispatcher.notify_new_jobs()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get(
     "",
     response_model=DownloadJobListEnvelope,
@@ -105,7 +143,7 @@ def list_download_jobs(
             limit=page.limit,
             offset=page.offset,
             total=page.total,
-            states=page.states,
+            states={DownloadJobStatus(key): value for key, value in page.states.items()},
             page_progress=list(page.page_progress),
             waiting_sources=waiting,
             retry_after_seconds=retry_after,

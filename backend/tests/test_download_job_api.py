@@ -30,6 +30,13 @@ from app.persistence.models.source import SourceRow
 from app.persistence.repositories.download_job import DownloadJobRepository
 from app.runtime import RuntimeState
 from app.services.jobs import DownloadJobService, DownloadJobSummary
+from app.services.reader_asset import (
+    V1_MAX_CBZ_BYTES,
+    V1_MAX_PAGE_BYTES,
+    V1_STREAM_CHUNK_BYTES,
+    ReaderAssetLimits,
+    ReaderAssetService,
+)
 from app.settings import Settings
 
 
@@ -64,6 +71,122 @@ async def _post_without_body(app: FastAPI, path: str) -> Response:
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         return await client.post(path)
+
+
+def test_group_pause_persists_and_other_manga_dispatches_without_recreating_jobs(
+    tmp_path: Path,
+) -> None:
+    app, database = _ready_app(tmp_path)
+    connector = MockConnector()
+    template = asyncio.run(connector.get_chapters("mock-series-1"))[0]
+    chapters = (template, replace(template, remote_id="chapter-2", chapter_sort_key=(2,)))
+    metadata = connector.normalize_metadata(asyncio.run(connector.get_series("mock-series-1")))
+    service = DownloadJobService(database)
+    try:
+        first = service.create_selected_jobs(
+            connector=connector.metadata,
+            remote_series_id="mock-series-1",
+            series_metadata=metadata,
+            chapters=chapters,
+            selected_remote_ids=tuple(ch.remote_id for ch in chapters),
+        )
+        second = service.create_selected_jobs(
+            connector=connector.metadata,
+            remote_series_id="other-series",
+            series_metadata=replace(metadata, title="Other manga"),
+            chapters=(replace(template, remote_id="other-chapter"),),
+            selected_remote_ids=("other-chapter",),
+        )
+        series_id = first[0].series_id
+        pause_path = f"/api/v1/download-jobs/groups/{series_id}/pause"
+
+        async def put(body: object) -> Response:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://testserver"
+            ) as client:
+                return await client.put(pause_path, json=body)
+
+        assert asyncio.run(put({"paused": "true"})).status_code == 422
+        for _ in range(2):
+            assert asyncio.run(put({"paused": True})).status_code == 204
+        restarted = DownloadJobService(database)
+        groups = asyncio.run(_get(app, "/api/v1/download-jobs/groups?limit=1&offset=0"))
+        assert groups.status_code == 200
+        assert groups.json()["meta"] == {"limit": 1, "offset": 0, "total": 2}
+        all_groups = asyncio.run(_get(app, "/api/v1/download-jobs/groups")).json()["data"]
+        group = next(row for row in all_groups if row["series_id"] == str(series_id))
+        assert group["paused"] is True
+        assert group["queued"] == len(first)
+        with database.read_session() as session:
+            for sequential in (False, True):
+                window = DownloadJobRepository().list_queued_for_dispatch(
+                    session,
+                    limit=8,
+                    sequential=sequential,
+                    preferred_series_id=series_id,
+                )
+                assert [row.job.job_id for row in window.candidates] == [second[0].job.job_id]
+        # An already admitted chapter keeps running; only the queued chapters are paused.
+        with database.write_session() as session:
+            row = session.get(DownloadJobRow, str(first[0].job.job_id))
+            assert row is not None
+            row.status = "DOWNLOADING"
+        group = next(
+            row for row in restarted.list_groups()["data"] if row["series_id"] == str(series_id)
+        )
+        assert group["active"] == 1 and group["queued"] == len(first) - 1
+        assert asyncio.run(put({"paused": False})).status_code == 204
+        with database.read_session() as session:
+            window = DownloadJobRepository().list_queued_for_dispatch(session, limit=8)
+            assert {row.job.job_id for row in window.candidates} == {
+                row.job.job_id for row in (*first[1:], *second)
+            }
+            assert (
+                session.scalar(select(func.count()).select_from(DownloadJobRow)) == len(first) + 1
+            )
+        assert (
+            restarted.set_group_paused(UUID("00000000-0000-4000-8000-000000000000"), True) is False
+        )
+    finally:
+        database.close()
+
+
+def test_reader_descending_order_applies_before_pagination(tmp_path: Path) -> None:
+    app, database = _ready_app(tmp_path)
+    try:
+        connector = MockConnector()
+        template = asyncio.run(connector.get_chapters("mock-series-1"))[0]
+        chapters = (template, replace(template, remote_id="chapter-2", chapter_sort_key=(2,)))
+        jobs = DownloadJobService(database).create_selected_jobs(
+            connector=connector.metadata,
+            remote_series_id="mock-series-1",
+            series_metadata=connector.normalize_metadata(
+                asyncio.run(connector.get_series("mock-series-1"))
+            ),
+            chapters=chapters,
+            selected_remote_ids=tuple(ch.remote_id for ch in chapters),
+        )
+        for job in jobs:
+            index_test_job(database, job.job.job_id)
+        app.state.runtime.reader_asset_service = ReaderAssetService(
+            database,
+            data_root_identity=database.data_root_identity,
+            limits=ReaderAssetLimits(
+                max_cbz_bytes=V1_MAX_CBZ_BYTES,
+                max_page_bytes=V1_MAX_PAGE_BYTES,
+                chunk_bytes=V1_STREAM_CHUNK_BYTES,
+            ),
+        )
+        path = f"/api/v1/reader/series/{jobs[0].series_id}/chapters?limit=1"
+        ascending = asyncio.run(_get(app, path)).json()
+        descending = asyncio.run(_get(app, path + "&order=desc")).json()
+        next_page = asyncio.run(_get(app, path + "&order=desc&offset=1")).json()
+        assert ascending["meta"]["total"] == descending["meta"]["total"] == 2
+        assert descending["data"][0]["chapter_id"] != ascending["data"][0]["chapter_id"]
+        assert next_page["data"] == ascending["data"]
+        assert asyncio.run(_get(app, path + "&order=invalid")).status_code == 422
+    finally:
+        database.close()
 
 
 @pytest.mark.parametrize("action", ["library-series", "download-jobs"])

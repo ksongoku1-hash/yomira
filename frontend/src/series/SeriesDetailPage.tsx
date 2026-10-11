@@ -171,13 +171,15 @@ function ReadyChapters({
   searchConnectorId: string | null;
 }) {
   const [offset, setOffset] = useState(0);
+  const [chapterOrder, setChapterOrder] = useState<"asc" | "desc">("asc");
   const [exportOpen, setExportOpen] = useState(false);
   const query = useQuery({
-    queryKey: ["reader-chapters", seriesId, offset],
+    queryKey: ["reader-chapters", seriesId, offset, chapterOrder],
     queryFn: () => getReaderChaptersPage({
       seriesId,
       limit: READER_CHAPTER_PAGE_SIZE,
       offset,
+      order: chapterOrder,
     }),
     staleTime: 30_000,
     retry: false,
@@ -212,6 +214,14 @@ function ReadyChapters({
           <p className={styles.eyebrow}>Guardados y comprobados</p>
           <h2 id="ready-chapters-title">Capítulos listos para leer</h2>
         </div>
+        <button type="button" className={styles.secondaryButton}
+          aria-label="Cambiar orden de capítulos para leer"
+          onClick={() => {
+            setOffset(0);
+            setChapterOrder((current) => current === "asc" ? "desc" : "asc");
+          }}>
+          {chapterOrder === "asc" ? "↑ Ascendente · primero los iniciales" : "↓ Descendente · primero los últimos"}
+        </button>
       </header>
 
       {query.isPending ? (
@@ -239,7 +249,7 @@ function ReadyChapters({
         <>
           {resume || firstChapter ? <Link className={styles.primaryButton}
             to={`/reader/${resume?.chapterId ?? firstChapter!.chapterId}`} state={{ originatingSeriesId: seriesId }}>
-            {resume ? `Continuar ${resume.chapterDisplayLabel} · Página ${resume.pageIndex + 1}` : `Leer primer capítulo · ${firstChapter!.displayLabel}`}
+            {resume ? `Continuar ${resume.chapterDisplayLabel} · Página ${resume.pageIndex + 1}` : `${chapterOrder === "asc" ? "Leer primer capítulo" : "Leer capítulo más reciente"} · ${firstChapter!.displayLabel}`}
           </Link> : null}
           <p className={styles.chapterCount}>
             {page.meta.total} {page.meta.total === 1 ? "capítulo listo." : "capítulos listos."}
