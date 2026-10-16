@@ -48,10 +48,13 @@ from app.services.jobs import DownloadJobService
 from app.services.library import LibraryService
 from app.services.local_import import LocalImportService
 from app.services.metadata import MetadataService
-from app.services.reader_asset import ReaderAssetLimits, ReaderAssetService
+from app.services.online_reader import OnlineReaderSessionService
+from app.services.reader_asset import ReaderAssetError, ReaderAssetLimits, ReaderAssetService
 from app.services.reader_progress import ReaderProgressService
+from app.services.reader_session import HybridReaderChapterLookup, ReaderSessionService
 from app.services.reader_settings import ReaderSettingsService
 from app.services.resource_monitor import ResourceMonitorService
+from app.services.source_pages import SourcePageService
 from app.services.startup_self_test import run_startup_self_tests
 from app.services.usb_export import UsbExportService, WindowsRemovableDriveProvider
 from app.services.wpd_worker import IsolatedWpdClient
@@ -251,7 +254,17 @@ async def initialize_runtime(app: FastAPI) -> None:
     elif runtime.disk_budget_manager.database is not database:
         raise DatabaseInitializationError()
     startup_budget = runtime.disk_budget_manager.snapshot()
-    if not startup_budget.safe:
+    migration_runner = MigrationRunner(database, data_root / "backups")
+    # Reading needs metadata growth, not the download engine's 512 MiB margin.
+    metadata_startup_safe = (
+        startup_budget.free_bytes is not None
+        and startup_budget.recovery_demand_bytes is not None
+        and startup_budget.free_bytes >= startup_budget.recovery_demand_bytes + 16 * 1024 * 1024
+        and startup_budget.reserved_bytes == 0
+        and startup_budget.reason is None
+        and (startup_budget.safe or migration_runner.is_current())
+    )
+    if not startup_budget.safe and not metadata_startup_safe:
         logger.critical(
             "system.disk_budget_startup_preflight_failed",
             extra={
@@ -272,7 +285,7 @@ async def initialize_runtime(app: FastAPI) -> None:
         )
     disk_budget_manager = runtime.disk_budget_manager
     assert disk_budget_manager is not None
-    migration_report = MigrationRunner(database, data_root / "backups").upgrade_to_head()
+    migration_report = migration_runner.upgrade_to_head()
     run_startup_self_tests(
         settings,
         database=database,
@@ -379,10 +392,6 @@ async def initialize_runtime(app: FastAPI) -> None:
             chunk_bytes=65_536,
         ),
     )
-    runtime.reader_progress_service = ReaderProgressService(
-        database,
-        runtime.reader_asset_service,
-    )
     assert runtime.connector_registry is not None
     allowed_origins = frozenset(
         NetworkOrigin.from_url(origin)
@@ -426,6 +435,11 @@ async def initialize_runtime(app: FastAPI) -> None:
         data_root_identity=data_root_identity,
         storage_gate=database.storage_gate,
         disk_budget_manager=disk_budget_manager,
+        secret_header_provider=(
+            runtime.fmd2_connector.page_secret_headers
+            if runtime.fmd2_connector is not None
+            else None
+        ),
     )
     file_publisher = AtomicFilePublisher(
         data_root_identity=data_root_identity,
@@ -440,6 +454,37 @@ async def initialize_runtime(app: FastAPI) -> None:
         sleep=time.sleep,
         clock=time.monotonic,
         storage_gate=database.storage_gate,
+    )
+    reader_image_policy = ImageValidationPolicy(
+        max_bytes=_PAGE_BYTES_V1,
+        max_width=_PAGE_DIMENSION_V1,
+        max_height=_PAGE_DIMENSION_V1,
+        max_pixels=_PAGE_PIXELS_V1,
+    )
+    legacy_reader_cache = ReaderSessionService(
+        database,
+        source_pages=SourcePageService(runtime.connector_registry),
+        transport=runtime.download_transport,
+        disk_budget=disk_budget_manager,
+        publisher=file_publisher,
+        image_policy=reader_image_policy,
+    )
+    try:
+        legacy_reader_cache.recover()
+        await legacy_reader_cache.retire_cache()
+    except (ReaderAssetError, OSError) as error:
+        logger.warning("reader.cache_recovery_blocked", extra={"cause_type": type(error).__name__})
+    runtime.reader_session_service = OnlineReaderSessionService(
+        database,
+        source_pages=SourcePageService(runtime.connector_registry),
+        transport=runtime.download_transport,
+        image_policy=reader_image_policy,
+    )
+    hybrid_lookup = HybridReaderChapterLookup(
+        runtime.reader_asset_service, runtime.reader_session_service
+    )
+    runtime.reader_progress_service = ReaderProgressService(
+        database, hybrid_lookup, page_available=hybrid_lookup.page_available
     )
     assert runtime.reader_asset_service is not None
     assert runtime.library_service is not None
@@ -468,12 +513,7 @@ async def initialize_runtime(app: FastAPI) -> None:
         connector_registry=runtime.connector_registry,
         recovery_coordinator=runtime.recovery_coordinator,
         transport=runtime.download_transport,
-        image_validation_policy=ImageValidationPolicy(
-            max_bytes=_PAGE_BYTES_V1,
-            max_width=_PAGE_DIMENSION_V1,
-            max_height=_PAGE_DIMENSION_V1,
-            max_pixels=_PAGE_PIXELS_V1,
-        ),
+        image_validation_policy=reader_image_policy,
         cbz_builder=cbz_builder,
         file_publisher=file_publisher,
         library_file_publisher=library_file_publisher,
@@ -541,6 +581,9 @@ async def shutdown_runtime(app: FastAPI) -> None:
         # Close admission before stopping the monitor so no new job slips into
         # the queue while runtime dependencies are being dismantled.
         dispatcher.request_stop()
+    if runtime.reader_session_service is not None:
+        await runtime.reader_session_service.close()
+        runtime.reader_session_service = None
     if runtime.local_import_service is not None:
         await runtime.local_import_service.stop()
         runtime.local_import_service = None

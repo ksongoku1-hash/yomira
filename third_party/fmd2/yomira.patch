@@ -187,18 +187,70 @@ index c5183c0..6241d96 100644
        raise Exception.Create('luaL_loadfile ' + LuaGetReturnString(i) + ': ' + luaToString(L, -1));
      i := lua_pcall(L, 0, 0, 0);
 diff --git a/baseunits/uDownloadsManager.pas b/baseunits/uDownloadsManager.pas
-index 51f5204..d15df12 100644
+index 51f5204..3109cc6 100644
 --- a/baseunits/uDownloadsManager.pas
 +++ b/baseunits/uDownloadsManager.pas
-@@ -133,6 +133,7 @@ type
+@@ -11,9 +11,9 @@ unit uDownloadsManager;
+ interface
+ 
+ uses
+-  LazFileUtils, Classes, SysUtils, ExtCtrls, typinfo, fgl, FileUtil, synautil,
++  Math, LazFileUtils, Classes, SysUtils, ExtCtrls, typinfo, fgl, FileUtil, synautil,
+   blcksock, MultiLog, uBaseUnit, uPacker, uMisc, DownloadedChaptersDB, FMDOptions, ImgInfos,
+-  httpsendthread, DownloadsDB, BaseThread, SQLiteData, dateutils, strutils, ImageMagickManager;
++  httpsendthread, DownloadsDB, BaseThread, SQLiteData, dateutils, strutils, ImageMagickManager, uYomiraPageReadiness;
+ 
+ type
+   TDownloadStatusType = (
+@@ -38,6 +38,8 @@ type
+ 
+   TDownloadThread = class(TBaseThread)
+   private
++    FReaderOnly: Boolean;
++    FReaderReadBytes: Int64;
+     // Get real image url
+     function GetLinkPageFromURL(const URL: String): Boolean;
+ 
+@@ -54,7 +56,9 @@ type
+     Task: TTaskThread;
+     HTTP: THTTPSendThread;
+     WorkId: Integer;
+-    constructor Create(const ATask: TTaskThread);
++    constructor Create(const ATask: TTaskThread; const AReaderOnly: Boolean = False);
++    function FetchImage: Boolean;
++    function ReadOnlineImage(const AOrdinal: Integer): Boolean;
+     destructor Destroy; override;
+   end;
+ 
+@@ -66,6 +70,8 @@ type
+   private
+     ThreadsGuardian,
+     GetWorkIdGuardian: TRTLCriticalSection;
++    FReaderOnly: Boolean;
++    FReaderReadBytes: Int64;
+     FCheckAndActiveTaskFlag: Boolean;
+     FCurrentWorkingDir: String;
+     {$IFDEF Windows}
+@@ -111,7 +117,8 @@ type
+     Container: TTaskContainer;
+     // download threads
+     Threads: TDownloadThreads;
+-    constructor Create(const C: TTaskContainer);
++    constructor Create(const C: TTaskContainer; const AReaderOnly: Boolean = False);
++    function PlanOnlinePages: Boolean;
+     destructor Destroy; override;
+     function GetFileName(const AWorkId: Integer): String;
+     property CurrentWorkingDir: String read FCurrentWorkingDir write SetCurrentWorkingDir;
+@@ -133,6 +140,8 @@ type
      procedure SetStatus(AValue: TDownloadStatusType);
    public
      DlId: String;
 +    RawOutput: Boolean;
++    ReadyPages: TYomiraPageReadiness;
      Order: Integer;
      // critical section
      CS_Container: TRTLCriticalSection;
-@@ -298,6 +299,18 @@ begin
+@@ -298,11 +307,25 @@ begin
    Result := SysUtils.IntToStr(QWord(Value));
  end;
  
@@ -216,11 +268,86 @@ index 51f5204..d15df12 100644
 +
  { TDownloadThread }
  
- constructor TDownloadThread.Create(const ATask: TTaskThread);
-@@ -331,11 +344,31 @@ begin
+-constructor TDownloadThread.Create(const ATask: TTaskThread);
++constructor TDownloadThread.Create(const ATask: TTaskThread; const AReaderOnly: Boolean);
+ begin
+   inherited Create(False);
++  FReaderOnly := AReaderOnly;
++  if FReaderOnly then FreeOnTerminate := False;
+   Task := ATask;
+   HTTP := TModuleContainer(Task.Container.DownloadInfo.Module).CreateHTTP(Self);
+   HTTP.Sock.OnStatus := @SockOnStatus;
+@@ -310,13 +333,14 @@ end;
+ 
+ destructor TDownloadThread.Destroy;
+ begin
+-  Task.RemoveThread(Self);
++  if not FReaderOnly then Task.RemoveThread(Self);
+   HTTP.Free;
+   inherited Destroy;
+ end;
+ 
+ procedure TDownloadThread.Execute;
+ begin
++  if FReaderOnly then Exit;
+   case Task.Flag of
+     CS_DOWNLOAD      : DoDownload;
+     CS_GETPAGELINK   : DoPageLink;
+@@ -331,11 +355,82 @@ begin
      Result := TModuleContainer(Task.Container.DownloadInfo.Module).OnGetImageURL(Self, URL, TModuleContainer(Task.Container.DownloadInfo.Module));
  end;
  
++function TDownloadThread.FetchImage: Boolean;
++var
++  workURL: String;
++begin
++  workURL := Trim(Task.Container.PageLinks[WorkId]);
++  Result := False;
++  HTTP.Reset;
++  HTTP.AcceptImage;
++
++  if Assigned(TModuleContainer(Task.Container.DownloadInfo.Module).OnDownloadImage) and
++    (Task.Container.PageNumber = Task.Container.PageContainerLinks.Count) and
++    (WorkId < Task.Container.PageContainerLinks.Count) then
++      workURL := Task.Container.PageContainerLinks[WorkId];
++
++  // OnBeforeDownloadImage
++  if Assigned(TModuleContainer(Task.Container.DownloadInfo.Module).OnBeforeDownloadImage) then
++  begin
++    Result := TModuleContainer(Task.Container.DownloadInfo.Module).OnBeforeDownloadImage(Self, workURL, TModuleContainer(Task.Container.DownloadInfo.Module));
++    if FReaderOnly and not Result then Exit;
++  end;
++
++  // OnDownloadImage
++  if Assigned(TModuleContainer(Task.Container.DownloadInfo.Module).OnDownloadImage) then
++    Result := TModuleContainer(Task.Container.DownloadInfo.Module).OnDownloadImage(Self, workURL, TModuleContainer(Task.Container.DownloadInfo.Module))
++  else
++    Result := HTTP.GET(workURL);
++
++end;
++
++function TDownloadThread.ReadOnlineImage(const AOrdinal: Integer): Boolean;
++var
++  Module: TModuleContainer;
++begin
++  Result := False;
++  if not FReaderOnly or (AOrdinal < 1) or
++    (AOrdinal > Task.Container.PageLinks.Count) then Exit;
++  Module := TModuleContainer(Task.Container.DownloadInfo.Module);
++  // File-based transformation hooks cannot satisfy disk-free reading.
++  if Assigned(Module.OnSaveImage) or Assigned(Module.OnAfterImageSaved) then Exit;
++  WorkId := AOrdinal - 1;
++  FReaderReadBytes := 0;
++  HTTP.Compress := False;
++  if Task.Container.PageLinks[WorkId] = 'W' then
++    if not GetLinkPageFromURL(Task.Container.ChapterLinks[0]) then Exit;
++  if (Trim(Task.Container.PageLinks[WorkId]) = '') or
++    (Task.Container.PageLinks[WorkId] = 'W') then Exit;
++  FReaderReadBytes := 0;
++  Result := FetchImage and (HTTP.Document.Size > 0) and
++    (HTTP.Document.Size <= 67108864) and (FReaderReadBytes <= 67108864);
++end;
++
 +function YomiraStageHasRoom(const ADirectory: string; const ABytes: Int64): Boolean;
 +var
 +  Search: TSearchRec;
@@ -250,7 +377,31 @@ index 51f5204..d15df12 100644
  begin
    Result := False;
  
-@@ -386,16 +419,32 @@ begin
+@@ -363,39 +458,37 @@ begin
+   // prepare filename
+   workFilename := Task.GetFileName(WorkId);
+ 
+-  // download image
+   savedFilename := '';
+-
+-  HTTP.Reset;
+-  HTTP.AcceptImage;
+-
+-  if Assigned(TModuleContainer(Task.Container.DownloadInfo.Module).OnDownloadImage) and
+-    (Task.Container.PageNumber = Task.Container.PageContainerLinks.Count) and
+-    (WorkId < Task.Container.PageContainerLinks.Count) then
+-      workURL := Task.Container.PageContainerLinks[WorkId];
+-
+-  // OnBeforeDownloadImage
+-  if Assigned(TModuleContainer(Task.Container.DownloadInfo.Module).OnBeforeDownloadImage) then
+-    Result := TModuleContainer(Task.Container.DownloadInfo.Module).OnBeforeDownloadImage(Self, workURL, TModuleContainer(Task.Container.DownloadInfo.Module));
+-
+-  // OnDownloadImage
+-  if Assigned(TModuleContainer(Task.Container.DownloadInfo.Module).OnDownloadImage) then
+-    Result := TModuleContainer(Task.Container.DownloadInfo.Module).OnDownloadImage(Self, workURL, TModuleContainer(Task.Container.DownloadInfo.Module))
+-  else
+-    Result := HTTP.GET(workURL);
++  Result := FetchImage;
  
    if Result then
    begin
@@ -284,9 +435,114 @@ index 51f5204..d15df12 100644
    end;
  
    if Result then
-@@ -1142,7 +1191,11 @@ begin
+@@ -408,6 +501,10 @@ begin
+     // OnAfterImageSaved
+     if Assigned(TModuleContainer(Task.Container.DownloadInfo.Module).OnAfterImageSaved) then
+       Result := TModuleContainer(Task.Container.DownloadInfo.Module).OnAfterImageSaved(Self, savedFilename, TModuleContainer(Task.Container.DownloadInfo.Module));
++    if Result and not Terminated and FileExists(savedFilename) then
++      // Publish only after the writer and the post-save callback have finished.
++      if Task.Container.RawOutput then
++        Task.Container.ReadyPages.MarkReady(WorkId + 1, ExtractFileName(savedFilename));
+   end;
+ end;
+ 
+@@ -415,7 +512,14 @@ procedure TDownloadThread.SockOnStatus(Sender: TObject; Reason: THookSocketReaso
+   const Value: String);
+ begin
+   if Reason = HR_ReadCount then
+-    Task.Container.IncReadCount(StrToIntDef(Value, 0));
++  begin
++    if FReaderOnly then
++    begin
++      Inc(FReaderReadBytes, StrToIntDef(Value, 0));
++      if FReaderReadBytes > 67108864 then HTTP.Stop;
++    end
++    else Task.Container.IncReadCount(StrToIntDef(Value, 0));
++  end;
+ end;
+ 
+ procedure TDownloadThread.DoPageLink;
+@@ -458,13 +562,18 @@ end;
+ 
+ // ----- TTaskThread -----
+ 
+-constructor TTaskThread.Create(const C: TTaskContainer);
++constructor TTaskThread.Create(const C: TTaskContainer; const AReaderOnly: Boolean);
+ begin
+   inherited Create(False);
++  FReaderOnly := AReaderOnly;
++  if FReaderOnly then FreeOnTerminate := False;
+   Container:=C;
+   Container.TaskThread:=Self;
+-  Container.Manager.AddItemsActiveTask(Container);
+-  TModuleContainer(Container.DownloadInfo.Module).IncActiveTaskCount;
++  if not FReaderOnly then
++  begin
++    Container.Manager.AddItemsActiveTask(Container);
++    TModuleContainer(Container.DownloadInfo.Module).IncActiveTaskCount;
++  end;
+ 
+   InitCriticalSection(ThreadsGuardian);
+   InitCriticalSection(GetWorkIdGuardian);
+@@ -485,7 +594,7 @@ end;
+ destructor TTaskThread.Destroy;
+ begin
+   WaitForThreads;
+-  with Container do
++  if not FReaderOnly then with Container do
+   begin
+     DownloadInfo.DateLastDownloaded := Now;
+     TModuleContainer(DownloadInfo.Module).DecActiveTaskCount;
+@@ -823,7 +932,33 @@ end;
+ procedure TTaskThread.SockOnStatus(Sender: TObject; Reason: THookSocketReason; const Value: String);
+ begin
+   if Reason = HR_ReadCount then
+-    Container.IncReadCount(StrToIntDef(Value, 0));
++  begin
++    if FReaderOnly then
++    begin
++      Inc(FReaderReadBytes, StrToIntDef(Value, 0));
++      if FReaderReadBytes > 67108864 then HTTP.Stop;
++    end
++    else Container.IncReadCount(StrToIntDef(Value, 0));
++  end;
++end;
++
++function TTaskThread.PlanOnlinePages: Boolean;
++var
++  Module: TModuleContainer;
++begin
++  Result := False;
++  if not FReaderOnly then Exit;
++  Module := TModuleContainer(Container.DownloadInfo.Module);
++  if not Assigned(Module.OnGetPageNumber) or Assigned(Module.OnSaveImage) or
++    Assigned(Module.OnAfterImageSaved) then Exit;
++  HTTP.Compress := False;
++  if not Module.OnGetPageNumber(Self, Container.ChapterLinks[0], Module) then Exit;
++  Container.PageNumber := Max(Container.PageNumber, Container.PageLinks.Count);
++  if (Container.PageNumber < 1) or (Container.PageNumber > 10000) or
++    (FReaderReadBytes > 67108864) then Exit;
++  while Container.PageLinks.Count < Container.PageNumber do Container.PageLinks.Add('W');
++  HTTP.Document.Clear;
++  Result := True;
+ end;
+ 
+ procedure TTaskThread.DoGetPageNumber;
+@@ -1104,6 +1239,7 @@ var
+ var
+   i: Integer;
+ begin
++  if FReaderOnly then Exit;
+   Container.DownloadInfo.DateLastDownloaded := Now;
+   Container.DownloadInfo.TransferRate := FormatByteSize(Container.ReadCount, true);
+   try
+@@ -1141,8 +1277,15 @@ begin
+         Exit;
        end;
  
++      // Restarted/retried files have no live readiness proof.
++      if Container.RawOutput then Container.ReadyPages.Reset;
++
        //check path
 -      if OptionGenerateChapterFolder then
 +      if Container.RawOutput then
@@ -297,7 +553,17 @@ index 51f5204..d15df12 100644
        begin
          CurrentWorkingDir := CorrectPathSys(Container.DownloadInfo.SaveTo) +
            Container.ChapterNames[Container.CurrentDownloadChapterPtr];
-@@ -1277,20 +1330,23 @@ begin
+@@ -1247,6 +1390,9 @@ begin
+       end;
+       if Terminated then Exit;
+ 
++      if Container.RawOutput and (Container.PageLinks.Count > 0) then
++        Container.ReadyPages.SetTotal(Container.PageLinks.Count);
++
+       // download the images
+       // If Container doesn't have any image, we will skip the loop. Otherwise
+       // download them
+@@ -1277,20 +1423,23 @@ begin
          if CheckForFinish then
          begin
            Container.DownloadInfo.Progress := '';
@@ -331,15 +597,21 @@ index 51f5204..d15df12 100644
            end;
          end
          else
-@@ -1421,6 +1477,7 @@ begin
+@@ -1421,10 +1570,13 @@ begin
    CustomFileName := OptionFilenameCustomRename;
    FStatus := STATUS_NONE;
    FEnabled := True;
 +  RawOutput := False;
++  ReadyPages := TYomiraPageReadiness.Create;
  end;
  
  destructor TTaskContainer.Destroy;
-@@ -1669,6 +1726,7 @@ begin
+ begin
++  ReadyPages.Free;
+   FileNames.Free;
+   PageContainerLinks.Free;
+   PageLinks.Free;
+@@ -1669,6 +1821,7 @@ begin
            if Pos('/', DownloadInfo.Progress) <> 0 then
              DownCounter := StrToIntDef(Trim(ExtractWord(1, DownloadInfo.Progress, ['/'])), 0);
            DownloadInfo.SaveTo             := Fields[f_saveto].AsString;

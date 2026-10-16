@@ -3,8 +3,8 @@
   "platform": "windows-x64",
   "python": {
     "version": "3.14.7",
-    "distribution": "python-3.14.7-amd64.exe",
-    "sha256": "9d9eb2709ef81bf5cd30db3c2096bdbc4ea10087c22e62f27d356b36f6ae9649",
+    "distribution": "python-3.14.7-embed-amd64.zip",
+    "sha256": "d297e5ff019966817ad8502465176139f2d3d840fa4ed84b13bed399a6ab1f15",
     "lockfile": "backend/requirements.lock"
   },
   "sqlite": {

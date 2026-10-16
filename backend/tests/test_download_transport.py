@@ -142,10 +142,7 @@ class _Harness:
         global_concurrency: int = 2,
         per_host_concurrency: int = 1,
         additional_origins: frozenset[NetworkOrigin] = frozenset(),
-        secret_header_provider: Callable[
-            [SecretReference], Mapping[str, str]
-        ]
-        | None = None,
+        secret_header_provider: Callable[[SecretReference], Mapping[str, str]] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self.data_root = tmp_path / "data"
@@ -212,6 +209,72 @@ def _response(
         headers=headers,
         stream=_ChunkStream(chunks, fail_after=fail_after, wait_after=wait_after),
     )
+
+
+@_async_test
+async def test_memory_transport_reuses_throttling_retries_and_never_creates_parts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    count = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal count
+        count += 1
+        return _response(
+            (b"png",),
+            status_code=429 if count == 1 else 200,
+            headers={"Content-Type": "image/png", "Retry-After": "2"},
+        )
+
+    harness = _Harness(tmp_path, handler)
+
+    def forbid_files(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("Memory transport must not open a page file")
+
+    monkeypatch.setattr(TemporaryPageStore, "create", forbid_files)
+    try:
+        result = await harness.service.fetch_memory(
+            PageFetchRequest("https://cdn.example.invalid/1"),
+            session_id=uuid4(),
+            ordinal=1,
+            allowed_origins=frozenset({NetworkOrigin.from_url("https://cdn.example.invalid")}),
+        )
+        assert result.body == b"png" and result.content_type == "image/png"
+        assert count == 2 and harness.delays == [2.0] and harness.reserved_attempts == []
+        assert not list(harness.data_root.rglob("*.part"))
+    finally:
+        await harness.close()
+
+
+@_async_test
+@pytest.mark.parametrize(
+    "headers,chunks,stage",
+    [
+        ({"Content-Length": "33"}, (b"x",), "content_length_limit"),
+        ({}, (b"x" * 33,), "byte_limit"),
+        ({"Content-Encoding": "gzip"}, (b"x",), "content_encoding"),
+    ],
+)
+async def test_memory_transport_rejects_oversized_or_encoded_images(
+    tmp_path: Path,
+    headers: dict[str, str],
+    chunks: tuple[bytes, ...],
+    stage: str,
+) -> None:
+    harness = _Harness(tmp_path, lambda _request: _response(chunks, headers=headers), max_bytes=32)
+    try:
+        with pytest.raises(DownloadTransportError) as failed:
+            await harness.service.fetch_memory(
+                PageFetchRequest("https://cdn.example.invalid/1"),
+                session_id=uuid4(),
+                ordinal=1,
+                allowed_origins=frozenset({NetworkOrigin.from_url("https://cdn.example.invalid")}),
+            )
+        assert failed.value.stage == stage
+        assert not list(harness.data_root.rglob("*.part"))
+    finally:
+        await harness.close()
 
 
 @_async_test
@@ -2291,4 +2354,3 @@ async def test_approved_retry_after_cap_handles_exact_excess_malformed_and_past(
         await harness.close()
 
     assert harness.delays == [expected_delay]
-

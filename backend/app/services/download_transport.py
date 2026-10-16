@@ -48,16 +48,12 @@ _RETRY_DELAYS_SECONDS = (1.0, 3.0, 8.0)
 _RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
 _REDIRECT_STATUS = frozenset({301, 302, 303, 307, 308})
 MAX_JOB_TEMPORARY_BYTES = PAGE_TEMP_RESERVATION_BYTES
-_MAX_TEMPORARY_INVENTORY_ENTRIES = MAX_MANIFEST_PAGE_COUNT * (
-    len(_RETRY_DELAYS_SECONDS) + 3
-)
+_MAX_TEMPORARY_INVENTORY_ENTRIES = MAX_MANIFEST_PAGE_COUNT * (len(_RETRY_DELAYS_SECONDS) + 3)
 _REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
 _MAX_TEMPORARY_PATH_UTF16_UNITS = 259
 # Approved local engines serve page bytes from these exact loopback origins.
 _PRODUCTION_HTTP_LOOPBACK_ORIGINS = frozenset({("127.0.0.1", 4567), ("127.0.0.1", 18873)})
-_SAFE_MEDIA_TYPE = re.compile(
-    r"[!#$%&'*+.^_`|~0-9A-Za-z-]+/[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z"
-)
+_SAFE_MEDIA_TYPE = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+/[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 _FORBIDDEN_SECRET_HEADERS = frozenset(
     {"connection", "content-length", "host", "proxy-authorization", "referer", "transfer-encoding"}
 )
@@ -172,6 +168,12 @@ class DownloadResult:
     path: Path
     size_bytes: int
     sha256: str
+    content_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryPageResult:
+    body: bytes
     content_type: str
 
 
@@ -325,7 +327,7 @@ class DownloadTransport:
         connector_origins = self._connector_origins(allowed_origins)
         budget_state = self._acquire_job_budget_state(job_id)
         try:
-            return await self._download_registered(
+            result = await self._download_registered(
                 request,
                 job_id=job_id,
                 ordinal=ordinal,
@@ -335,8 +337,43 @@ class DownloadTransport:
                 budget_state=budget_state,
                 cancellation_event=cancellation_event,
             )
+            assert isinstance(result, DownloadResult)
+            return result
         finally:
             self._release_job_budget_state(job_id, budget_state)
+
+    async def fetch_memory(
+        self,
+        request: PageFetchRequest,
+        *,
+        session_id: UUID,
+        ordinal: int,
+        allowed_origins: frozenset[NetworkOrigin],
+    ) -> MemoryPageResult:
+        """Use the same HTTP checks and retries without files or disk reservations."""
+        if type(request) is not PageFetchRequest:
+            raise TypeError("request must be a PageFetchRequest")
+        if type(session_id) is not UUID or session_id.version != 4:
+            raise ValueError("session_id must be a UUIDv4")
+        if type(ordinal) is not int or not 1 <= ordinal <= MAX_MANIFEST_PAGE_COUNT:
+            raise ValueError("ordinal is outside the page contract")
+
+        async def next_attempt(_id: UUID, _ordinal: int, previous: int) -> int:
+            return previous + 1
+
+        result = await self._download_registered(
+            request,
+            job_id=session_id,
+            ordinal=ordinal,
+            attempt=1,
+            reserve_next_attempt=next_attempt,
+            allowed_origins=self._connector_origins(allowed_origins),
+            budget_state=_JobTemporaryBudgetState(),
+            cancellation_event=None,
+            memory=True,
+        )
+        assert isinstance(result, MemoryPageResult)
+        return result
 
     async def _download_registered(
         self,
@@ -349,7 +386,8 @@ class DownloadTransport:
         allowed_origins: frozenset[NetworkOrigin],
         budget_state: _JobTemporaryBudgetState,
         cancellation_event: asyncio.Event | None,
-    ) -> DownloadResult:
+        memory: bool = False,
+    ) -> DownloadResult | MemoryPageResult:
 
         trace_id = current_trace_id() or create_trace_id()
         initial_origin = self._require_allowed_origin(
@@ -417,6 +455,7 @@ class DownloadTransport:
                     allowed_origins=allowed_origins,
                     budget_state=budget_state,
                     cancellation_event=cancellation_event,
+                    memory=memory,
                 )
             except _RetryableAttemptFailure as failure:
                 if retry_index >= len(_RETRY_DELAYS_SECONDS):
@@ -500,14 +539,16 @@ class DownloadTransport:
         allowed_origins: frozenset[NetworkOrigin],
         budget_state: _JobTemporaryBudgetState,
         cancellation_event: asyncio.Event | None,
-    ) -> DownloadResult:
-        await self._preflight_job_temporary_budget(
-            job_id=job_id,
-            ordinal=ordinal,
-            attempt=attempt,
-            trace_id=trace_id,
-            budget_state=budget_state,
-        )
+        memory: bool = False,
+    ) -> DownloadResult | MemoryPageResult:
+        if not memory:
+            await self._preflight_job_temporary_budget(
+                job_id=job_id,
+                ordinal=ordinal,
+                attempt=attempt,
+                trace_id=trace_id,
+                budget_state=budget_state,
+            )
         current_url = request.url
         redirects = 0
         while True:
@@ -641,6 +682,30 @@ class DownloadTransport:
                                         retryable=False,
                                         status_code=response.status_code,
                                     )
+                                if memory:
+                                    body = bytearray()
+                                    async for chunk in self._iter_response_chunks(
+                                        response,
+                                        cancellation_event=cancellation_event,
+                                    ):
+                                        if len(body) + len(chunk) > self._policy.max_bytes:
+                                            self._raise(
+                                                code=ErrorCode.SRC_CONNECTOR_FAILED,
+                                                stage="byte_limit",
+                                                trace_id=trace_id,
+                                                job_id=job_id,
+                                                ordinal=ordinal,
+                                                attempt=attempt,
+                                                retryable=False,
+                                            )
+                                        body.extend(chunk)
+                                    if expected_length is not None and len(body) != expected_length:
+                                        raise _RetryableAttemptFailure(
+                                            stage="content_length_mismatch"
+                                        )
+                                    return MemoryPageResult(
+                                        bytes(body), self._safe_content_type(response)
+                                    )
                                 self._assert_content_length_fits_job_budget(
                                     expected_length,
                                     job_id=job_id,
@@ -732,9 +797,7 @@ class DownloadTransport:
                                                 target.sync()
                                             except OSError as error:
                                                 if is_disk_full_os_error(error):
-                                                    self._storage_gate.close(
-                                                        "FILESYSTEM_DISK_FULL"
-                                                    )
+                                                    self._storage_gate.close("FILESYSTEM_DISK_FULL")
                                                 raise
                                 except ManifestStoreError as error:
                                     self._raise(

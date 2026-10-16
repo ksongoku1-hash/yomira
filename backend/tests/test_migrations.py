@@ -31,7 +31,7 @@ def test_upgrade_creates_verified_backup_and_append_only_history(tmp_path: Path)
         report = runner.upgrade_to_head()
 
         assert report.previous_revision is None
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
         assert report.changed is True
         assert report.backup_path is not None
         assert report.backup_path.is_file()
@@ -52,7 +52,7 @@ def test_upgrade_creates_verified_backup_and_append_only_history(tmp_path: Path)
                     "FROM schema_history ORDER BY event_id"
                 )
             ).all()
-            assert [tuple(row) for row in history[:-6]] == [
+            assert [tuple(row) for row in history[:-7]] == [
                 ("0001_schema_history", "upgrade", "0001_schema_history"),
                 ("0002_series", "upgrade", "0002_series"),
                 ("0003_sources_health", "upgrade", "0003_sources_health"),
@@ -71,15 +71,16 @@ def test_upgrade_creates_verified_backup_and_append_only_history(tmp_path: Path)
                 ("0016_temporary_path_key", "upgrade", "0016_temporary_path_key"),
                 ("0017_job_recovery_checkpoint", "upgrade", "0017_job_recovery_checkpoint"),
             ]
-            assert history[-6][0] == "0018_chapter_cbz_assets"
-            assert history[-5][0] == "0019_usb_export_history"
-            assert history[-4][0] == "0020_home_recent_views"
-            assert history[-3][0] == "0021_download_job_archives"
-            assert history[-2][0] == "0022_cbr_asset_type"
-            assert history[-1][0] == "0023_whole_manga_export_size"
+            assert history[-7][0] == "0018_chapter_cbz_assets"
+            assert history[-6][0] == "0019_usb_export_history"
+            assert history[-5][0] == "0020_home_recent_views"
+            assert history[-4][0] == "0021_download_job_archives"
+            assert history[-3][0] == "0022_cbr_asset_type"
+            assert history[-2][0] == "0023_whole_manga_export_size"
+            assert history[-1][0] == "0024_reader_sessions"
             assert history[-1][1] == "upgrade"
             assert history[-1][2] == history[-1][0]
-            assert len(history) == 23
+            assert len(history) == 24
 
         with database.write_session() as session:
             with pytest.raises(IntegrityError, match="append-only"):
@@ -273,7 +274,7 @@ def test_migration_0016_accepts_disk_backed_temp_store_compile_options(
         report = runner.upgrade_to_head()
 
         assert report.changed is True
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
         assert driver_connection.getlimit(sqlite3.SQLITE_LIMIT_LENGTH) == original_length_limit
         normalized_statements = [" ".join(statement.split()) for statement in statements]
         assert "PRAGMA TEMP_STORE=FILE" in normalized_statements

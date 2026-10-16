@@ -168,6 +168,21 @@ class MigrationRunner:
                 },
             )
 
+    def is_current(self) -> bool:
+        """Prove that startup will not need a schema change or migration backup."""
+        with self.database.exclusive_connection() as connection:
+            self._verify_integrity(connection)
+            heads = ScriptDirectory.from_config(self._new_config(connection)).get_heads()
+            if len(heads) != 1:
+                raise DatabaseMigrationError()
+            current = MigrationContext.configure(connection).get_current_revision()
+            if current != heads[0]:
+                return False
+            assert current is not None
+            self._verify_history_agreement(connection, current)
+            self._verify_schema(connection, current)
+            return True
+
     def upgrade_to_head(self) -> MigrationReport:
         trace_token = None
         if current_trace_id() is None:

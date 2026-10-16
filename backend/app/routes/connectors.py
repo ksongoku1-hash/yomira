@@ -24,6 +24,7 @@ from app.connectors.search import (
     ConnectorSearchQuery,
     ConnectorSearchResult,
 )
+from app.connectors.series_metadata import ConnectorSeriesMetadata
 from app.domain.download_job import DownloadJobStatus, DownloadPriority
 from app.errors import ApiErrorEnvelope, ErrorCode
 from app.runtime import RuntimeState
@@ -105,6 +106,20 @@ class CreateDownloadJobsRequest(BaseModel):
         return value
 
 
+class RegisterReaderChapterRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    chapter_remote_id: str = Field(min_length=1, max_length=MAX_REMOTE_REFERENCE_LENGTH)
+
+
+class RegisteredReaderChapterItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    series_id: UUID
+    chapter_id: UUID
+    display_label: str
+
+
 class DownloadJobItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -128,6 +143,11 @@ class DownloadJobsMeta(BaseModel):
 
 class DownloadJobsEnvelope(BaseModel):
     data: list[DownloadJobItem]
+    meta: DownloadJobsMeta
+
+
+class RegisteredReaderChapterEnvelope(BaseModel):
+    data: RegisteredReaderChapterItem
     meta: DownloadJobsMeta
 
 
@@ -307,12 +327,18 @@ async def list_connector_chapters(
     connector_id: str,
     request: Request,
     remote_series_id: str = Path(min_length=1, max_length=MAX_REMOTE_REFERENCE_LENGTH),
+    refresh: bool = Query(default=False),
 ) -> ConnectorChapterEnvelope:
     connector = _resolve_connector(
         request,
         connector_id,
         ConnectorCapability.CHAPTER_LIST,
     )
+    if refresh:
+        from app.fmd2_bridge import Fmd2Connector
+
+        if isinstance(connector, Fmd2Connector):
+            await connector.invalidate_catalog(remote_series_id)
     chapters = await connector.get_chapters(remote_series_id)
     return ConnectorChapterEnvelope(
         data=[_chapter_item(chapter) for chapter in chapters],
@@ -382,6 +408,67 @@ async def import_connector_library_series(
     )
 
 
+async def _selection_catalog(
+    request: Request, connector_id: str, remote_series_id: str
+) -> tuple[RegisteredSourceConnector, ConnectorSeriesMetadata, tuple[ConnectorChapter, ...]]:
+    _resolve_connector(request, connector_id, ConnectorCapability.PAGE_LIST)
+    metadata_connector = _resolve_connector(request, connector_id, ConnectorCapability.METADATA)
+    raw_metadata = await metadata_connector.get_series(remote_series_id)
+    normalized_metadata = metadata_connector.normalize_metadata(raw_metadata)
+    chapter_connector = _resolve_connector(request, connector_id, ConnectorCapability.CHAPTER_LIST)
+    chapters = await chapter_connector.get_chapters(remote_series_id)
+    return metadata_connector, normalized_metadata, tuple(chapters)
+
+
+@router.post(
+    "/{connector_id}/series/{remote_series_id:path}/reader-chapter",
+    response_model=RegisteredReaderChapterEnvelope,
+    responses={
+        404: {"model": ApiErrorEnvelope},
+        409: {"model": ApiErrorEnvelope},
+        422: {"model": ApiErrorEnvelope},
+        501: {"model": ApiErrorEnvelope},
+        502: {"model": ApiErrorEnvelope},
+        503: {"model": ApiErrorEnvelope},
+    },
+    summary="Register a source chapter for reading without creating a download",
+)
+async def register_connector_reader_chapter(
+    connector_id: str,
+    request: Request,
+    selection: RegisterReaderChapterRequest,
+    remote_series_id: str = Path(min_length=1, max_length=MAX_REMOTE_REFERENCE_LENGTH),
+) -> RegisteredReaderChapterEnvelope:
+    runtime = cast(RuntimeState, request.app.state.runtime)
+    service = runtime.download_job_service
+    if service is None:
+        raise HTTPException(status_code=503, detail="Chapter registration is not initialized.")
+    connector, metadata, chapters = await _selection_catalog(
+        request, connector_id, remote_series_id
+    )
+    try:
+        registered = await asyncio.to_thread(
+            service.register_reader_chapter,
+            connector=connector.metadata,
+            remote_series_id=remote_series_id,
+            series_metadata=metadata,
+            chapters=chapters,
+            selected_remote_id=selection.chapter_remote_id,
+        )
+    except InvalidChapterSelection:
+        raise HTTPException(
+            status_code=404, detail="The selected chapter is no longer available."
+        ) from None
+    return RegisteredReaderChapterEnvelope(
+        data=RegisteredReaderChapterItem(
+            series_id=registered.series_id,
+            chapter_id=registered.chapter_id,
+            display_label=registered.display_label,
+        ),
+        meta=DownloadJobsMeta(connector_id=connector_id, remote_series_id=remote_series_id),
+    )
+
+
 @router.post(
     "/{connector_id}/series/{remote_series_id:path}/download-jobs",
     response_model=DownloadJobsEnvelope,
@@ -404,21 +491,9 @@ async def create_selected_download_jobs(
         max_length=MAX_REMOTE_REFERENCE_LENGTH,
     ),
 ) -> DownloadJobsEnvelope:
-    _resolve_connector(request, connector_id, ConnectorCapability.PAGE_LIST)
-    metadata_connector = _resolve_connector(
-        request,
-        connector_id,
-        ConnectorCapability.METADATA,
+    metadata_connector, normalized_metadata, chapters = await _selection_catalog(
+        request, connector_id, remote_series_id
     )
-    raw_metadata = await metadata_connector.get_series(remote_series_id)
-    normalized_metadata = metadata_connector.normalize_metadata(raw_metadata)
-
-    chapter_connector = _resolve_connector(
-        request,
-        connector_id,
-        ConnectorCapability.CHAPTER_LIST,
-    )
-    chapters = await chapter_connector.get_chapters(remote_series_id)
     runtime = cast(RuntimeState, request.app.state.runtime)
     service = runtime.download_job_service
     if service is None:

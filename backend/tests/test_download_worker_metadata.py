@@ -204,11 +204,12 @@ def test_pipeline_comicinfo_uses_effective_metadata_and_preserves_original_pages
     )
 
     assert builds == 1
-    assert request_paths == [
+    # Two page transfers are concurrent; arrival order is not the CBZ page order.
+    assert sorted(request_paths) == sorted([
         "/api/v1/pages/mock-chapter-1/page-2",
         "/api/v1/pages/mock-chapter-1/page-1",
         "/api/v1/pages/mock-chapter-1/page-1",
-    ]
+    ])
     cbzs = tuple((tmp_path / "data" / "library" / "chapters").rglob("*.cbz"))
     assert len(cbzs) == 1
     with zipfile.ZipFile(cbzs[0]) as archive:

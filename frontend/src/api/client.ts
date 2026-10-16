@@ -133,6 +133,19 @@ export interface MetadataResolution {
 
 export interface LibrarySeriesDetail extends LibrarySeriesSummary {
   metadata: MetadataResolution[];
+  readingSources: LibraryReadingSource[];
+}
+
+export interface LibraryReadingSource {
+  seriesSourceId: string;
+  connectorId: string;
+  remoteSeriesId: string;
+  displayName: string;
+  author: string | null;
+  description: string | null;
+  genres: string[] | null;
+  status: string | null;
+  language: string | null;
 }
 
 export interface ExternalMetadataCandidate {
@@ -912,6 +925,24 @@ export async function createConnectorDownloadJobs(
   return { data, meta: { connectorId, remoteSeriesId } };
 }
 
+export async function queueConnectorChapters(
+  connectorId: string, remoteSeriesId: string, chapterRemoteIds: readonly string[],
+  priority: DownloadPriority = "NORMAL",
+): Promise<number> {
+  const ids = [...new Set(chapterRemoteIds)];
+  if (!isNonEmptyString(connectorId) || !isNonEmptyString(remoteSeriesId) ||
+    remoteSeriesId.length > 512 || ids.length < 1 || ids.length > 10_000 ||
+    ids.some((id) => !isNonEmptyString(id) || id.length > 512) || !downloadPriorities.has(priority)) {
+    throw new RangeError("Chapter selection exceeds the source contract");
+  }
+  for (let start = 0; start < ids.length; start += 100) {
+    await createConnectorDownloadJobs(connectorId, remoteSeriesId, {
+      chapterRemoteIds: ids.slice(start, start + 100), priority,
+    });
+  }
+  return ids.length;
+}
+
 export async function getDownloadJobsPage({
   limit,
   offset,
@@ -1374,6 +1405,75 @@ function parseReaderChapter(value: unknown): ReaderChapter | null {
   };
 }
 
+export interface ReaderDownloadSource {
+  connectorId: string;
+  remoteSeriesId: string;
+  chapterRemoteId: string;
+}
+
+export async function getReaderDownloadSource(chapterId: string): Promise<ReaderDownloadSource | null> {
+  if (!UUID_V4_PATTERN.test(chapterId)) throw new RangeError("chapterId must be a UUID v4");
+  const { payload, response } = await requestJson(`/reader/${chapterId}/download-source`);
+  if (!isRecord(payload) || !hasExactKeys(payload, ["data", "meta"]) ||
+    !isRecord(payload.meta) || Object.keys(payload.meta).length !== 0) {
+    throw invalidReaderResponse(response);
+  }
+  if (payload.data === null) return null;
+  const data = payload.data;
+  if (!isRecord(data) || !hasExactKeys(data, [
+    "chapter_id", "connector_id", "remote_series_id", "chapter_remote_id",
+  ]) || data.chapter_id !== chapterId ||
+    !isNonEmptyString(data.connector_id) || data.connector_id.length > 512 ||
+    !isNonEmptyString(data.remote_series_id) || data.remote_series_id.length > 512 ||
+    !isNonEmptyString(data.chapter_remote_id) || data.chapter_remote_id.length > 512) {
+    throw invalidReaderResponse(response);
+  }
+  return { connectorId: data.connector_id, remoteSeriesId: data.remote_series_id,
+    chapterRemoteId: data.chapter_remote_id };
+}
+
+export async function registerOnlineReaderChapter(
+  connectorId: string, remoteSeriesId: string, chapterRemoteId: string,
+): Promise<{ chapterId: string; seriesId: string }> {
+  if ([connectorId, remoteSeriesId, chapterRemoteId].some(
+    (value) => !isNonEmptyString(value) || value.length > 512,
+  )) throw new RangeError("Online chapter references must be bounded nonempty strings");
+  const { payload, response } = await requestJson(
+    `/connectors/${encodeURIComponent(connectorId)}/series/${encodeURIComponent(remoteSeriesId)}/reader-chapter`,
+    { method: "POST", body: JSON.stringify({ chapter_remote_id: chapterRemoteId }) },
+  );
+  if (
+    !isRecord(payload) || !hasExactKeys(payload, ["data", "meta"]) ||
+    !isRecord(payload.data) || !hasExactKeys(payload.data, ["chapter_id", "series_id", "display_label"]) ||
+    typeof payload.data.chapter_id !== "string" || !UUID_V4_PATTERN.test(payload.data.chapter_id) ||
+    typeof payload.data.series_id !== "string" || !UUID_V4_PATTERN.test(payload.data.series_id) ||
+    !isNonEmptyString(payload.data.display_label) || !isRecord(payload.meta) ||
+    !hasExactKeys(payload.meta, ["connector_id", "remote_series_id"]) ||
+    payload.meta.connector_id !== connectorId || payload.meta.remote_series_id !== remoteSeriesId
+  ) throw invalidReaderResponse(response);
+  return { chapterId: payload.data.chapter_id, seriesId: payload.data.series_id };
+}
+
+export async function openOnlineReaderChapter(chapterId: string): Promise<ReaderChapter> {
+  if (!UUID_V4_PATTERN.test(chapterId)) throw new RangeError("chapterId must be a UUID v4");
+  const { payload, response } = await requestJson(`/reader/${encodeURIComponent(chapterId)}/session`, {
+    method: "POST", body: JSON.stringify({ restart: true }),
+  });
+  if (
+    !isRecord(payload) || !hasExactKeys(payload, ["data", "meta"]) ||
+    !isRecord(payload.meta) || Object.keys(payload.meta).length !== 0 ||
+    !isRecord(payload.data) || !hasExactKeys(payload.data, [
+      "session_id", "chapter_id", "state", "page_count", "ready_pages", "error_code",
+    ]) || typeof payload.data.session_id !== "string" || !UUID_V4_PATTERN.test(payload.data.session_id) ||
+    payload.data.chapter_id !== chapterId || payload.data.state !== "complete" ||
+    typeof payload.data.page_count !== "number" || !Number.isSafeInteger(payload.data.page_count) ||
+    payload.data.page_count < 1 || payload.data.page_count > MAX_READER_PAGE_COUNT ||
+    !Array.isArray(payload.data.ready_pages) || payload.data.ready_pages.length !== 0 ||
+    payload.data.error_code !== null
+  ) throw invalidReaderResponse(response);
+  return getReaderChapter(chapterId);
+}
+
 export async function getReaderChapter(chapterId: string): Promise<ReaderChapter> {
   if (!UUID_V4_PATTERN.test(chapterId)) {
     throw new RangeError("chapterId must be a UUID v4");
@@ -1667,7 +1767,7 @@ export async function getReaderPageBlob(
   }
 
   const headers = { Accept: "image/jpeg, image/png, image/webp" };
-  const init: RequestInit = { headers };
+  const init: RequestInit = { headers, cache: "no-store" };
   if (signal !== undefined) init.signal = signal;
 
   let response: Response;
@@ -1892,7 +1992,24 @@ function parseLibrarySeriesDetail(value: unknown): LibrarySeriesDetail | null {
   }
   if (metadata.length !== metadataFields.length) return null;
 
-  return { ...series, metadata };
+  const readingSources: LibraryReadingSource[] = [];
+  if (value.reading_sources !== undefined) {
+    if (!Array.isArray(value.reading_sources)) return null;
+    for (const source of value.reading_sources) {
+      if (!isRecord(source) || typeof source.series_source_id !== "string" ||
+        !UUID_V4_PATTERN.test(source.series_source_id) || !isNonEmptyString(source.connector_id) ||
+        !isNonEmptyString(source.remote_series_id) || !isNonEmptyString(source.display_name) ||
+        !isOptionalString(source.author) || !isOptionalString(source.description) ||
+        !isOptionalString(source.status) || !isOptionalString(source.language) ||
+        !(source.genres === null || (Array.isArray(source.genres) && source.genres.every(isNonEmptyString))) ||
+        readingSources.some((item) => item.seriesSourceId === source.series_source_id)) return null;
+      readingSources.push({seriesSourceId: source.series_source_id, connectorId: source.connector_id,
+        remoteSeriesId: source.remote_series_id, displayName: source.display_name,
+        author: source.author, description: source.description, genres: source.genres,
+        status: source.status, language: source.language});
+    }
+  }
+  return { ...series, metadata, readingSources };
 }
 
 function invalidLibraryResponse(response: Response): ApiError {
@@ -2113,12 +2230,13 @@ export async function getConnectorSearch(
 export async function getConnectorChapters(
   connectorId: string,
   remoteSeriesId: string,
+  refresh = false,
 ): Promise<ConnectorChaptersResponse> {
   if (!isNonEmptyString(connectorId) || !isNonEmptyString(remoteSeriesId)) {
     throw new RangeError("connectorId and remoteSeriesId must not be empty");
   }
   const { payload, response } = await requestJson(
-    `/connectors/${encodeURIComponent(connectorId)}/series/${encodeURIComponent(remoteSeriesId)}/chapters`,
+    `/connectors/${encodeURIComponent(connectorId)}/series/${encodeURIComponent(remoteSeriesId)}/chapters${refresh ? "?refresh=true" : ""}`,
   );
   if (
     !isRecord(payload) ||

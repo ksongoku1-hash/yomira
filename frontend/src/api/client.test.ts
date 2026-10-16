@@ -18,6 +18,8 @@ import {
   getRecentLibrary,
   getRecentReaderProgress,
   getReaderChapter,
+  openOnlineReaderChapter,
+  registerOnlineReaderChapter,
   getReaderChaptersPage,
   getReaderPageBlob,
   getReaderProgress,
@@ -1168,6 +1170,41 @@ describe("typed local API client", () => {
     await expect(getReaderSettings()).rejects.toMatchObject({ name: "ApiError" });
   });
 
+  it("registers an online chapter without creating a download", async () => {
+    const chapterId = "123e4567-e89b-42d3-a456-426614174051";
+    const seriesId = "123e4567-e89b-42d3-a456-426614174050";
+    fetchMock.mockResolvedValue(mockResponse({ data: {
+      chapter_id: chapterId, series_id: seriesId, display_label: "Capítulo 1",
+    }, meta: { connector_id: "yomira.fmd2", remote_series_id: "series/ref" } }));
+    await expect(registerOnlineReaderChapter("yomira.fmd2", "series/ref", "chapter/ref"))
+      .resolves.toEqual({ chapterId, seriesId });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toBe("/api/v1/connectors/yomira.fmd2/series/series%2Fref/reader-chapter");
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toEqual({ chapter_remote_id: "chapter/ref" });
+  });
+
+  it("opens an empty memory session before loading the online chapter metadata", async () => {
+    const chapterId = "123e4567-e89b-42d3-a456-426614174051";
+    const seriesId = "123e4567-e89b-42d3-a456-426614174050";
+    fetchMock.mockResolvedValueOnce(mockResponse({ data: {
+      session_id: "123e4567-e89b-42d3-a456-426614174052", chapter_id: chapterId,
+      state: "complete", page_count: 10_000, ready_pages: [], error_code: null,
+    }, meta: {} })).mockResolvedValueOnce(mockResponse({ data: {
+      chapter_id: chapterId, series_id: seriesId, display_label: "Capítulo 1", page_count: 10_000,
+    }, meta: {} }));
+    await expect(openOnlineReaderChapter(chapterId)).resolves.toMatchObject({ chapterId, pageCount: 10_000 });
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      `/api/v1/reader/${chapterId}/session`, `/api/v1/reader/${chapterId}`,
+    ]);
+  });
+
+  it("rejects an unexpected online session before requesting images or metadata", async () => {
+    fetchMock.mockResolvedValue(mockResponse({ data: { state: "complete", page_count: 0 }, meta: {} }));
+    await expect(openOnlineReaderChapter("123e4567-e89b-42d3-a456-426614174051"))
+      .rejects.toMatchObject({ name: "ApiError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns one bounded verified image blob for a 1-based page", async () => {
     fetchMock.mockResolvedValue(mockBinaryResponse());
 
@@ -1180,7 +1217,7 @@ describe("typed local API client", () => {
     expect(result.size).toBe(3);
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/reader/123e4567-e89b-42d3-a456-426614174051/pages/1",
-      { headers: { Accept: "image/jpeg, image/png, image/webp" } },
+      { headers: { Accept: "image/jpeg, image/png, image/webp" }, cache: "no-store" },
     );
   });
 

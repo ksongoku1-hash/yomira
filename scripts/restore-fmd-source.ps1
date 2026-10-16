@@ -11,6 +11,8 @@ $patch = Join-Path $support 'yomira.patch'
 if ((Get-FileHash -LiteralPath $patch -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pin.patch_sha256) { throw 'El parche no coincide con su hash.' }
 $api = Join-Path $support 'baseunits/uYomiraApi.pas'
 if ((Get-FileHash -LiteralPath $api -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pin.api_source_sha256) { throw 'La unidad de API no coincide con su hash.' }
+$readiness = Join-Path $support 'baseunits/uYomiraPageReadiness.pas'
+if ((Get-FileHash -LiteralPath $readiness -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pin.readiness_source_sha256) { throw 'La unidad de páginas listas no coincide con su hash.' }
 & git init --quiet $target
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear la carpeta de código.' }
 & git -C $target remote add origin $pin.repository
@@ -26,4 +28,5 @@ if ($LASTEXITCODE -ne 0) { throw 'El parche no se puede aplicar a la revisión i
 & git -C $target apply $patch
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo aplicar el parche.' }
 Copy-Item -LiteralPath $api -Destination (Join-Path $target 'baseunits/uYomiraApi.pas')
+Copy-Item -LiteralPath $readiness -Destination (Join-Path $target 'baseunits/uYomiraPageReadiness.pas')
 Write-Output "Código de FMD2 preparado: $target"

@@ -61,16 +61,29 @@ try {
         $PythonExe = $env:YOMIRA_PYTHON_EXE
     }
     if (-not $PythonExe) {
-        $venvPython = Join-Path $projectRoot "backend/.venv/Scripts/python.exe"
-        if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
-            $PythonExe = $venvPython
+        $projectPython = Join-Path $projectRoot "runtime/python-3.14.7/python.exe"
+        if (Test-Path -LiteralPath $projectPython -PathType Leaf) {
+            $PythonExe = $projectPython
+        } else {
+            $venvPython = Join-Path $projectRoot "backend/.venv/Scripts/python.exe"
+            if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
+                $PythonExe = $venvPython
+            }
         }
     }
     if (-not $NodeExe -and $env:YOMIRA_NODE_EXE) {
         $NodeExe = $env:YOMIRA_NODE_EXE
     }
+    if (-not $NodeExe) {
+        $projectNode = Join-Path $projectRoot "runtime/node-24.21.0/node.exe"
+        if (Test-Path -LiteralPath $projectNode -PathType Leaf) { $NodeExe = $projectNode }
+    }
     if (-not $NpmCmd -and $env:YOMIRA_NPM_CMD) {
         $NpmCmd = $env:YOMIRA_NPM_CMD
+    }
+    if (-not $NpmCmd) {
+        $projectNpm = Join-Path $projectRoot "runtime/node-24.21.0/npm.cmd"
+        if (Test-Path -LiteralPath $projectNpm -PathType Leaf) { $NpmCmd = $projectNpm }
     }
 
     $PythonExe = Resolve-Executable -Candidate $PythonExe -CommandNames @("python.exe", "python")

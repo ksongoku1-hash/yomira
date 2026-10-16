@@ -16,9 +16,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.connectors.errors import SourceConnectorError, SourceConnectorOperation
-from app.connectors.metadata import ConnectorCapability
 from app.connectors.pages import ConnectorPageReference
-from app.connectors.protocol import AcquisitionProvider
 from app.connectors.registry import ConnectorRegistry, RegisteredSourceConnector
 from app.domain.download_job import DownloadJob, DownloadJobStatus
 from app.domain.download_page import MAX_DOWNLOAD_PAGE_ATTEMPTS, DownloadPage
@@ -26,7 +24,7 @@ from app.domain.job_cancellation import (
     CancellationRequestPending,
     CancellationSafetyEvidence,
 )
-from app.domain.job_manifest import MAX_MANIFEST_PAGE_COUNT, DownloadJobManifest
+from app.domain.job_manifest import DownloadJobManifest
 from app.domain.job_pause import (
     JobPauseController,
     PauseCheckpointOutcome,
@@ -87,6 +85,7 @@ from app.services.page_manifest_writer import (
     StalePageManifestSnapshot,
 )
 from app.services.reader_asset import ReaderAssetError, ReaderAssetService
+from app.services.source_pages import SourcePageService
 from app.tracing import activate_trace_id, create_trace_id, reset_trace_id
 
 logger = logging.getLogger("yomira.download_worker")
@@ -218,6 +217,7 @@ class DownloadWorker:
         self._data_root_identity = data_root_identity
         self._library_root_identity = library_root_identity or data_root_identity
         self._connector_registry = connector_registry
+        self._source_pages = SourcePageService(connector_registry)
         self._recovery = recovery_coordinator
         self._transport = transport
         self._image_validation_policy = image_validation_policy
@@ -398,15 +398,9 @@ class DownloadWorker:
             DownloadJobStatus.FETCHING_METADATA,
         )
         execution.stage = "connector_resolution"
-        connector_metadata = self._connector_registry.get_metadata(lineage.connector_id)
-        if connector_metadata.connector_version != lineage.connector_version:
-            raise SourceConnectorError(
-                code=ErrorCode.SRC_SCHEMA_CHANGED,
-                operation=SourceConnectorOperation.GET_CHAPTER,
-            )
-        connector = self._connector_registry.resolve(
+        connector = self._source_pages.resolve(
             lineage.connector_id,
-            required_capability=ConnectorCapability.PAGE_LIST,
+            lineage.connector_version,
         )
         execution.stage = "chapter_metadata"
         remote_chapter = await self._await_interruptible(
@@ -415,22 +409,15 @@ class DownloadWorker:
         )
         if remote_chapter.remote_id != lineage.remote_chapter_reference:
             raise DownloadWorkerIntegrityError()
-        references = tuple(
-            await self._await_interruptible(
+        references = await self._await_interruptible(
+            job_id,
+            self._source_pages.acquire_pages(
+                connector,
                 job_id,
-                cast(AcquisitionProvider, connector).acquire_pages(
-                    job_id,
-                    lineage.remote_chapter_reference,
-                    lineage.chapter_title,
-                ),
-            )
+                lineage.remote_chapter_reference,
+                lineage.chapter_title,
+            ),
         )
-        if (
-            not references
-            or len(references) > MAX_MANIFEST_PAGE_COUNT
-            or any(type(reference) is not ConnectorPageReference for reference in references)
-        ):
-            raise ValueError("Connector page list exceeds or violates the V1 contract.")
 
         execution.stage = "durable_page_plan_reconciliation"
         durable_manifest = await asyncio.to_thread(
@@ -480,15 +467,7 @@ class DownloadWorker:
             DownloadJobStatus.DOWNLOADING,
         )
         execution.stage = "page_origin_validation"
-        allowed_origins = frozenset(
-            NetworkOrigin.from_url(origin)
-            for origin in self._connector_registry.get_download_origins(lineage.connector_id)
-        )
-        if not allowed_origins:
-            raise SourceConnectorError(
-                code=ErrorCode.SRC_CAPABILITY_UNSUPPORTED,
-                operation=SourceConnectorOperation.RESOLVE_PAGE,
-            )
+        allowed_origins = self._source_pages.download_origins(lineage.connector_id)
         return _PreparedPagePlan(connector, references, allowed_origins)
 
     async def _download_pages(
@@ -707,15 +686,14 @@ class DownloadWorker:
                     ):
                         raise
                     execution.stage = "page_request_refresh"
-                    references = tuple(
-                        await self._await_interruptible(
+                    references = await self._await_interruptible(
+                        job_id,
+                        self._source_pages.acquire_pages(
+                            plan.connector,
                             job_id,
-                            cast(AcquisitionProvider, plan.connector).acquire_pages(
-                                job_id,
-                                execution.lineage.remote_chapter_reference,
-                                execution.lineage.chapter_title,
-                            ),
-                        )
+                            execution.lineage.remote_chapter_reference,
+                            execution.lineage.chapter_title,
+                        ),
                     )
                     if references != plan.references:
                         raise DownloadWorkerIntegrityError() from None

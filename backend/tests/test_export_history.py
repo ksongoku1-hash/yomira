@@ -157,7 +157,7 @@ def _make_asset() -> Asset:
 def _make_database(tmp_path: Path) -> SQLiteDatabase:
     database = open_test_database(tmp_path)
     report = MigrationRunner(database, tmp_path / "backups").upgrade_to_head()
-    assert report.current_revision == "0023_whole_manga_export_size"
+    assert report.current_revision == "0024_reader_sessions"
     return database
 
 
@@ -306,7 +306,7 @@ def test_migration_creates_bounded_export_job_table_and_verified_backup(
     database = open_test_database(tmp_path)
     try:
         report = MigrationRunner(database, tmp_path / "backups").upgrade_to_head()
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
         assert report.backup_path is not None and report.backup_path.is_file()
 
         with database.read_session() as session:

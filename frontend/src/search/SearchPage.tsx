@@ -1,22 +1,25 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import {
   ApiError,
   createConnectorDownloadJobs,
+  queueConnectorChapters,
   getConnectorChapters,
   getChapterAvailability,
   getConnectorCover,
   getConnectors,
   getConnectorSearch,
   importConnectorLibrarySeries,
+  registerOnlineReaderChapter,
   type DownloadPriority,
   type ConnectorDescriptor,
   type ConnectorSearchResponse,
   type ConnectorSearchResult,
 } from "../api/client";
 import styles from "./SearchPage.module.css";
+import { compareConnectorChapters } from "../api/chapterOrder";
 
 const MAX_SEARCH_RESULTS_PER_SOURCE = 100;
 
@@ -159,6 +162,16 @@ function SearchResultSource({
   const canImportSeries = connector.capabilities.includes("METADATA") && result.remoteId !== null;
   const title = displayTitle;
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const readOnlineMutation = useMutation({
+    mutationFn: (chapterRemoteId: string) => registerOnlineReaderChapter(
+      connectorId, result.remoteId ?? "", chapterRemoteId,
+    ),
+    retry: false,
+    onSuccess: ({ chapterId, seriesId }) => navigate(`/reader/${chapterId}?online=1`, {
+      state: { originatingSeriesId: seriesId },
+    }),
+  });
   const [rangeStartId, setRangeStartId] = useState("");
   const [rangeEndId, setRangeEndId] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -179,6 +192,8 @@ function SearchResultSource({
     queryKey: ["connector-chapters", connectorId, result.remoteId],
     queryFn: () => getConnectorChapters(connectorId, result.remoteId ?? ""),
     enabled: expanded && canListChapters && result.remoteId !== null,
+    staleTime: 60_000,
+    retry: false,
   });
   const importSeriesMutation = useMutation({
     mutationKey: ["connector-library-series", connectorId, result.remoteId],
@@ -209,14 +224,21 @@ function SearchResultSource({
       await queryClient.invalidateQueries({ queryKey: ["chapter-availability", connectorId, result.remoteId] });
     },
   });
-
-  const chapters = [...(chaptersQuery.data?.data ?? [])].sort((left, right) => {
-    for (let index=0; index < Math.max(left.chapterSortKey.length, right.chapterSortKey.length); index++) {
-      const difference = (left.chapterSortKey[index] ?? -1) - (right.chapterSortKey[index] ?? -1);
-      if (difference) return difference;
-    }
-    return left.displayLabel.localeCompare(right.displayLabel, "es", {numeric:true});
+  const wholeMangaMutation = useMutation({
+    mutationFn: async () => {
+      const ids = [...new Set(chaptersQuery.data?.data.flatMap(
+        (chapter) => chapter.remoteId === null ? [] : [chapter.remoteId],
+      ) ?? [])];
+      return queueConnectorChapters(connectorId, result.remoteId ?? "", ids, priority);
+    },
+    retry: false,
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["download-jobs"] });
+      await queryClient.invalidateQueries({ queryKey: ["chapter-availability", connectorId, result.remoteId] });
+    },
   });
+
+  const chapters = [...(chaptersQuery.data?.data ?? [])].sort(compareConnectorChapters);
   const labelCounts = new Map<string, number>();
   for (const chapter of chapters) {
     const key = chapterLabelKey(chapter.displayLabel);
@@ -534,6 +556,12 @@ function SearchResultSource({
                                 : chapterState(chapter) === "busy" ? "En cola o en curso" : "Sin descargar"}</small> : null}
                               {chapter.language ? <small>{chapter.language}</small> : null}
                             </label>
+                            {canImportSeries && chapter.remoteId !== null ? <button
+                              className={styles.secondaryButton} type="button"
+                              aria-label={`Leer online ${chapter.displayLabel}`}
+                              disabled={readOnlineMutation.isPending}
+                              onClick={() => readOnlineMutation.mutate(chapter.remoteId!)}
+                            >Leer online</button> : null}
                           </li>
                         ))}
                       </ul>
@@ -542,6 +570,12 @@ function SearchResultSource({
                       </p> : null}
                       {selectedRemoteIds.some((id) => !visibleRemoteIds.includes(id)) ? <p role="status" className={styles.chapterMetadata}>
                         Hay capítulos seleccionados fuera de los filtros actuales; también se descargarán.
+                      </p> : null}
+                      {canImportSeries ? <p className={styles.chapterMetadata}>
+                        Puedes leer online sin descargar. Solo guarda capítulos si quieres leer sin conexión.
+                      </p> : null}
+                      {readOnlineMutation.isError ? <p role="alert">
+                        No se pudo abrir el capítulo online: {readOnlineMutation.error.message}
                       </p> : null}
                       {visibleChapters.length === 0 ? <p role="status">No hay capítulos que coincidan.</p> : null}
                       <p className={styles.chapterMetadata} aria-live="polite">
@@ -553,7 +587,7 @@ function SearchResultSource({
                       </p>
                       <button
                         className={styles.primaryButton}
-                        disabled={selectedRemoteIds.length === 0 || createJobsMutation.isPending}
+                        disabled={selectedRemoteIds.length === 0 || createJobsMutation.isPending || wholeMangaMutation.isPending}
                         onClick={submitSelectedChapters}
                         type="button"
                       >
@@ -561,6 +595,16 @@ function SearchResultSource({
                           ? "Añadiendo a la cola…"
                           : `Descargar (${selectedRemoteIds.length})`}
                       </button>
+                      <button className={styles.secondaryButton} type="button"
+                        disabled={!chapters.some((chapter) => chapter.remoteId !== null) || createJobsMutation.isPending || wholeMangaMutation.isPending}
+                        onClick={() => wholeMangaMutation.mutate()}
+                      >{wholeMangaMutation.isPending ? "Añadiendo manga a la cola…" : "Descargar manga completo"}</button>
+                      {wholeMangaMutation.isSuccess ? <p role="status">
+                        Los {wholeMangaMutation.data} capítulos disponibles están descargados o en cola. Se conservan las copias existentes.
+                      </p> : null}
+                      {wholeMangaMutation.isError ? <p role="alert">
+                        No se pudo añadir todo el manga. Los capítulos ya añadidos se conservan; puedes reintentar sin duplicarlos.
+                      </p> : null}
                       {createJobsMutation.isError ? (
                         <SearchError
                           error={createJobsMutation.error}

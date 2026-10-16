@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from ipaddress import AddressValueError, IPv6Address
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from app.secrets.reference import SecretReference
 
@@ -16,6 +17,37 @@ class ConnectorPageReference:
     def __post_init__(self) -> None:
         if type(self.remote_reference) is not str or not self.remote_reference:
             raise ValueError("remote_reference must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectorPageAvailability:
+    """Closed provider files; the core must still download and validate their bytes."""
+
+    generation: UUID
+    total_pages: int
+    pages: tuple[tuple[int, ConnectorPageReference], ...]
+    is_complete: bool
+
+    def __post_init__(self) -> None:
+        if type(self.generation) is not UUID or self.generation.version != 4:
+            raise ValueError("generation must be a UUIDv4")
+        if type(self.total_pages) is not int or not 0 <= self.total_pages <= 10_000:
+            raise ValueError("Invalid progressive page count")
+        if type(self.is_complete) is not bool or type(self.pages) is not tuple:
+            raise ValueError("Invalid progressive page snapshot")
+        previous = 0
+        for entry in self.pages:
+            if (
+                type(entry) is not tuple
+                or len(entry) != 2
+                or type(entry[0]) is not int
+                or not previous < entry[0] <= self.total_pages
+                or type(entry[1]) is not ConnectorPageReference
+            ):
+                raise ValueError("Ready pages must have unique ascending ordinals")
+            previous = entry[0]
+        if self.is_complete and (self.total_pages == 0 or len(self.pages) != self.total_pages):
+            raise ValueError("Completed page snapshot must contain every page")
 
 
 def _validate_http_url(value: str, *, field_name: str) -> None:

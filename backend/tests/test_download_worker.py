@@ -794,13 +794,24 @@ async def _exercise_recovered_partial_attempt(
             await connector.get_series("mock-series-1")
         )
         chapters = await connector.get_chapters("mock-series-1")
-        selection = DownloadJobService(database).create_selected_jobs(
+        jobs = DownloadJobService(database)
+        registered = jobs.register_reader_chapter(
+            connector=connector.metadata,
+            remote_series_id="mock-series-1",
+            series_metadata=series_metadata,
+            chapters=chapters,
+            selected_remote_id="mock-chapter-1",
+        )
+        assert not jobs.list_jobs().items
+        selection = jobs.create_selected_jobs(
             connector=connector.metadata,
             remote_series_id="mock-series-1",
             series_metadata=series_metadata,
             chapters=chapters,
             selected_remote_ids=("mock-chapter-1",),
         )[0]
+        assert selection.chapter_id == registered.chapter_id
+        assert selection.series_id == registered.series_id
         job_id = selection.job.job_id
         recovery = RecoveryCoordinator(database, database.data_root_identity)
         writer = PageManifestWriter(database, manifest_store=recovery.manifest_store)
@@ -1165,7 +1176,16 @@ async def _exercise_download(
             await connector.get_series("mock-series-1")
         )
         chapters = await connector.get_chapters("mock-series-1")
-        selection = DownloadJobService(database).create_selected_jobs(
+        jobs = DownloadJobService(database)
+        registered = jobs.register_reader_chapter(
+            connector=connector.metadata,
+            remote_series_id="mock-series-1",
+            series_metadata=series_metadata,
+            chapters=chapters,
+            selected_remote_id="mock-chapter-1",
+        )
+        assert not jobs.list_jobs().items
+        selection = jobs.create_selected_jobs(
             connector=connector.metadata,
             remote_series_id="mock-series-1",
             series_metadata=series_metadata,
@@ -1173,6 +1193,8 @@ async def _exercise_download(
             selected_remote_ids=("mock-chapter-1",),
         )[0]
         disk_budget_manager: DiskBudgetManager | None = None
+        assert selection.chapter_id == registered.chapter_id
+        assert selection.series_id == registered.series_id
         if enable_disk_budget:
             baseline = DiskBudgetManager(database).snapshot()
             assert baseline.recovery_demand_bytes is not None

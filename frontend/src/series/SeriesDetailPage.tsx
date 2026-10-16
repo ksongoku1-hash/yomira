@@ -1,13 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
-import { useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
 
 import {
   ApiError,
   applyExternalSeriesMetadata,
   clearMetadataOverride,
   getExternalMetadataCandidates,
+  getConnectorCover,
   getReaderChaptersPage,
+  getReaderDownloadSource,
+  getChapterAvailability,
   getRecentReaderProgress,
   getSeriesDetail,
   getSeriesCoverUrl,
@@ -25,8 +28,13 @@ import { SeriesExportAction } from "../usb/SeriesExportAction";
 import { SeriesCover } from "../library/SeriesCover";
 import { IllustratedBackdrop } from "../library/IllustratedBackdrop";
 import { publicationStatus } from "../library/publicationStatus";
+import { OnlineChapters } from "./OnlineChapters";
 
 const READER_CHAPTER_PAGE_SIZE = 100;
+
+function chapterSearchTitle(title: string): string {
+  return title.trim().replace(/\s+/g, " ").replace(/\s+\(\d{4}\)$/, "");
+}
 
 const metadataLabels: Record<MetadataField, string> = {
   title: "Título",
@@ -134,10 +142,12 @@ function ReaderChapterRow({
   chapter,
   seriesId,
   currentChapterId,
+  percentage,
 }: {
   chapter: ReaderChapter;
   seriesId: string;
   currentChapterId?: string | undefined;
+  percentage?: string | undefined;
 }) {
   return (
     <li className={styles.chapterItem}>
@@ -151,6 +161,7 @@ function ReaderChapterRow({
         >
           <span className={styles.chapterMark} aria-hidden="true" />
           <span className={styles.chapterLabel}>{chapter.displayLabel}</span>
+          <span className={styles.chapterState}>{percentage !== undefined ? Number(percentage) >= 100 ? "Leído" : "En lectura" : "Guardado"}</span>
           <span className={styles.chapterPageCount}>
             {chapter.pageCount} {chapter.pageCount === 1 ? "página" : "páginas"}
           </span>
@@ -165,14 +176,22 @@ function ReadyChapters({
   seriesId,
   searchTitle,
   searchConnectorId,
+  onDownload,
+  downloadOpen,
 }: {
   seriesId: string;
   searchTitle: string;
   searchConnectorId: string | null;
+  onDownload: (() => void) | null;
+  downloadOpen: boolean;
 }) {
   const [offset, setOffset] = useState(0);
+  const navigate = useNavigate();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [chapterOrder, setChapterOrder] = useState<"asc" | "desc">("asc");
   const [exportOpen, setExportOpen] = useState(false);
+  const [localFilter, setLocalFilter] = useState("");
   const query = useQuery({
     queryKey: ["reader-chapters", seriesId, offset, chapterOrder],
     queryFn: () => getReaderChaptersPage({
@@ -193,13 +212,23 @@ function ReadyChapters({
     retry: false,
   });
   const resume = recentProgress.data?.data.find((item) => item.seriesId === seriesId);
+  const resumeReading = useMutation({
+    mutationFn: async (chapterId: string) => {
+      const source = await getReaderDownloadSource(chapterId);
+      if (source === null) return `/reader/${chapterId}`;
+      const availability = await getChapterAvailability(source.connectorId, source.remoteSeriesId);
+      return `/reader/${chapterId}${availability.readyRemoteIds.includes(source.chapterRemoteId) ? "" : "?online=1"}`;
+    },
+    onSuccess: (href) => { if (mounted.current) navigate(href, {state: {originatingSeriesId: seriesId}}); },
+    retry: false,
+  });
   const firstChapter = page?.data[0];
   const totalPages = page === undefined
     ? 0
     : Math.ceil(page.meta.total / READER_CHAPTER_PAGE_SIZE);
   const currentPage = page === undefined ? 0 : Math.floor(offset / READER_CHAPTER_PAGE_SIZE) + 1;
   const searchParams = new URLSearchParams({
-    q: searchTitle.trim().replace(/\s+/g, " ").replace(/\s+\(\d{4}\)$/, ""),
+    q: chapterSearchTitle(searchTitle),
   });
   if (searchConnectorId !== null) searchParams.set("connector", searchConnectorId);
   const searchHref = `/search?${searchParams.toString()}`;
@@ -207,6 +236,7 @@ function ReadyChapters({
   return (
     <section
       aria-busy={query.isPending || query.isPlaceholderData}
+      id="chapters"
       aria-labelledby="ready-chapters-title"
       className={styles.chapters}
     >
@@ -216,6 +246,25 @@ function ReadyChapters({
           <h2 id="ready-chapters-title">Capítulos listos para leer</h2>
         </div>
       </header>
+
+      <div className={styles.onlineTools}>
+      {resume || firstChapter ? <Link className={styles.primaryButton}
+        to={`/reader/${resume?.chapterId ?? firstChapter!.chapterId}`} state={{ originatingSeriesId: seriesId }}
+        aria-disabled={resumeReading.isPending || undefined}
+        onClick={(event) => {
+          if (resumeReading.isPending) { event.preventDefault(); return; }
+          if (resume && !page?.data.some((chapter) => chapter.chapterId === resume.chapterId)) {
+            event.preventDefault(); resumeReading.mutate(resume.chapterId);
+          }
+        }}>
+        {resumeReading.isPending ? "Preparando lectura…" : resume ? `Continuar ${resume.chapterDisplayLabel} · Página ${resume.pageIndex + 1}` : `${chapterOrder === "asc" ? "Leer primer capítulo" : "Leer capítulo más reciente"} · ${firstChapter!.displayLabel}`}
+      </Link> : null}
+      {onDownload ? <button type="button" className={styles.secondaryButton} aria-expanded={downloadOpen}
+        aria-controls="series-download-selection" onClick={onDownload}>Descargar</button>
+        : <Link className={styles.secondaryButton} to={searchHref}>Descargar capítulos</Link>}
+      </div>
+      {resume ? <p className={styles.chapterCount}>Progreso del capítulo: {resume.percentage} % · Página {resume.pageIndex + 1}</p> : null}
+      {resumeReading.isError ? <p role="alert">No se pudo comprobar la copia del capítulo. Reintenta Continuar; tu progreso se conserva.</p> : null}
 
       {query.isPending ? (
         <p aria-live="polite" className={styles.statusMessage} role="status">
@@ -227,29 +276,28 @@ function ReadyChapters({
       ) : null}
 
       {page?.meta.total === 0 ? (
-        <div className={styles.emptyChapters}>
+        <div className={onDownload ? styles.statusMessage : styles.emptyChapters}>
           <p>Esta serie todavía no tiene capítulos descargados y verificados para leer.</p>
+          {!onDownload ?
           <Link
             className={styles.secondaryButton}
             to={searchHref}
           >
             Buscar capítulos
           </Link>
+          : null}
         </div>
       ) : null}
 
       {page !== undefined && page.meta.total > 0 ? (
         <>
-          {resume || firstChapter ? <Link className={styles.primaryButton}
-            to={`/reader/${resume?.chapterId ?? firstChapter!.chapterId}`} state={{ originatingSeriesId: seriesId }}>
-            {resume ? `Continuar ${resume.chapterDisplayLabel} · Página ${resume.pageIndex + 1}` : `${chapterOrder === "asc" ? "Leer primer capítulo" : "Leer capítulo más reciente"} · ${firstChapter!.displayLabel}`}
-          </Link> : null}
           <p className={styles.chapterCount}>
             {page.meta.total} {page.meta.total === 1 ? "capítulo listo." : "capítulos listos."}
           </p>
-          <Link className={styles.secondaryButton} to={searchHref}>Buscar capítulos faltantes</Link>
+          <label className={styles.onlineControl}>Buscar en capítulos guardados
+            <input value={localFilter} onChange={(event) => setLocalFilter(event.target.value)} placeholder="Filtrar esta página por número o título" /></label>
           <div className={styles.chapterTools}>
-            <details className={styles.cbrSelectionPanel} onToggle={(event) => {
+            <details id="series-export" className={styles.cbrSelectionPanel} onToggle={(event) => {
               if (event.currentTarget.open) setExportOpen(true);
             }}>
               <summary>Exportar manga a USB o lector conectado</summary>
@@ -271,15 +319,17 @@ function ReadyChapters({
             </button>
           </div>
           <ul aria-label="Capítulos disponibles para lectura" className={styles.chapterList}>
-            {page.data.map((chapter) => (
+            {page.data.filter((chapter) => chapter.displayLabel.toLocaleLowerCase().includes(localFilter.trim().toLocaleLowerCase())).map((chapter) => (
               <ReaderChapterRow
                 chapter={chapter}
                 key={chapter.chapterId}
                 seriesId={seriesId}
                 currentChapterId={resume?.chapterId}
+                percentage={recentProgress.data?.data.find((item) => item.chapterId === chapter.chapterId)?.percentage}
               />
             ))}
           </ul>
+          {localFilter ? <p role="status" className={styles.statusMessage}>El filtro se aplica a esta página de capítulos guardados.</p> : null}
           {totalPages > 1 ? (
             <nav aria-label="Paginación de capítulos" className={styles.chapterPagination}>
               <button
@@ -316,12 +366,20 @@ function coverFallbackLabel(metadata: MetadataResolution | undefined): string {
 }
 
 function SeriesMetadata({ seriesId }: { seriesId: string }) {
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const location = useLocation();
+  const backHref = (location.state as { from?: string } | null)?.from === "/downloads" ? "/downloads" : "/library";
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["series", seriesId],
     queryFn: () => getSeriesDetail(seriesId),
     staleTime: 30_000,
     retry: false,
+  });
+  const localSummary = useQuery({
+    queryKey: ["reader-chapters", seriesId, 0, "asc"],
+    queryFn: () => getReaderChaptersPage({seriesId, limit: READER_CHAPTER_PAGE_SIZE, offset: 0, order: "asc"}),
+    enabled: query.isSuccess, staleTime: 30_000, retry: false,
   });
   const invalidateMetadata = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: ["series", seriesId] }),
@@ -365,13 +423,25 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
     if (!keepExternalCandidates) externalCandidates.reset();
   };
   const series = query.data;
+  const [onlineSourceId, setOnlineSourceId] = useState("");
+  const onlineSource = series?.readingSources.find((item) => item.seriesSourceId === onlineSourceId)
+    ?? series?.readingSources[0];
+  const canPreviewCover = onlineSource !== undefined && series?.coverAssetId === null &&
+    !series.metadata.find((item) => item.field === "cover")?.hasUserOverride;
+  const sourceCover = useQuery({
+    queryKey: ["connector-cover", onlineSource?.connectorId, onlineSource?.remoteSeriesId],
+    queryFn: () => getConnectorCover(onlineSource!.connectorId, onlineSource!.remoteSeriesId),
+    enabled: canPreviewCover,
+    staleTime: 60_000, retry: false,
+  });
   const incompleteMetadata = series?.metadata.filter((item) =>
     ["author", "description", "genres"].includes(item.field) && item.value === null,
   ).map((item) => metadataLabels[item.field]) ?? [];
   if (series && !series.coverAssetId) incompleteMetadata.unshift("Portada");
   const coverMetadata = series?.metadata.find((item) => item.field === "cover");
   const titleMetadata = series?.metadata.find((item) => item.field === "title");
-  const synopsis = series?.metadata.find((item) => item.field === "description")?.value;
+  const savedSynopsis = series?.metadata.find((item) => item.field === "description");
+  const synopsis = savedSynopsis?.value ?? (savedSynopsis?.hasUserOverride ? null : onlineSource?.description);
   const pageTitle =
     titleMetadata === undefined
       ? series?.displayTitle ?? "Detalle de serie"
@@ -403,35 +473,8 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
       <IllustratedBackdrop source={series?.coverAssetId
         ? getSeriesCoverUrl(series.seriesId, "large", `${series.coverAssetId}:${series.updatedAt}`)
         : null} />
-      <header className={styles.pageHeader}>
-        <div>
-          <p className={styles.eyebrow}>Detalle local</p>
-          <h1 id="series-title">{pageTitle}</h1>
-          {typeof synopsis === "string" && synopsis.length > 0
-            ? <p className={styles.summary}>{synopsis}</p> : null}
-        </div>
-        <div className={styles.actions}>
-          {series ? (
-            <button
-              className={styles.secondaryButton}
-              disabled={query.isPending || metadataBusy}
-              onClick={() => {
-                resetMetadataErrors();
-                refreshMetadata.mutate();
-              }}
-              type="button"
-            >
-              {refreshMetadata.isPending
-                ? "Actualizando metadatos y portada…"
-                : "Actualizar metadatos y portada"}
-            </button>
-          ) : null}
-          <Link className={styles.secondaryButton} to="/library">
-            Volver a Biblioteca
-          </Link>
-        </div>
-      </header>
-
+      <Link className={styles.backLink} aria-label={backHref === "/downloads" ? "Volver a Descargas" : "Volver a Biblioteca"} to={backHref}>{backHref === "/downloads" ? "← Volver a Descargas" : "← Volver a Biblioteca"}</Link>
+      {!series ? <h1 id="series-title">{pageTitle}</h1> : null}
       {refreshMetadata.isSuccess ? (
         <p aria-live="polite" className={styles.statusMessage} role="status">
           {incompleteMetadata.length === 0 ? "Metadatos y portada actualizados."
@@ -454,16 +497,66 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
           <SeriesCover
             className={styles.cover}
             fallbackLabel={coverFallbackLabel(coverMetadata)}
+            previewSource={canPreviewCover ? sourceCover.data?.data.coverUrl ?? null : null}
             series={series}
             variant="large"
           />
           <div className={styles.detailContent}>
+      <header className={styles.pageHeader}>
+        <div>
+          <p className={styles.eyebrow}>En tu biblioteca</p>
+          {series ? <p className={styles.seriesFacts}>{[onlineSource?.author ?? series.author, publicationStatus(onlineSource?.status ?? series.status ?? ""), onlineSource?.language ?? series.language].filter(Boolean).join(" · ")}</p> : null}
+          <h1 id="series-title">{pageTitle}</h1>
+          {typeof synopsis === "string" && synopsis.length > 0
+            ? <p className={styles.summary}>{synopsis}</p> : null}
+          {synopsis && savedSynopsis?.value === null && onlineSource
+            ? <p className={styles.statusMessage}>Sinopsis de {onlineSource.displayName}</p> : null}
+        </div>
+        <details className={styles.contextMenu} onKeyDown={(event) => {
+          if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
+        }}><summary aria-label="Más acciones del manga">⋯</summary><div className={styles.menuContent}>
+          {series ? (
+            <button
+              className={styles.secondaryButton}
+              disabled={query.isPending || metadataBusy}
+              onClick={() => {
+                resetMetadataErrors();
+                refreshMetadata.mutate();
+              }}
+              type="button"
+            >
+              {refreshMetadata.isPending
+                ? "Actualizando metadatos y portada…"
+                : "Actualizar metadatos y portada"}
+            </button>
+          ) : null}
+          {(localSummary.data?.meta.total ?? 0) > 0 ? <a className={styles.secondaryButton} href="#series-export" onClick={(event) => {
+            document.getElementById("series-export")?.setAttribute("open", "");
+            event.currentTarget.closest("details")?.removeAttribute("open");
+          }}>Exportar y administrar archivos</a> : null}
+          <a className={styles.secondaryButton} href="#metadata-title" onClick={() => { document.getElementById("series-metadata")?.setAttribute("open", ""); }}>Información y correcciones</a>
+          <Link className={styles.secondaryButton} to="/downloads">Administrar descargas</Link>
+        </div></details>
+      </header>
+
+
             <ReadyChapters
               searchTitle={series.displayTitle || series.canonicalTitle}
               searchConnectorId={searchConnectorId}
               seriesId={seriesId}
+              onDownload={onlineSource ? () => setDownloadOpen(!downloadOpen) : null}
+              downloadOpen={downloadOpen}
             />
-            <details className={styles.provenance}>
+            {onlineSource ? <OnlineChapters key={seriesId} seriesId={seriesId} sources={series.readingSources}
+              source={onlineSource} onSourceChange={setOnlineSourceId} downloadOpen={downloadOpen} /> : <section className={styles.chapters} aria-labelledby="online-source-title">
+                <p className={styles.eyebrow}>Disponible sin descargar</p>
+                <h2 id="online-source-title">Leer online</h2>
+                <p className={styles.statusMessage}>Elige una fuente con capítulos para leer esta serie online.</p>
+                <Link className={styles.secondaryButton} to={`/search?${new URLSearchParams({q: chapterSearchTitle(series.displayTitle || series.canonicalTitle)})}`}>
+                  Elegir fuente para lectura online
+                </Link>
+              </section>}
+            <details id="series-metadata" className={styles.provenance}>
               <summary><h2 id="metadata-title">Metadatos y procedencia</h2></summary>
               <p className={styles.statusMessage}>
                 Solo se completan los campos ausentes. Tus correcciones y los datos de la fuente tienen prioridad.

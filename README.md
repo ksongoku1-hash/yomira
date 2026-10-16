@@ -1,8 +1,10 @@
-# Yomira 0.1.11
+# Yomira 0.1.13 — lector híbrido local
 
 Yomira es una aplicación local para Windows que organiza, descarga y permite leer mangas desde una interfaz web. Los archivos y la biblioteca se guardan en el equipo del usuario.
 
-## Descargar y probar
+La versión local 0.1.13 reúne lectura online con imágenes en RAM, navegación entre capítulos de la fuente, descargas explícitas desde el lector y reapertura desde «Reintentar página» conservando la posición. La recuperación del motor se comprueba en Windows con una fuente ficticia y un cierre inesperado del proceso de prueba. Se entrega localmente; no se ha publicado una nueva Release. Los enlaces siguientes corresponden a la versión publicada anterior.
+
+## Descargar y probar la versión publicada 0.1.11
 
 **Para usar Yomira en Windows 10/11 de 64 bits:**
 
@@ -42,49 +44,37 @@ En Biblioteca, abre un manga y pulsa el triángulo a la derecha, justo encima de
 
 En Descargas, **Descargas por manga** reúne todos los trabajos pendientes de cada manga, aunque estén en distintas páginas de la cola. Pulsa **Pausar grupo**: termina el capítulo en curso y deja avanzar a otros mangas. Pulsa **Reanudar grupo** para continuar con los mismos trabajos. La pausa queda guardada al cerrar Yomira y también se aplica a nuevos capítulos de ese manga mientras siga pausado. No se borran archivos ni se duplican trabajos.
 
-## Preparar desarrollo en Windows
+## Desarrollo en Windows
 
-Necesitas Git, Python y Node.js en las versiones indicadas en [runtime-versions.json](runtime-versions.json). Los archivos backend/requirements.lock y frontend/package-lock.json fijan las dependencias.
+La carpeta raíz del repositorio contiene el código. Abre PowerShell allí. El launcher usa el runtime Python privado del proyecto y, si no se personalizan, las carpetas de datos y mangas dentro de user-data:
 
-Desde la raíz del repositorio:
+    powershell -ExecutionPolicy Bypass -File .\scripts\start-yomira.ps1
 
-```powershell
-py -3.14 -m venv backend/.venv
-backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.lock
-npm ci --prefix frontend
-npm run build --prefix frontend
-powershell -ExecutionPolicy Bypass -File scripts/start-yomira.ps1
-```
+Para restaurar dependencias después de cambiar los archivos fijados, Python y
+Node están en runtime\python-3.14.7 y runtime\node-24.21.0:
 
-Abre http://127.0.0.1:8000. El servidor sirve la interfaz compilada. Para trabajar con Vite, usa npm run dev --prefix frontend y un servidor de desarrollo en el puerto configurado por su proxy.
+    .\runtime\node-24.21.0\npm.cmd ci --prefix frontend
+    Push-Location backend
+    ..\runtime\python-3.14.7\python.exe -m pip install -r requirements.lock
+    Pop-Location
 
-Sin FMD2 puedes utilizar la biblioteca y el lector local. Para habilitar las fuentes de FMD2 necesitas la versión adaptada, sus DLL y módulos Lua; el ejecutable oficial sin los cambios de Yomira no expone su API. Consulta [la integración de FMD2](third_party/fmd2/README.md).
+Las rutas predeterminadas son user-data/libraries/Mangas para la biblioteca y user-data/AppData/Yomira/YomiraData para los datos, la base de datos, los trabajos, los registros y la configuración activa. El launcher configura esas rutas si no existen valores explícitos de YOMIRA_DATA_ROOT y YOMIRA_LIBRARY_ROOT. También puedes asignar raíces absolutas mediante esas variables. YOMIRA_API_PORT y YOMIRA_FMD2_EXECUTABLE conservan su función.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/start-yomira.ps1 -FmdExecutable 'D:/Herramientas/FMD-Yomira/fmd.exe'
-```
+Pruebas:
 
-## Carpetas y configuración
+    Push-Location backend
+    ..\runtime\python-3.14.7\python.exe -m pytest
+    Pop-Location
+    .\runtime\node-24.21.0\npm.cmd test --prefix frontend
+    .\runtime\node-24.21.0\npm.cmd run typecheck --prefix frontend
+    .\runtime\node-24.21.0\npm.cmd run lint --prefix frontend
 
-La biblioteca utiliza la carpeta Mangas de Yomira dentro de Documentos del usuario, incluida su ubicación real si Windows la redirige a OneDrive. Los datos de la aplicación se guardan por defecto en %LOCALAPPDATA%/Yomira/YomiraData.
+scripts/quality-gate.ps1 ejecuta las validaciones completas con esos runtimes
+locales. Para probar la interfaz contra el API sin tocar datos del usuario,
+usa scripts/smoke-integration.ps1 o la vista previa offline de
+backend/tests/offline_preview.py.
 
-Puedes configurar YOMIRA_DATA_ROOT, YOMIRA_LIBRARY_ROOT, YOMIRA_API_PORT y YOMIRA_FMD2_EXECUTABLE mediante variables de entorno. Las rutas deben ser absolutas. No se carga automáticamente un archivo .env.
-
-No copies bases de datos, bibliotecas, credenciales ni configuraciones de otro usuario dentro del repositorio. Para una prueba aislada, asigna carpetas nuevas a YOMIRA_DATA_ROOT y YOMIRA_LIBRARY_ROOT y utiliza un puerto libre.
-
-## Pruebas
-
-```powershell
-Push-Location backend
-.venv/Scripts/python.exe -m pytest
-Pop-Location
-npm test --prefix frontend
-npm run typecheck --prefix frontend
-npm run lint --prefix frontend
-```
-
-scripts/quality-gate.ps1 agrupa las comprobaciones del proyecto y permite especificar Python, Node y npm. El repositorio conserva documentos de diseño históricos; los informes y capturas locales de ejecución quedan fuera de esta primera copia. Algunos documentos históricos hacen referencia a esos informes conservados en el equipo de desarrollo. Consulta [el estado de publicación](docs/GITHUB_PREPARATION.md) para conocer las comprobaciones y limitaciones de esta copia.
-
+El código fuente se publica en GitHub. Después de una compilación correcta, scripts/package-release.ps1 guarda en D:\Yomira-Backup\releases solo el ZIP portátil y el instalador de esa versión, con verificación SHA-256 y retención de cinco versiones. La biblioteca, la base de datos y las descargas no forman parte de esa copia.
 ## Instalador
 
 El instalador publicado incorpora la interfaz, Python y el motor FMD2 adaptado. Para mantener o reconstruir la distribución consulta [la guía de empaquetado](docs/BUILD_RELEASE.md). Los scripts backend/build_windows.ps1 e installer/build_installer.ps1 construyen los componentes; scripts/package-release.ps1 reúne el motor verificado, las licencias, el instalador y el ZIP portátil.
@@ -94,3 +84,5 @@ Subir el repositorio a GitHub no aloja el servidor ni hace accesibles los mangas
 ## Licencias
 
 El repositorio y la descarga de prueba son públicos. La licencia abierta del código propio de Yomira sigue pendiente de decisión; publicar el código no cambia las licencias de los componentes externos. FMD2 y sus cambios conservan la licencia GPL v2 de su origen; se incluyen las atribuciones y el parche en third_party/fmd2. Consulta [las notas de licencias](THIRD_PARTY_NOTICES.md).
+
+

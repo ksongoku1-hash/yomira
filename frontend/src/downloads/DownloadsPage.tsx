@@ -148,7 +148,7 @@ function DownloadJobCard({
     <li className={styles.jobItem}>
       <article className={styles.jobCard} data-status={job.status}>
         <div className={styles.jobDetails}>
-          <h3>{job.seriesTitle}</h3>
+          <h3><Link className={styles.readerLink} to={`/series/${job.seriesId}`} state={{ from: "/downloads" }}>{job.seriesTitle}</Link></h3>
           <p className={styles.chapterLabel}>{job.chapterLabel}</p>
           <details className={styles.reference}>
             <summary>Detalles del trabajo</summary>
@@ -158,7 +158,7 @@ function DownloadJobCard({
             <Link
               aria-label={`Leer ${job.chapterLabel} de ${job.seriesTitle}`}
               className={styles.readerLink}
-              to={`/reader/${encodeURIComponent(job.chapterId)}`}
+              to={`/reader/${encodeURIComponent(job.chapterId)}`} state={{ originatingSeriesId: job.seriesId }}
             >
               Abrir en el lector
             </Link>
@@ -297,7 +297,7 @@ function DownloadGroups() {
         <ul className={styles.groupList} aria-label="Grupos de descargas">
           {groupsQuery.data.data.map((group) => (
             <li className={styles.groupCard} key={group.seriesId}>
-              <div><h3>{group.seriesTitle}</h3>
+              <div><h3><Link className={styles.readerLink} to={`/series/${group.seriesId}`} state={{ from: "/downloads" }}>{group.seriesTitle}</Link></h3>
                 <p>{group.queued} pendientes · {group.active} en curso</p>
                 <p role="status">{group.paused ? group.active > 0
                   ? "Pausa solicitada; termina el capítulo en curso." : "En pausa" : "Activa"}</p>

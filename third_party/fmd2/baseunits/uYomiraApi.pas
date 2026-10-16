@@ -11,8 +11,8 @@ implementation
 
 uses
   Classes, SysUtils, StrUtils, Math, fpjson, jsonparser, fphttpserver, httpdefs, Forms,
-  FileUtil, FMDOptions, uBaseUnit, uData, DBDataProcess, WebsiteModules, uDownloadsManager,
-  BaseThread, FMDVars, MultiLog, DBUpdater, XQueryEngineHTML, xquery, synacode, SyncObjs;
+  ImgInfos, FileUtil, FMDOptions, uBaseUnit, uData, DBDataProcess, WebsiteModules, uDownloadsManager,
+  BaseThread, FMDVars, MultiLog, DBUpdater, XQueryEngineHTML, xquery, synacode, SyncObjs, uYomiraPageReadiness;
 
 const
   API_PORT_DEFAULT = 18873;
@@ -39,6 +39,7 @@ const
 
 type
   ESourceCatalogNotReady = class(Exception);
+  EProviderJobNotFound = class(Exception);
 
   TLoopbackHTTPServer = class(TFPHTTPServer)
   public
@@ -48,7 +49,10 @@ type
   TYomiraApiListener = class(TBaseThread)
   private
     FServer: TLoopbackHTTPServer;
-    FActionLock, FCatalogLock: TCriticalSection;
+    FActionLock, FCatalogLock, FReaderLock: TCriticalSection;
+    FReaderTask: TTaskThread;
+    FReaderContainer: TTaskContainer;
+    FReaderID, FReaderReference: string;
     FToken: string;
     FPort: Word;
     FActionSourceID: string;
@@ -59,6 +63,7 @@ type
     FActionChapterRef: string;
     FActionJobID: string;
     FActionFileName: string;
+    FActionPageGeneration: string;
     FActionFilePath: string;
     FActionResult: string;
     FActionError: string;
@@ -81,7 +86,11 @@ type
     function DownloadJSON(const ABody: string; AResponse: TFPHTTPConnectionResponse): TJSONObject;
     function StatusJSON(const AJobID: string; AResponse: TFPHTTPConnectionResponse): TJSONObject;
     function CancelJSON(const AJobID: string; AResponse: TFPHTTPConnectionResponse): TJSONObject;
-    procedure FileResponse(const AJobID, AFileName: string; AResponse: TFPHTTPConnectionResponse);
+    procedure FileResponse(const AJobID, AFileName: string; AResponse: TFPHTTPConnectionResponse;
+      const AGeneration: string = '');
+    function OpenReaderJSON(const ABody: string): TJSONObject;
+    procedure ReaderResponse(const APath, AMethod: string; AResponse: TFPHTTPConnectionResponse);
+    procedure ClearReader;
     function IsAuthorized(const AHeader: string): Boolean;
   protected
     procedure Execute; override;
@@ -252,6 +261,7 @@ begin
   FPort := APort;
   FActionLock := TCriticalSection.Create;
   FCatalogLock := TCriticalSection.Create;
+  FReaderLock := TCriticalSection.Create;
 end;
 
 procedure TYomiraApiListener.OnAcceptIdle(Sender: TObject);
@@ -278,6 +288,8 @@ begin
     end;
   finally
     FreeAndNil(FServer);
+    ClearReader;
+    FreeAndNil(FReaderLock);
     FreeAndNil(FActionLock);
     FreeAndNil(FCatalogLock);
   end;
@@ -588,6 +600,114 @@ begin
   end;
 end;
 
+procedure TYomiraApiListener.ClearReader;
+begin
+  FreeAndNil(FReaderTask);
+  FreeAndNil(FReaderContainer);
+  FReaderID := '';
+  FReaderReference := '';
+end;
+
+function TYomiraApiListener.OpenReaderJSON(const ABody: string): TJSONObject;
+var
+  Input: TJSONObject;
+  Module: TModuleContainer;
+  ModuleID, URL, RequestID, Reference: string;
+begin
+  Input := ParseObject(ABody);
+  try
+    RequestID := LowerCase(Input.Get('request_id', ''));
+    Reference := Input.Get('chapter_ref', '');
+    if not IsValidJobID(RequestID) or not UnpackReference(Reference, ModuleID, URL) or
+      (PublicSourceIndex(ModuleID) < 0) or not IsSafeModuleURL(URL, ModuleID) then
+      raise EConvertError.Create('Invalid online chapter reference.');
+    if FReaderTask <> nil then
+    begin
+      if (FReaderID <> RequestID) or (FReaderReference <> Reference) then
+        raise EConvertError.Create('Close the existing reader before opening another.');
+    end
+    else
+    begin
+      Module := PublicModule(PublicSourceIndex(ModuleID));
+      if Module = nil then raise EConvertError.Create('Source unavailable.');
+      FReaderContainer := TTaskContainer.Create;
+      FReaderContainer.DownloadInfo.Module := Module;
+      FReaderContainer.ChapterLinks.Add(URL);
+      FReaderContainer.ChapterNames.Add('Online');
+      try
+        FReaderTask := TTaskThread.Create(FReaderContainer, True);
+        // The detached task reuses source callbacks without creating a download or directory.
+        if not FReaderTask.PlanOnlinePages then
+          raise Exception.Create('The source could not provide a memory-only page plan.');
+        FReaderID := RequestID;
+        FReaderReference := Reference;
+      except
+        ClearReader;
+        raise;
+      end;
+    end;
+    Result := TJSONObject.Create;
+    Result.Add('session_id', FReaderID);
+    Result.Add('page_count', FReaderContainer.PageLinks.Count);
+  finally
+    Input.Free;
+  end;
+end;
+
+procedure TYomiraApiListener.ReaderResponse(const APath, AMethod: string;
+  AResponse: TFPHTTPConnectionResponse);
+var
+  Ref, ID, OrdinalText, Ext: string;
+  Marker, Ordinal: Integer;
+  Worker: TDownloadThread;
+  Stream: TMemoryStream;
+  JSON: TJSONObject;
+begin
+  Ref := Copy(APath, Length('/v1/reader/') + 1, MaxInt);
+  Marker := Pos('/pages/', Ref);
+  ID := Ref;
+  if Marker > 0 then ID := Copy(Ref, 1, Marker - 1);
+  if not IsValidJobID(ID) or (FReaderTask = nil) or (ID <> FReaderID) then
+    raise EProviderJobNotFound.Create('Online session unavailable.');
+  if (AMethod = 'DELETE') and (Marker = 0) then
+  begin
+    ClearReader;
+    JSON := TJSONObject.Create;
+    JSON.Add('status', 'closed');
+    SetJSON(AResponse, 200, JSON);
+    Exit;
+  end;
+  OrdinalText := Copy(Ref, Marker + Length('/pages/'), MaxInt);
+  if (AMethod <> 'GET') or (Marker <= 0) or not TryStrToInt(OrdinalText, Ordinal) or
+    (OrdinalText <> IntToStr(Ordinal)) or (Ordinal < 1) or
+    (Ordinal > FReaderContainer.PageLinks.Count) then
+    raise EProviderJobNotFound.Create('Online page unavailable.');
+  Worker := TDownloadThread.Create(FReaderTask, True);
+  Stream := nil;
+  try
+    if not Worker.ReadOnlineImage(Ordinal) then raise Exception.Create('Online image unavailable.');
+    Ext := GetImageStreamExt(Worker.HTTP.Document);
+    if not ((Ext = 'jpg') or (Ext = 'jpeg') or (Ext = 'png') or (Ext = 'webp')) then
+      raise Exception.Create('Unsupported online image.');
+    Stream := TMemoryStream.Create;
+    Worker.HTTP.Document.Position := 0;
+    Stream.CopyFrom(Worker.HTTP.Document, Worker.HTTP.Document.Size);
+    Stream.Position := 0;
+    AResponse.Code := 200;
+    AResponse.CacheControl := 'no-store';
+    AResponse.ContentType := 'image/jpeg';
+    if Ext = 'png' then AResponse.ContentType := 'image/png'
+    else if Ext = 'webp' then AResponse.ContentType := 'image/webp';
+    AResponse.ContentLength := Stream.Size;
+    AResponse.ContentStream := Stream;
+    AResponse.FreeContentStream := True;
+    Stream := nil;
+  finally
+    Stream.Free;
+    Worker.Free;
+  end;
+end;
+
 function TYomiraApiListener.DownloadJSON(const ABody: string;
   AResponse: TFPHTTPConnectionResponse): TJSONObject;
 var
@@ -750,7 +870,10 @@ begin
     begin
       Task := DLManager.Items[I];
       if SameText(ExpandFileName(Task.DownloadInfo.SaveTo), Folder) and
-        Task.RawOutput and (Task.Status = STATUS_FINISH) then
+        Task.RawOutput and (((FActionPageGeneration = '') and
+        (Task.Status = STATUS_FINISH)) or ((FActionPageGeneration <> '') and
+        Task.ReadyPages.Matches(FActionPageGeneration, FActionFileName,
+          Task.Status = STATUS_FINISH))) then
       begin
         Candidate := ExpandFileName(Folder + FActionFileName);
         if not IsUnderStagingRoot(Candidate) then
@@ -779,7 +902,7 @@ begin
 end;
 
 procedure TYomiraApiListener.FileResponse(const AJobID, AFileName: string;
-  AResponse: TFPHTTPConnectionResponse);
+  AResponse: TFPHTTPConnectionResponse; const AGeneration: string);
 var
   I: Integer;
   Ext: string;
@@ -812,6 +935,7 @@ begin
   end;
   FActionJobID := LowerCase(AJobID);
   FActionFileName := AFileName;
+  FActionPageGeneration := AGeneration;
   Synchronize(@LocateStageFileOnMainThread);
   if FActionError <> '' then
   begin
@@ -820,7 +944,7 @@ begin
   end;
   Stream := nil;
   try
-    Stream := TFileStream.Create(FActionFilePath, fmOpenRead or fmShareDenyNone);
+    Stream := TFileStream.Create(FActionFilePath, fmOpenRead or fmShareDenyWrite);
     if (Stream.Size <= 0) or (Stream.Size > API_FILE_LIMIT) then
     begin
       SetError(AResponse, 404, 'not_found');
@@ -862,6 +986,9 @@ var
   Names: TJSONArray;
   Search: TSearchRec;
   Path: string;
+  Ready: TYomiraReadySnapshot;
+  Page: TJSONObject;
+  PageIndex: Integer;
 begin
   FActionError := '';
   FActionResult := '';
@@ -876,7 +1003,7 @@ begin
         Break;
       end;
     if Found < 0 then
-      raise Exception.Create('Provider job was not found.');
+      raise EProviderJobNotFound.Create('Provider job was not found.');
     Task := DLManager.Items[Found];
     Root := TJSONObject.Create;
     Root.Add('job_id', FActionJobID);
@@ -900,6 +1027,18 @@ begin
       FindClose(Search);
     end;
     Root.Add('files', Names);
+    Ready := Task.ReadyPages.Snapshot;
+    Root.Add('page_generation', Ready.Generation);
+    Root.Add('planned_pages', Ready.Total);
+    Names := TJSONArray.Create;
+    for PageIndex := 0 to High(Ready.Pages) do
+    begin
+      Page := TJSONObject.Create;
+      Page.Add('ordinal', Ready.Pages[PageIndex].Ordinal);
+      Page.Add('file_name', Ready.Pages[PageIndex].FileName);
+      Names.Add(Page);
+    end;
+    Root.Add('ready_pages', Names);
     FActionResult := Root.AsJSON;
     Root.Free;
   finally
@@ -940,7 +1079,7 @@ begin
         Break;
       end;
     if Found < 0 then
-      raise Exception.Create('Provider job was not found.');
+      raise EProviderJobNotFound.Create('Provider job was not found.');
     DLManager.StopTask(Found, False);
   finally
     DLManager.UnLock;
@@ -957,7 +1096,7 @@ procedure TYomiraApiListener.OnRequest(Sender: TObject;
   var ARequest: TFPHTTPConnectionRequest;
   var AResponse: TFPHTTPConnectionResponse);
 var
-  Path, Method, Ref, JobID, FileName: string;
+  Path, Method, Ref, JobID, FileName, Generation: string;
   PosEnd, FileMarker: SizeInt;
   JSON: TJSONObject;
   ControlRequest: Boolean;
@@ -975,7 +1114,7 @@ begin
   begin
     Ref := Copy(Path, Length('/v1/downloads/') + 1, MaxInt);
     FileMarker := Pos('/files/', Ref);
-    if FileMarker > 0 then
+    if (FileMarker > 0) and (Pos('/ready/', Ref) = 0) then
     begin
       JobID := Copy(Ref, 1, FileMarker - 1);
       FileName := Copy(Ref, FileMarker + Length('/files/'), MaxInt);
@@ -991,12 +1130,47 @@ begin
     SetError(AResponse, 401, 'unauthorized');
     Exit;
   end;
+  if StartsStr('/v1/downloads/', Path) and (Pos('/ready/', Path) > 0) then
+  begin
+    Ref := Copy(Path, Length('/v1/downloads/') + 1, MaxInt);
+    PosEnd := Pos('/ready/', Ref);
+    JobID := Copy(Ref, 1, PosEnd - 1);
+    Delete(Ref, 1, PosEnd + Length('/ready/') - 1);
+    FileMarker := Pos('/files/', Ref);
+    Generation := Copy(Ref, 1, FileMarker - 1);
+    FileName := Copy(Ref, FileMarker + Length('/files/'), MaxInt);
+    if (FileMarker <= 0) or not IsValidJobID(Generation) then
+      SetError(AResponse, 404, 'not_found')
+    else if Method <> 'GET' then
+      SetError(AResponse, 405, 'method_not_allowed')
+    else
+      FileResponse(JobID, FileName, AResponse, Generation);
+    Exit;
+  end;
   if ARequest.ContentLength > API_BODY_LIMIT then
   begin
     SetError(AResponse, 413, 'request_too_large');
     Exit;
   end;
   try
+    if (Path = '/v1/reader') or StartsStr('/v1/reader/', Path) then
+    begin
+      if not FReaderLock.TryEnter then
+      begin
+        SetError(AResponse, 503, 'reader_busy');
+        Exit;
+      end;
+      try
+        if (Path = '/v1/reader') and (Method = 'POST') then
+          SetJSON(AResponse, 200, OpenReaderJSON(ARequest.Content))
+        else if StartsStr('/v1/reader/', Path) then
+          ReaderResponse(Path, Method, AResponse)
+        else SetError(AResponse, 405, 'method_not_allowed');
+      finally
+        FReaderLock.Release;
+      end;
+      Exit;
+    end;
     if (Method = 'GET') and (Path = '/v1/sources') then
       JSON := SourcesJSON
     else if (Method = 'POST') and (Path = '/v1/search') then
@@ -1064,6 +1238,8 @@ begin
     end;
     SetJSON(AResponse, 200, JSON);
   except
+    on E: EProviderJobNotFound do
+      SetError(AResponse, 404, 'not_found');
     on E: ESourceCatalogNotReady do
       SetError(AResponse, 503, 'catalog_not_ready');
     on E: EConvertError do

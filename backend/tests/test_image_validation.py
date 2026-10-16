@@ -18,6 +18,7 @@ from app.services.image_validation import (
     ImageValidationError,
     ImageValidationErrorCode,
     ImageValidationPolicy,
+    validate_image_bytes,
     validate_image_file,
 )
 
@@ -43,6 +44,40 @@ def _image_bytes(image_format: str, size: tuple[int, int] = (8, 12)) -> bytes:
     output = BytesIO()
     image.save(output, format=image_format)
     return output.getvalue()
+
+
+@pytest.mark.parametrize(
+    "image_format,mime",
+    [
+        ("JPEG", "image/jpeg"),
+        ("PNG", "image/png"),
+        ("WEBP", "image/webp"),
+    ],
+)
+def test_memory_image_uses_the_same_decoder_and_limits(
+    image_format: str, mime: str, policy: ImageValidationPolicy
+) -> None:
+    body = _image_bytes(image_format)
+    result = validate_image_bytes(body, mime, policy=policy)
+    assert result.sha256 == hashlib.sha256(body).hexdigest()
+    assert (result.width, result.height, result.size_bytes) == (8, 12, len(body))
+    assert result.mime == mime
+
+
+@pytest.mark.parametrize(
+    "body,mime,limit,code",
+    [
+        (b"<html>error</html>", "image/png", 100, ImageValidationErrorCode.SIGNATURE_INVALID),
+        (b"x" * 101, "image/png", 100, ImageValidationErrorCode.BYTE_LIMIT),
+        (b"x", "text/html", 100, ImageValidationErrorCode.MIME_UNSUPPORTED),
+    ],
+)
+def test_memory_image_rejects_untrusted_bytes(
+    body: bytes, mime: str, limit: int, code: ImageValidationErrorCode
+) -> None:
+    with pytest.raises(ImageValidationError) as failed:
+        validate_image_bytes(body, mime, policy=ImageValidationPolicy(limit, 100, 100, 10_000))
+    assert failed.value.code == code
 
 
 def _install_fake_image_file_observations(

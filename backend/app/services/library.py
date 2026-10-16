@@ -1,9 +1,13 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from sqlalchemy import select
+
 from app.domain.library_reading_status import LibraryReadingStatus
 from app.domain.series import Series
 from app.persistence.database import SQLiteDatabase
+from app.persistence.models.series_source import SeriesSourceRow
+from app.persistence.models.source import SourceRow
 from app.persistence.repositories.series import SeriesRepository
 from app.services.recent_views import DEFAULT_RECENT_LIMIT, validate_recent_limit
 
@@ -17,6 +21,15 @@ class SeriesPage:
     total: int
     limit: int
     offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryReadingSource:
+    series_source_id: UUID
+    connector_id: str
+    connector_version: str
+    remote_series_id: str
+    display_name: str
 
 
 class LibraryService:
@@ -35,6 +48,26 @@ class LibraryService:
     def get_series(self, series_id: UUID) -> Series | None:
         with self._database.read_session() as session:
             return self._series_repository.get(session, series_id)
+
+    def list_reading_sources(self, series_id: UUID) -> tuple[LibraryReadingSource, ...]:
+        with self._database.read_session() as session:
+            rows = session.execute(
+                select(SeriesSourceRow, SourceRow)
+                .join(SourceRow, SourceRow.source_id == SeriesSourceRow.source_id)
+                .where(SeriesSourceRow.series_id == str(series_id), SourceRow.enabled.is_(True))
+                .order_by(SeriesSourceRow.series_source_id)
+            ).all()
+            return tuple(
+                LibraryReadingSource(
+                    UUID(link.series_source_id),
+                    source.connector_id,
+                    source.connector_version,
+                    link.remote_id or link.remote_url,
+                    source.display_name,
+                )
+                for link, source in rows
+                if link.remote_id or link.remote_url
+            )
 
     def list_series(
         self,

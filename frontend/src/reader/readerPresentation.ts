@@ -1,5 +1,15 @@
 export interface VerticalAnchor { page: number; fraction: number }
 
+export function fittedPageWidth(
+  ratio: number | undefined, width: number, height: number,
+  fit: "width" | "height" | null, zoom: number,
+): number | undefined {
+  if (ratio === undefined || width <= 0 || height <= 0) return undefined;
+  if (fit === "width") return width;
+  if (fit === "height") return height * ratio;
+  return Math.min(width, height * ratio) * zoom;
+}
+
 export function verticalLayout(
   count: number, width: number, fallbackHeight: number,
   ratios: ReadonlyMap<number, number>, zoom: number, gap: number, fitHeight: boolean,
@@ -23,7 +33,8 @@ export function anchorAt(offsets: readonly number[], scrollTop: number): Vertica
   const top = Math.max(0, scrollTop);
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
-    if (offsets[middle]! <= top) low = middle;
+    // Browsers can round a programmed scroll position to the preceding pixel.
+    if (offsets[middle]! <= top + 1) low = middle;
     else high = middle - 1;
   }
   const height = Math.max(1, offsets[low + 1]! - offsets[low]!);

@@ -48,6 +48,57 @@ def _connector(tmp_path: Path, handler: httpx.AsyncBaseTransport) -> Fmd2Connect
     return Fmd2Connector(tmp_path / "fmd.exe", tmp_path / "staging", api_client=client)
 
 
+def test_fmd2_online_plan_does_not_create_a_download(tmp_path: Path) -> None:
+    sid = uuid4()
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.method == "POST":
+            assert request.url.path == "/v1/reader"
+            assert json.loads(request.content)["request_id"] == str(sid)
+            return httpx.Response(200, json={"session_id": str(sid), "page_count": 10_000})
+        return httpx.Response(200, json={"status": "closed"})
+
+    connector = _connector(tmp_path, httpx.MockTransport(handler))
+
+    async def exercise() -> None:
+        pages = await connector.open_online_pages(sid, _chapter_reference())
+        assert len(pages) == 10_000
+        request = connector.resolve_page(pages[-1])
+        assert request.url == f"{FMD2_API_ORIGIN}/v1/reader/{sid}/pages/10000"
+        assert request.secret_reference is not None
+        await connector.close_online_pages(sid)
+        await connector.close()
+
+    asyncio.run(exercise())
+    assert calls == [("POST", "/v1/reader"), ("DELETE", f"/v1/reader/{sid}")]
+    assert not (tmp_path / "staging").exists()
+
+
+@pytest.mark.parametrize("count", [True, 0, -1, 10_001, "3"])
+def test_fmd2_rejects_invalid_online_plans(tmp_path: Path, count: object) -> None:
+    sid = uuid4()
+    connector = _connector(
+        tmp_path,
+        httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={"session_id": str(sid), "page_count": count},
+            )
+        ),
+    )
+
+    async def exercise() -> None:
+        try:
+            with pytest.raises(SourceConnectorError):
+                await connector.open_online_pages(sid, _chapter_reference())
+        finally:
+            await connector.close()
+
+    asyncio.run(exercise())
+
+
 def test_fmd2_search_chapters_and_durable_staged_pages(tmp_path: Path) -> None:
     manga_ref = _fmd_reference("/en/romance/lore-olympus/list?title_no=1320")
     chapter_ref = _fmd_reference("/en/romance/lore-olympus/episode-1/viewer?episode_no=1")

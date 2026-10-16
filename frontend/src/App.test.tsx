@@ -206,8 +206,9 @@ describe("App", () => {
     window.history.replaceState({}, "", route);
     const view = render(<App />);
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    if (route.startsWith("/series/")) fireEvent.click(screen.getByLabelText("Más acciones del manga"));
     const button = screen.getByRole("button", {name: buttonName});
-    const titleNode = screen.getByText("Título inicial", {selector: route === "/library" ? "a" : "h1, h3"});
+    const titleNode = route === "/library" ? screen.getByText("Título inicial", {selector: "a"}) : screen.getByRole("heading", {name: "Título inicial"});
     holdRefresh = true;
     await act(async () => { await vi.advanceTimersByTimeAsync(2_010); });
     expect(resolveRefresh).toBeDefined();
@@ -217,7 +218,7 @@ describe("App", () => {
     if (route === "/library") expect(screen.queryByText(/Comprobando archivos/)).not.toBeInTheDocument();
     resolveRefresh!(response(endpoint, true));
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
-    expect(screen.getByText("Título actualizado", {selector: route === "/library" ? "a" : "h1, h3"})).toBeInTheDocument();
+    expect(route === "/library" ? screen.getByText("Título actualizado", {selector: "a"}) : screen.getByRole("heading", {name: "Título actualizado"})).toBeInTheDocument();
     if (route === "/downloads") {
       fireEvent.click(button);
       await act(async () => { await vi.advanceTimersByTimeAsync(10); });

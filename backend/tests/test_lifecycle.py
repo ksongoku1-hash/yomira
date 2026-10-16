@@ -64,9 +64,9 @@ class NoopInstanceGuard(WindowsMutexGuard):
 
 
 def test_missing_fmd2_keeps_library_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    target_app = create_app(Settings(
-        app_env="test", data_root=tmp_path, fmd2_executable=tmp_path / "missing-fmd.exe"
-    ))
+    target_app = create_app(
+        Settings(app_env="test", data_root=tmp_path, fmd2_executable=tmp_path / "missing-fmd.exe")
+    )
     monkeypatch.setattr(lifecycle, "create_instance_guard", NoopInstanceGuard)
 
     async def exercise() -> None:
@@ -77,6 +77,40 @@ def test_missing_fmd2_keeps_library_ready(tmp_path: Path, monkeypatch: pytest.Mo
                 assert (await client.get("/api/v1/library")).status_code == 200
                 runtime = cast(RuntimeState, target_app.state.runtime)
                 assert runtime.ready
+
+    asyncio.run(exercise())
+
+
+def test_unsafe_reader_cache_keeps_local_library_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.online_reader import OnlineReaderSessionService
+    from app.services.reader_asset import ReaderAssetConflict
+    from app.services.reader_session import ReaderSessionService
+
+    target_app = create_app(
+        Settings(app_env="test", data_root=tmp_path, fmd2_executable=tmp_path / "missing-fmd.exe")
+    )
+    monkeypatch.setattr(lifecycle, "create_instance_guard", NoopInstanceGuard)
+
+    def refuse_recovery(_service: ReaderSessionService) -> None:
+        raise ReaderAssetConflict("Ambiguous cache ownership")
+
+    monkeypatch.setattr(ReaderSessionService, "recover", refuse_recovery)
+
+    async def exercise() -> None:
+        async with target_app.router.lifespan_context(target_app):
+            runtime = cast(RuntimeState, target_app.state.runtime)
+            assert runtime.ready and runtime.reader_asset_service is not None
+            assert runtime.reader_progress_service is not None
+            assert isinstance(runtime.reader_session_service, OnlineReaderSessionService)
+            async with AsyncClient(
+                transport=ASGITransport(app=target_app), base_url="http://testserver"
+            ) as client:
+                assert (await client.get("/api/v1/library")).status_code == 200
+                assert (
+                    await client.post(f"/api/v1/reader/{uuid4()}/session", json={})
+                ).status_code == 404
 
     asyncio.run(exercise())
 
@@ -102,6 +136,8 @@ def test_startup_disk_preflight_fails_before_database_migrations(
                 free_bytes=10,
                 required_bytes=100,
                 reason="INSUFFICIENT_SPACE",
+                recovery_demand_bytes=None,
+                reserved_bytes=0,
             )
 
     def fail_if_migration_runs(_runner: MigrationRunner) -> MigrationReport:
@@ -123,6 +159,39 @@ def test_startup_disk_preflight_fails_before_database_migrations(
     assert runtime.ready is False
     assert runtime.database is None
     assert runtime.disk_budget_manager is None
+
+
+def test_current_database_can_start_below_download_space_margin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.persistence.disk_budget import DiskBudgetManager
+    from app.services.online_reader import OnlineReaderSessionService
+    monkeypatch.setattr(lifecycle, "create_instance_guard", NoopInstanceGuard)
+
+    async def bootstrap() -> None:
+        app = create_app(Settings(app_env="test", data_root=tmp_path))
+        async with app.router.lifespan_context(app):
+            assert cast(RuntimeState, app.state.runtime).ready
+
+    asyncio.run(bootstrap())
+    monkeypatch.setattr(lifecycle, "DiskBudgetManager", lambda database: DiskBudgetManager(
+        database, disk_usage_provider=lambda _path: SimpleNamespace(
+            total=1_000_000_000, used=1_000_000_000 - 64 * 1024 * 1024, free=64 * 1024 * 1024
+        )
+    ))
+
+    async def low_space_startup() -> None:
+        app = create_app(Settings(app_env="test", data_root=tmp_path))
+        async with app.router.lifespan_context(app):
+            runtime = cast(RuntimeState, app.state.runtime)
+            assert runtime.ready
+            assert isinstance(runtime.reader_session_service, OnlineReaderSessionService)
+            assert runtime.disk_budget_manager is not None
+            assert not runtime.disk_budget_manager.snapshot().safe
+            with pytest.raises(DiskBudgetUnavailableError):
+                runtime.disk_budget_manager.reserve(uuid4())
+
+    asyncio.run(low_space_startup())
 
 
 def test_startup_marks_runtime_ready_only_after_initialization(
@@ -326,9 +395,7 @@ def test_normal_startup_serves_empty_library_from_runtime_database(
                     tmp_path / "Documents" / "Mangas"
                 )
                 export_service = vars(runtime.usb_export_job_service)["_exporter"]
-                assert vars(export_service)["_library_root"] == (
-                    tmp_path / "Documents" / "Mangas"
-                )
+                assert vars(export_service)["_library_root"] == (tmp_path / "Documents" / "Mangas")
                 assert runtime.secret_vault is not None
                 readiness = await client.get("/api/v1/system/readiness")
                 assert readiness.status_code == 200

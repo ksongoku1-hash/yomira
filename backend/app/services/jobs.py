@@ -1,13 +1,13 @@
 """Durable job creation from a validated connector chapter selection."""
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TypedDict
 from uuid import UUID
 
-from sqlalchemy import case, exists, func, select
+from sqlalchemy import case, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.connectors.chapter import ConnectorChapter
@@ -105,6 +105,29 @@ class DownloadJobSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class ReaderChapterRegistration:
+    series_id: UUID
+    chapter_id: UUID
+    display_label: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderDownloadSource:
+    connector_id: str
+    connector_version: str
+    remote_series_id: str
+    chapter_remote_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _SelectedChapter:
+    series: Series
+    chapter: Chapter
+    source: ChapterSource
+    ready_job: DownloadJob | None
+
+
+@dataclass(frozen=True, slots=True)
 class LibrarySeriesImportSummary:
     series_id: UUID
     series_title: str
@@ -155,6 +178,41 @@ class DownloadJobService:
                 chunk_bytes=V1_STREAM_CHUNK_BYTES,
             ),
         )
+
+    def reader_download_source(self, chapter_id: UUID) -> ReaderDownloadSource | None:
+        """Use the reader's first available source; never guess a different edition."""
+        with self._database.read_session() as session:
+            chapter = session.get(ChapterRow, str(chapter_id))
+            if chapter is None:
+                raise InvalidChapterSelection()
+            pair = session.execute(
+                select(ChapterSourceRow, SourceRow)
+                .join(SourceRow, SourceRow.source_id == ChapterSourceRow.source_id)
+                .where(
+                    ChapterSourceRow.chapter_id == str(chapter_id),
+                    ChapterSourceRow.available.is_(True),
+                    SourceRow.enabled.is_(True),
+                )
+                .order_by(ChapterSourceRow.chapter_source_id)
+            ).first()
+            if pair is None:
+                return None
+            chapter_source, source = pair
+            series_sources = session.scalars(
+                select(SeriesSourceRow).where(
+                    SeriesSourceRow.series_id == chapter.series_id,
+                    SeriesSourceRow.source_id == source.source_id,
+                ).limit(2)
+            ).all()
+            if len(series_sources) != 1:
+                return None
+            references = (series_sources[0].remote_id, chapter_source.remote_id)
+            if any(value is None or not 1 <= len(value) <= 512 for value in references):
+                return None
+            assert references[0] is not None and references[1] is not None
+            return ReaderDownloadSource(
+                source.connector_id, source.connector_version, references[0], references[1]
+            )
 
     def import_library_series(
         self,
@@ -371,6 +429,41 @@ class DownloadJobService:
                 session.delete(archived)
         return True
 
+    def register_reader_chapter(
+        self,
+        *,
+        connector: ConnectorMetadata,
+        remote_series_id: str,
+        series_metadata: ConnectorSeriesMetadata,
+        chapters: Sequence[ConnectorChapter],
+        selected_remote_id: str,
+        now: datetime | None = None,
+    ) -> ReaderChapterRegistration:
+        """Persist the same chapter identity as a download, without acquiring pages or jobs."""
+        selected = self._select_chapters(
+            connector, remote_series_id, series_metadata, chapters, (selected_remote_id,)
+        )
+        observed_at = now if now is not None else datetime.now(UTC)
+        if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        with self._database.write_session() as session:
+            registered = next(
+                self._register_selected_chapters(
+                    session,
+                    connector,
+                    remote_series_id,
+                    series_metadata,
+                    chapters,
+                    selected,
+                    observed_at,
+                )
+            )
+            return ReaderChapterRegistration(
+                registered.series.series_id,
+                registered.chapter.chapter_id,
+                registered.chapter.display_label,
+            )
+
     def create_selected_jobs(
         self,
         *,
@@ -382,14 +475,60 @@ class DownloadJobService:
         priority: DownloadPriority = DownloadPriority.NORMAL,
         now: datetime | None = None,
     ) -> tuple[DownloadJobSummary, ...]:
+        if type(priority) is not DownloadPriority:
+            raise ValueError("priority must be a DownloadPriority")
+        selected = self._select_chapters(
+            connector, remote_series_id, series_metadata, chapters, selected_remote_ids
+        )
+        observed_at = now if now is not None else datetime.now(UTC)
+        if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        results: list[DownloadJobSummary] = []
+        with self._database.write_session() as session:
+            for registered in self._register_selected_chapters(
+                session,
+                connector,
+                remote_series_id,
+                series_metadata,
+                chapters,
+                selected,
+                observed_at,
+            ):
+                if registered.ready_job is not None:
+                    results.append(self._summary_for_job(session, registered.ready_job))
+                    continue
+                job, created = self._get_or_create_job(
+                    session,
+                    chapter_source_id=registered.source.chapter_source_id,
+                    priority=priority,
+                    observed_at=observed_at,
+                )
+                results.append(
+                    DownloadJobSummary(
+                        job=job,
+                        series_id=registered.series.series_id,
+                        chapter_id=registered.chapter.chapter_id,
+                        series_title=registered.series.display_title,
+                        chapter_label=registered.chapter.display_label,
+                        created=created,
+                    )
+                )
+        return tuple(results)
+
+    @staticmethod
+    def _select_chapters(
+        connector: ConnectorMetadata,
+        remote_series_id: str,
+        series_metadata: ConnectorSeriesMetadata,
+        chapters: Sequence[ConnectorChapter],
+        selected_remote_ids: Sequence[str],
+    ) -> list[ConnectorChapter]:
         if type(connector) is not ConnectorMetadata:
             raise TypeError("connector must be ConnectorMetadata")
         if type(remote_series_id) is not str or not remote_series_id:
             raise ValueError("remote_series_id must not be empty")
         if type(series_metadata) is not ConnectorSeriesMetadata:
             raise TypeError("series_metadata must be ConnectorSeriesMetadata")
-        if type(priority) is not DownloadPriority:
-            raise ValueError("priority must be a DownloadPriority")
         if not 1 <= len(selected_remote_ids) <= MAX_SELECTED_CHAPTERS:
             raise ValueError("selected_remote_ids must contain between 1 and 100 IDs")
         if len(set(selected_remote_ids)) != len(selected_remote_ids):
@@ -414,85 +553,104 @@ class DownloadJobService:
                 raise InvalidChapterSelection()
             selected_chapters.append(chapter)
 
-        observed_at = now if now is not None else datetime.now(UTC)
-        results: list[DownloadJobSummary] = []
-        with self._database.write_session() as session:
-            source = self._get_or_create_source(session, connector, observed_at)
-            series, _ = self._get_or_create_series(
-                session,
-                source=source,
-                remote_series_id=remote_series_id,
-                metadata=series_metadata,
-                observed_at=observed_at,
-            )
+        return selected_chapters
 
-            local_ready = self._ready_chapters(session, series.series_id, series_metadata.language)
-            saved_chapters: dict[str, ChapterSourceRow] = {}
-            if connector.connector_id == FMD2_METADATA.connector_id:
-                rows = session.scalars(
-                    select(ChapterSourceRow)
-                    .join(ChapterRow, ChapterRow.chapter_id == ChapterSourceRow.chapter_id)
-                    .where(
-                        ChapterSourceRow.source_id == str(source.source_id),
-                        ChapterRow.series_id == str(series.series_id),
-                    )
+    def _register_selected_chapters(
+        self,
+        session: Session,
+        connector: ConnectorMetadata,
+        remote_series_id: str,
+        series_metadata: ConnectorSeriesMetadata,
+        chapters: Sequence[ConnectorChapter],
+        selected_chapters: Sequence[ConnectorChapter],
+        observed_at: datetime,
+    ) -> Iterator[_SelectedChapter]:
+        source = self._get_or_create_source(session, connector, observed_at)
+        series, _ = self._get_or_create_series(
+            session,
+            source=source,
+            remote_series_id=remote_series_id,
+            metadata=series_metadata,
+            observed_at=observed_at,
+        )
+
+        local_ready = self._ready_chapters(session, series.series_id, series_metadata.language)
+        saved_chapters: dict[str, ChapterSourceRow] = {}
+        rows = session.scalars(
+            select(ChapterSourceRow)
+            .join(ChapterRow, ChapterRow.chapter_id == ChapterSourceRow.chapter_id)
+            .where(
+                ChapterSourceRow.source_id == str(source.source_id),
+                or_(
+                    ChapterRow.series_id == str(series.series_id),
+                    ChapterSourceRow.remote_id.in_([item.remote_id for item in selected_chapters]),
+                ),
+            )
+        )
+        for saved in rows:
+            if saved.remote_id is not None:
+                key = (
+                    fmd2_stable_chapter_reference(saved.remote_id)
+                    if connector.connector_id == FMD2_METADATA.connector_id
+                    else saved.remote_id
                 )
-                for saved in rows:
-                    if saved.remote_id is not None:
-                        key = fmd2_stable_chapter_reference(saved.remote_id)
-                        previous = saved_chapters.get(key)
-                        if previous is None or self._chapter_available(session, saved.chapter_id):
-                            saved_chapters[key] = saved
-            local_by_number = {chapter_number(item.display_label): item for item in local_ready}
-            remote_numbers = Counter(chapter_number(item.display_label) for item in chapters)
-            for remote_chapter in selected_chapters:
-                number = chapter_number(remote_chapter.display_label)
-                existing = local_by_number.get(number)
-                if (
-                    existing is not None
-                    and remote_numbers[number] == 1
-                    and remote_chapter.chapter_variant is None
-                    and remote_chapter.volume_number is None
-                    and remote_chapter.chapter_type in (None, "CHAPTER")
-                    and (
-                        not existing.language
-                        or not remote_chapter.language
-                        or existing.language == remote_chapter.language
-                    )
-                ):
-                    linked_asset = ChapterCbzAssetRepository().get_for_chapter(
-                        session, existing.chapter_id
-                    )
-                    assert linked_asset is not None
-                    job_row = session.get(DownloadJobRow, str(linked_asset[0].download_job_id))
-                    assert job_row is not None
-                    results.append(self._summary_for_job(session, download_job_from_row(job_row)))
-                    continue
-                chapter, chapter_source = self._get_or_create_chapter(
-                    session,
-                    series_id=series.series_id,
-                    source_id=source.source_id,
-                    remote_chapter=remote_chapter,
-                    observed_at=observed_at,
-                    saved_chapters=saved_chapters,
+                previous = saved_chapters.get(key)
+                if previous is None or self._chapter_available(session, saved.chapter_id):
+                    saved_chapters[key] = saved
+        local_by_number = {chapter_number(item.display_label): item for item in local_ready}
+        remote_numbers = Counter(chapter_number(item.display_label) for item in chapters)
+        for remote_chapter in selected_chapters:
+            number = chapter_number(remote_chapter.display_label)
+            reference = remote_chapter.remote_id
+            assert reference is not None
+            key = (
+                fmd2_stable_chapter_reference(reference)
+                if connector.connector_id == FMD2_METADATA.connector_id
+                else reference
+            )
+            existing = local_by_number.get(number) if key not in saved_chapters else None
+            if (
+                existing is not None
+                and remote_numbers[number] == 1
+                and remote_chapter.chapter_variant is None
+                and remote_chapter.volume_number is None
+                and remote_chapter.chapter_type in (None, "CHAPTER")
+                and (
+                    not existing.language
+                    or not remote_chapter.language
+                    or existing.language == remote_chapter.language
                 )
-                job, created = self._get_or_create_job(
-                    session,
-                    chapter_source_id=chapter_source.chapter_source_id,
-                    priority=priority,
-                    observed_at=observed_at,
+            ):
+                linked_asset = ChapterCbzAssetRepository().get_for_chapter(
+                    session, existing.chapter_id
                 )
-                results.append(
-                    DownloadJobSummary(
-                        job=job,
-                        series_id=series.series_id,
-                        chapter_id=chapter.chapter_id,
-                        series_title=series.display_title,
-                        chapter_label=chapter.display_label,
-                        created=created,
-                    )
+                assert linked_asset is not None
+                job_row = session.get(DownloadJobRow, str(linked_asset[0].download_job_id))
+                assert job_row is not None
+                chapter_source = self._attach_chapter_source(
+                    session, existing, source.source_id, remote_chapter, observed_at
                 )
-        return tuple(results)
+                saved = session.get(ChapterSourceRow, str(chapter_source.chapter_source_id))
+                assert saved is not None
+                saved_chapters[key] = saved
+                yield _SelectedChapter(
+                    series, existing, chapter_source, download_job_from_row(job_row)
+                )
+                continue
+            chapter, chapter_source = self._get_or_create_chapter(
+                session,
+                series_id=series.series_id,
+                source_id=source.source_id,
+                remote_chapter=remote_chapter,
+                observed_at=observed_at,
+                saved_chapters=(
+                    saved_chapters if connector.connector_id == FMD2_METADATA.connector_id else {}
+                ),
+            )
+            saved = session.get(ChapterSourceRow, str(chapter_source.chapter_source_id))
+            assert saved is not None
+            saved_chapters[key] = saved
+            yield _SelectedChapter(series, chapter, chapter_source, None)
 
     def list_groups(self, *, limit: int = 50, offset: int = 0) -> DownloadGroupPage:
         if type(limit) is not int or not 1 <= limit <= MAX_DOWNLOAD_JOB_PAGE_SIZE:
@@ -947,6 +1105,18 @@ class DownloadJobService:
         )
         session.add(chapter_to_row(chapter))
         session.flush()
+        return chapter, DownloadJobService._attach_chapter_source(
+            session, chapter, source_id, remote_chapter, observed_at
+        )
+
+    @staticmethod
+    def _attach_chapter_source(
+        session: Session,
+        chapter: Chapter,
+        source_id: UUID,
+        remote_chapter: ConnectorChapter,
+        observed_at: datetime,
+    ) -> ChapterSource:
         chapter_source = ChapterSource.new_local(
             chapter.chapter_id,
             source_id,
@@ -958,7 +1128,7 @@ class DownloadJobService:
         )
         session.add(chapter_source_to_row(chapter_source))
         session.flush()
-        return chapter, chapter_source
+        return chapter_source
 
     def _get_or_create_job(
         self,

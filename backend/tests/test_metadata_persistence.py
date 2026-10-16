@@ -366,7 +366,7 @@ def test_metadata_schema_upgrade_preserves_existing_series_and_remote_title(
         report = runner.upgrade_to_head()
 
         assert report.previous_revision == "0012_cover_asset_type"
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
         assert report.backup_path is not None and report.backup_path.is_file()
         with database.read_session() as session:
             local_row = session.execute(

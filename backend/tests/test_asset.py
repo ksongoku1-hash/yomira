@@ -174,7 +174,7 @@ def test_asset_schema_validates_values_and_allows_shared_hashes(tmp_path: Path) 
     runner = MigrationRunner(database, tmp_path / "backups")
     try:
         report = runner.upgrade_to_head()
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
 
         first = Asset.new_local(
             AssetType.COVER,
@@ -377,7 +377,7 @@ def test_asset_migration_preserves_series_children_and_adds_cover_reference(
             foreign_key_errors = (
                 session.connection().exec_driver_sql("PRAGMA foreign_key_check").all()
             )
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
         assert report.backup_path is not None and report.backup_path.is_file()
         assert series_row is not None
         assert series_row.canonical_title == "Preserve me"

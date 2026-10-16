@@ -130,7 +130,7 @@ def test_series_migration_preserves_optional_text_and_enforces_constraints(
     runner = MigrationRunner(database, tmp_path / "backups")
     try:
         report = runner.upgrade_to_head()
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
 
         now_us = 1_767_321_845_600_700
         valid_id = str(uuid4())

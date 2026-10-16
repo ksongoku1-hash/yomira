@@ -475,7 +475,7 @@ def test_download_page_migration_and_schema_history_are_append_only(tmp_path: Pa
                 text("SELECT revision_id, resulting_revision FROM schema_history ORDER BY event_id")
             ).all()
         assert report.previous_revision == "0008_download_jobs"
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
         assert report.changed is True
         assert report.backup_path is not None and report.backup_path.is_file()
         assert saved_job is not None
@@ -484,7 +484,7 @@ def test_download_page_migration_and_schema_history_are_append_only(tmp_path: Pa
             report.current_revision,
             report.current_revision,
         )
-        assert len(revisions) == 23
+        assert len(revisions) == 24
 
         with database.write_session() as session:
             with pytest.raises(IntegrityError, match="append-only"):
@@ -727,7 +727,7 @@ def test_download_page_migration_backfills_key_for_path_changed_after_preflight(
         if writer_outcomes[0] == "blocked":
             assert migration_error is None
             assert report is not None and report.changed is True
-            assert report.current_revision == "0023_whole_manga_export_size"
+            assert report.current_revision == "0024_reader_sessions"
             with database.read_session() as session:
                 saved_path, saved_key = session.execute(
                     text(
@@ -761,7 +761,7 @@ def test_download_page_migration_backfills_key_for_path_changed_after_preflight(
                     assert "temporary_path_key" not in column_names
                 else:
                     assert report is not None and report.changed is True
-                    assert revision == "0023_whole_manga_export_size"
+                    assert revision == "0024_reader_sessions"
                     saved_key = raw_database.execute(
                         "SELECT temporary_path_key FROM download_pages "
                         "WHERE job_id = ? AND ordinal = 1",
@@ -954,7 +954,7 @@ def test_download_page_migration_allows_remote_reference_above_4096_bytes(
             event.remove(database.engine, "before_cursor_execute", record_statements)
 
         assert report.changed is True
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
         assert driver_connection.getlimit(sqlite3.SQLITE_LIMIT_LENGTH) == original_length_limit
         preflight_queries = [
             statement
@@ -1028,7 +1028,7 @@ def test_download_page_migration_preflights_historical_path_length(
         if should_migrate:
             report = runner.upgrade_to_head()
             assert report.changed is True
-            assert report.current_revision == "0023_whole_manga_export_size"
+            assert report.current_revision == "0024_reader_sessions"
             with database.read_session() as session:
                 saved_path, saved_key = session.execute(
                     text(

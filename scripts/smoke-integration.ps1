@@ -22,6 +22,7 @@ $oldApiHost = $env:YOMIRA_API_HOST
 $oldApiPort = $env:YOMIRA_API_PORT
 $oldLogLevel = $env:YOMIRA_LOG_LEVEL
 $oldDataRoot = $env:YOMIRA_DATA_ROOT
+$oldLibraryRoot = $env:YOMIRA_LIBRARY_ROOT
 
 function Get-FreeLoopbackPort {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -78,6 +79,7 @@ try {
     $env:YOMIRA_API_PORT = "$apiPort"
     $env:YOMIRA_LOG_LEVEL = "INFO"
     $env:YOMIRA_DATA_ROOT = Join-Path $tempRoot "YomiraData"
+    $env:YOMIRA_LIBRARY_ROOT = Join-Path $tempRoot "Mangas"
     $apiArguments = @(
         "-m",
         "uvicorn",
@@ -254,6 +256,12 @@ finally {
     }
     else {
         $env:YOMIRA_DATA_ROOT = $oldDataRoot
+    }
+    if ($null -eq $oldLibraryRoot) {
+        Remove-Item Env:YOMIRA_LIBRARY_ROOT -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:YOMIRA_LIBRARY_ROOT = $oldLibraryRoot
     }
 
     if ($completed -and (Test-Path -LiteralPath $tempRoot)) {

@@ -53,6 +53,73 @@ afterEach(() => {
 });
 
 describe("SearchPage", () => {
+  it("reads online without adding a download job", async () => {
+    const chapterId = "123e4567-e89b-42d3-a456-426614174051";
+    const seriesId = "123e4567-e89b-42d3-a456-426614174050";
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/reader-chapter")) return Promise.resolve(mockResponse({ data: {
+        chapter_id: chapterId, series_id: seriesId, display_label: "Capítulo 1",
+      }, meta: { connector_id: "yomira.mock", remote_series_id: "fixture" } }));
+      if (path.endsWith("/availability")) return Promise.resolve(mockResponse({ data: {
+        linked: false, ready_remote_ids: [], ready_labels: [], busy_remote_ids: [],
+      } }));
+      if (path.endsWith("/chapters")) return Promise.resolve(mockResponse({ data: [{
+        remote_id: "chapter-1", display_label: "Capítulo 1", remote_label: "1",
+        chapter_raw_label: "1", chapter_sort_key: [1], language: null,
+      }], meta: { connector_id: "yomira.mock", remote_series_id: "fixture" } }));
+      return Promise.resolve(mockResponse({ data: [{ remote_id: "fixture", remote_url: null,
+        remote_title: "Fixture", cover_url: "https://example.test/cover.png",
+      }], meta: { connector_id: "yomira.mock", query: "fixture" } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderSearchPage({ initialEntries: ["/search?q=fixture"], connectors: [{
+      ...defaultConnectors[0]!, capabilities: ["SEARCH", "METADATA", "CHAPTER_LIST", "PAGE_LIST"],
+    }] });
+    fireEvent.click(await screen.findByRole("button", { name: /Ver capítulos de Fixture/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Leer online Capítulo 1" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/reader-chapter"))).toBe(true));
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/download-jobs"))).toBe(false);
+    const request = fetchMock.mock.calls.find((call) => String(call[0]).endsWith("/reader-chapter"));
+    expect(request).toBeDefined();
+  });
+
+  it("queues the complete manga in bounded batches even when there are over 100 chapters", async () => {
+    const batches: string[][] = [];
+    const id = (prefix: string, number: number) => `${prefix}-0000-4000-8000-${String(number).padStart(12, "0")}`;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/availability")) return Promise.resolve(mockResponse({ data: {
+        linked: false, ready_remote_ids: [], ready_labels: [], busy_remote_ids: [],
+      } }));
+      if (path.endsWith("/chapters")) return Promise.resolve(mockResponse({ data:
+        Array.from({ length: 105 }, (_, index) => ({ remote_id: `chapter-${index + 1}`,
+          display_label: `Capítulo ${index + 1}`, remote_label: String(index + 1),
+          chapter_raw_label: String(index + 1), chapter_sort_key: [index + 1], language: null,
+        })), meta: { connector_id: "yomira.mock", remote_series_id: "fixture" },
+      }));
+      if (path.endsWith("/download-jobs")) {
+        const ids = (JSON.parse(init!.body as string) as { chapter_remote_ids: string[] }).chapter_remote_ids;
+        batches.push(ids);
+        return Promise.resolve(mockResponse({ data: ids.map((ref) => {
+          const number = Number(ref.split("-")[1]);
+          return { job_id: id("11111111", number), chapter_source_id: id("22222222", number),
+            series_id: id("33333333", 1), chapter_id: id("44444444", number),
+            status: "QUEUED", priority: "NORMAL", series_title: "Fixture", chapter_label: ref,
+            created: true, created_at: "2026-10-11T00:00:00Z", updated_at: "2026-10-11T00:00:00Z" };
+        }), meta: { connector_id: "yomira.mock", remote_series_id: "fixture" } }));
+      }
+      return Promise.resolve(mockResponse({ data: [{ remote_id: "fixture", remote_url: null,
+        remote_title: "Fixture" }], meta: { connector_id: "yomira.mock", query: "fixture" } }));
+    }));
+    renderSearchPage({ initialEntries: ["/search?q=fixture"] });
+    fireEvent.click(await screen.findByRole("button", { name: /Ver capítulos de Fixture/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Descargar manga completo" }));
+    await screen.findByText(/Los 105 capítulos disponibles/);
+    expect(batches.map((batch) => batch.length)).toEqual([100, 5]);
+    expect(new Set(batches.flat()).size).toBe(105);
+  }, 15_000);
+
   it("selects only missing chapters in numeric order for the linked edition", async () => {
     let holdAvailability = false;
     let resolveAvailability: ((response: Response) => void) | undefined;

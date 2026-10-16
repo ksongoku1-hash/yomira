@@ -9,15 +9,17 @@ export function SeriesCover({
   variant = "medium",
   className = "",
   fallbackLabel = "Sin portada asignada",
+  previewSource = null,
 }: {
   series: LibrarySeriesSummary;
   variant?: SeriesCoverVariant;
   className?: string | undefined;
   fallbackLabel?: string;
+  previewSource?: string | null;
 }) {
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const source = series.coverAssetId === null
-    ? null
+    ? previewSource
     : getSeriesCoverUrl(series.seriesId, variant, `${series.coverAssetId}:${series.updatedAt}`);
 
   if (source !== null && source !== failedSource) {

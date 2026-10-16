@@ -346,7 +346,7 @@ def test_reader_progress_migration_preserves_chapters_and_adds_fk_index(
             )
 
         assert report.previous_revision == "0009_download_pages"
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
         assert report.changed is True
         assert report.backup_path is not None and report.backup_path.is_file()
         assert tuple(saved_chapter) == ("12.10", "Chapter 12.10")

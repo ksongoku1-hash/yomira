@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import os
 import stat
@@ -396,6 +397,32 @@ def _validate_image_stream(
         height=height,
         size_bytes=hashed_size,
         sha256=sha256,
+        mime=_FORMAT_TO_MIME[actual_format],
+    )
+
+
+def validate_image_bytes(
+    body: bytes, content_type: str, *, policy: ImageValidationPolicy
+) -> ValidatedImage:
+    """Apply the download decoder and resource bounds without creating a file."""
+    _normalized_mime(content_type)
+    if type(body) is not bytes:
+        raise TypeError("body must be immutable bytes")
+    if len(body) > policy.max_bytes:
+        _raise(ImageValidationErrorCode.BYTE_LIMIT)
+    signature_format = _format_from_signature(body[:12])
+    if signature_format is None:
+        _raise(ImageValidationErrorCode.SIGNATURE_INVALID)
+    with io.BytesIO(body) as stream:
+        actual_format, width, height = _decode_and_validate(
+            stream, signature_format=signature_format, policy=policy
+        )
+    return ValidatedImage(
+        format=actual_format,
+        width=width,
+        height=height,
+        size_bytes=len(body),
+        sha256=hashlib.sha256(body).hexdigest(),
         mime=_FORMAT_TO_MIME[actual_format],
     )
 

@@ -133,7 +133,18 @@ function viewButton(name: string) {
   return screen.getByRole("button", { name });
 }
 
+function modeButton(name: string) {
+  const options = screen.getByRole("button", { name: "Opciones de lectura" });
+  if (options.getAttribute("aria-expanded") !== "true") fireEvent.click(options);
+  return screen.getByRole("button", { name });
+}
+async function findModeButton(name: string) {
+  await screen.findByRole("button", { name: "Opciones de lectura" });
+  return modeButton(name);
+}
+
 afterEach(() => {
+  localStorage.clear();
   localStorage.clear();
   vi.unstubAllGlobals();
 });
@@ -436,9 +447,9 @@ describe("ReaderPage", () => {
     });
     renderReaderPage(fetchMock);
 
-    const singlePageButton = await screen.findByRole("button", { name: "Página única" });
+    const singlePageButton = await findModeButton("Página única");
     expect(singlePageButton).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByRole("button", { name: "Vertical" }));
+    fireEvent.click(modeButton("Vertical"));
 
     const verticalRegion = screen.getByRole("region", { name: "Páginas en lectura vertical" });
     await screen.findByRole("img", { name: "Capítulo 8, página 3 de 2000" });
@@ -485,7 +496,7 @@ describe("ReaderPage", () => {
     });
     const view = renderReaderPage(fetchMock);
     await screen.findByRole("img", { name: "Capítulo 8, página 1 de 500" });
-    fireEvent.click(screen.getByRole("button", { name: "Vertical" }));
+    fireEvent.click(modeButton("Vertical"));
     const verticalRegion = screen.getByRole("region", { name: "Páginas en lectura vertical" });
 
     await waitFor(() => expect(pendingSignals.size).toBe(2));
@@ -553,7 +564,7 @@ describe("ReaderPage", () => {
       return Promise.resolve(url.endsWith("/pages/2") ? pageResponse(404) : pageResponse());
     });
     renderReaderPage(fetchMock);
-    fireEvent.click(await screen.findByRole("button", { name: "Vertical" }));
+    fireEvent.click(await findModeButton("Vertical"));
 
     await screen.findByRole("heading", { name: "Página no encontrada" });
     await screen.findByRole("img", { name: "Capítulo 8, página 3 de 3" });
@@ -611,7 +622,7 @@ describe("ReaderPage", () => {
     expect(previous).toBeEnabled();
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/v1/reader/${CHAPTER_ID}/pages/2`,
-      { headers: { Accept: "image/jpeg, image/png, image/webp" }, signal: expect.any(AbortSignal) },
+      { headers: { Accept: "image/jpeg, image/png, image/webp" }, cache: "no-store", signal: expect.any(AbortSignal) },
     );
 
     fireEvent.click(previous);
@@ -643,7 +654,7 @@ describe("ReaderPage", () => {
     });
     renderReaderPage(fetchMock);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Doble página" }));
+    fireEvent.click(await findModeButton("Doble página"));
     expect(await screen.findByRole("img", { name: "Capítulo 8, página 1 de 5" }))
       .toBeInTheDocument();
     expect(await screen.findByRole("img", { name: "Capítulo 8, página 2 de 5" }))
@@ -708,9 +719,17 @@ describe("ReaderPage", () => {
     renderReaderPage(fetchMock);
     const image = await screen.findByRole("img", { name: "Capítulo 8, página 1 de 2" });
 
+    const canvas = image.parentElement!;
+    canvas.style.padding = "0px";
+    Object.defineProperty(canvas, "clientWidth", { configurable: true, value: 1000 });
+    Object.defineProperty(canvas, "clientHeight", { configurable: true, value: 600 });
+    Object.defineProperty(image, "naturalWidth", { configurable: true, value: 400 });
+    Object.defineProperty(image, "naturalHeight", { configurable: true, value: 600 });
+    fireEvent(window, new Event("resize"));
+    fireEvent.load(image);
     fireEvent.click(viewButton("Acercar"));
     expect(screen.getByText("125 %")).toBeInTheDocument();
-    expect(image).toHaveStyle({ transform: "scale(1.25)" });
+    expect(image).toHaveStyle({ width: "500px" });
 
     fireEvent.click(viewButton("Ajustar al ancho"));
     expect(viewButton("Ajustar al ancho"))
@@ -835,7 +854,7 @@ describe("ReaderPage", () => {
     });
     renderReaderPage(fetchMock);
     await screen.findByRole("img", { name: "Capítulo 8, página 1 de 4" });
-    fireEvent.click(screen.getByRole("button", { name: "Vertical" }));
+    fireEvent.click(modeButton("Vertical"));
     const viewport = await screen.findByRole("region", { name: "Páginas en lectura vertical" });
 
     fireEvent.click(viewButton("Alejar"));
@@ -1113,7 +1132,7 @@ describe("ReaderPage", () => {
 
     expect(await screen.findByText(/No se pudieron cargar las preferencias del lector/))
       .toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Vertical" }));
+    fireEvent.click(modeButton("Vertical"));
     fireEvent.click(viewButton("Derecha a izquierda"));
     await new Promise((resolve) => setTimeout(resolve, 0));
 

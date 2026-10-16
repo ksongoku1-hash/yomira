@@ -68,7 +68,7 @@ def test_recent_views_migration_adds_only_ordering_indexes_and_is_reversible(
             session.add(reader_progress_to_row(progress))
 
         report = runner.upgrade_to_head()
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
         assert report.changed is True
         with database.read_session() as session:
             series_count = session.execute(text("SELECT COUNT(*) FROM series")).scalar_one()

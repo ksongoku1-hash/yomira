@@ -11,6 +11,7 @@ from app.persistence.models.download_page import DownloadPageRow
 from app.persistence.models.export_job import ExportJobRow
 from app.persistence.models.metadata_override import MetadataOverrideRow
 from app.persistence.models.reader_progress import ReaderProgressRow
+from app.persistence.models.reader_session import ReaderSessionPageRow, ReaderSessionRow
 from app.persistence.models.schema_history import SchemaHistoryRow
 from app.persistence.models.series import SeriesRow
 from app.persistence.models.series_source import SeriesSourceRow
@@ -29,6 +30,8 @@ __all__ = [
     "ExportJobRow",
     "MetadataOverrideRow",
     "ReaderProgressRow",
+    "ReaderSessionRow",
+    "ReaderSessionPageRow",
     "SchemaHistoryRow",
     "SettingRow",
     "ConnectorHealthRow",

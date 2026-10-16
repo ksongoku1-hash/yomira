@@ -4,8 +4,16 @@ param(
     [string]$FmdExecutable = ''
 )
 $ErrorActionPreference = 'Stop'
-$backend = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../backend'))
-if (-not $Python) { $Python = Join-Path $backend '.venv/Scripts/python.exe' }
+$projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$backend = Join-Path $projectRoot 'backend'
+if (-not $Python) {
+    $Python = Join-Path $projectRoot 'runtime/python-3.14.7/python.exe'
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+        $Python = Join-Path $backend '.venv/Scripts/python.exe'
+    }
+}
+if (-not $env:YOMIRA_DATA_ROOT) { $env:YOMIRA_DATA_ROOT = Join-Path $projectRoot 'user-data/AppData/Yomira/YomiraData' }
+if (-not $env:YOMIRA_LIBRARY_ROOT) { $env:YOMIRA_LIBRARY_ROOT = Join-Path $projectRoot 'user-data/libraries/Mangas' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Crea el entorno Python siguiendo README.md o indica -Python.' }
 $pythonPath = (Resolve-Path -LiteralPath $Python).Path
 if ($FmdExecutable) {

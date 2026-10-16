@@ -1,12 +1,12 @@
 """Static contract required of source connector implementations."""
 
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from app.connectors.chapter import ConnectorChapter
 from app.connectors.metadata import ConnectorMetadata
-from app.connectors.pages import ConnectorPageReference, PageFetchRequest
+from app.connectors.pages import ConnectorPageAvailability, ConnectorPageReference, PageFetchRequest
 from app.connectors.search import ConnectorSearchQuery, ConnectorSearchResult
 from app.connectors.series_metadata import ConnectorSeriesMetadata
 from app.domain.source import SourceHealthStatus
@@ -82,4 +82,28 @@ class AcquisitionProvider(Protocol):
         chapter_title: str,
     ) -> Sequence[ConnectorPageReference]:
         """Acquire one chapter under the stable Yomira job ID and expose its raw pages."""
+        ...
+
+
+@runtime_checkable
+class OnlinePageProvider(Protocol):
+    async def open_online_pages(
+        self, session_id: UUID, remote_chapter_reference: str
+    ) -> Sequence[ConnectorPageReference]:
+        """Discover a page plan without fetching or writing chapter images."""
+        ...
+
+    async def close_online_pages(self, session_id: UUID) -> None:
+        """Release the source's in-memory plan; no download is created."""
+        ...
+
+
+@runtime_checkable
+class ProgressivePageProvider(Protocol):
+    async def get_ready_pages(
+        self,
+        job_id: UUID,
+        previous: ConnectorPageAvailability | None = None,
+    ) -> ConnectorPageAvailability:
+        """Observe an existing acquisition; availability does not imply core validation."""
         ...

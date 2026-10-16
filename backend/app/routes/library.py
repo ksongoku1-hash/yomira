@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 from pydantic import UUID4, BaseModel, ConfigDict, field_validator, model_validator
 
+from app.connectors.metadata import ConnectorCapability
+from app.connectors.registry import ConnectorRegistryError
 from app.domain.metadata import (
     MetadataAuthority,
     MetadataField,
@@ -16,6 +18,7 @@ from app.domain.metadata import (
 )
 from app.domain.series import Series
 from app.errors import ApiErrorBody, ApiErrorEnvelope, ErrorCode
+from app.fmd2_bridge import FMD2_METADATA, fmd2_source_display_name
 from app.persistence.storage_gate import StorageGateClosedError
 from app.runtime import RuntimeState
 from app.services.cover_assets import CoverAssetError
@@ -97,8 +100,21 @@ class MetadataResolutionResponse(BaseModel):
     effective_source_ids: list[UUID]
 
 
+class ReadingSourceResponse(BaseModel):
+    series_source_id: UUID
+    connector_id: str
+    remote_series_id: str
+    display_name: str
+    author: str | None
+    description: str | None
+    genres: list[str] | None
+    status: str | None
+    language: str | None
+
+
 class SeriesDetailResponse(SeriesResponse):
     metadata: list[MetadataResolutionResponse]
+    reading_sources: list[ReadingSourceResponse] = []
 
 
 class SeriesResponseEnvelope(BaseModel):
@@ -376,10 +392,54 @@ async def get_series(
             detail="Series was not found.",
         )
     summary = _series_response(series, resolutions)
+    reading_sources: list[ReadingSourceResponse] = []
+    registry = runtime.connector_registry
+    if registry is not None and runtime.metadata_service is not None:
+        linked_metadata = {
+            item.series_source_id: item
+            for item in runtime.metadata_service.list_sources(series_id_value)
+        }
+        for link in _library_service(request).list_reading_sources(series_id_value):
+            try:
+                descriptor = registry.get_metadata(link.connector_id)
+            except ConnectorRegistryError:
+                continue
+            if (
+                descriptor.connector_version != link.connector_version
+                or not {
+                    ConnectorCapability.METADATA,
+                    ConnectorCapability.CHAPTER_LIST,
+                    ConnectorCapability.PAGE_LIST,
+                }
+                <= descriptor.capabilities
+            ):
+                continue
+            source_metadata = linked_metadata.get(link.series_source_id)
+            if source_metadata is None:
+                continue
+            display_name = link.display_name
+            if link.connector_id == FMD2_METADATA.connector_id:
+                display_name = fmd2_source_display_name(link.remote_series_id) or display_name
+            reading_sources.append(
+                ReadingSourceResponse(
+                    series_source_id=link.series_source_id,
+                    connector_id=link.connector_id,
+                    remote_series_id=link.remote_series_id,
+                    display_name=display_name,
+                    author=source_metadata.remote_author,
+                    description=source_metadata.remote_description,
+                    genres=list(source_metadata.remote_genres)
+                    if source_metadata.remote_genres
+                    else None,
+                    status=source_metadata.remote_status,
+                    language=source_metadata.remote_language,
+                )
+            )
     return SeriesResponseEnvelope(
         data=SeriesDetailResponse(
             **summary.model_dump(),
             metadata=[_metadata_response(item) for item in resolutions],
+            reading_sources=reading_sources,
         ),
         meta=SeriesMeta(),
     )

@@ -100,7 +100,7 @@ describe("SettingsPage", () => {
         e_reader: true,
       }),
     }));
-    expect(await screen.findByRole("status")).toHaveTextContent(/ajustes guardados/i);
+    expect(await screen.findByText(/^Ajustes guardados\.$/)).toHaveAttribute("role", "status");
   });
 
   it("shows traced load failures and retries only when requested", async () => {
@@ -176,7 +176,7 @@ describe("SettingsPage", () => {
     expect(cacheLimit).toHaveValue(256);
     fireEvent.click(screen.getByRole("button", { name: "Guardar ajustes" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent(/ajustes guardados/i);
+    expect(await screen.findByText(/^Ajustes guardados\.$/)).toHaveAttribute("role", "status");
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

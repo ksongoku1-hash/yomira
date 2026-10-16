@@ -24,13 +24,18 @@ import httpx
 from app.connectors.chapter import ConnectorChapter
 from app.connectors.errors import SourceConnectorError, SourceConnectorOperation
 from app.connectors.metadata import ConnectorCapability, ConnectorMetadata
-from app.connectors.pages import ConnectorPageReference, PageFetchRequest
+from app.connectors.pages import (
+    ConnectorPageAvailability,
+    ConnectorPageReference,
+    PageFetchRequest,
+)
 from app.connectors.search import ConnectorSearchQuery, ConnectorSearchResult
 from app.connectors.series_metadata import ConnectorSeriesMetadata
 from app.domain.chapter import chapter_number
 from app.domain.source import SourceHealthStatus
 from app.errors import ErrorCode
 from app.platform.windows_process_job import WindowsChildJob
+from app.secrets.reference import SecretReference
 
 FMD2_API_ORIGIN = "http://127.0.0.1:18873"
 FMD2_COVER_ORIGIN = "https://swebtoon-phinf.pstatic.net"
@@ -98,6 +103,11 @@ _FMD_REFERENCE = re.compile(r"^fmd2:v1:[0-9a-fA-F]{2,8192}$")
 _CHAPTER_REFERENCE = re.compile(r"^yomira-fmd2:v[123]:[A-Za-z0-9_-]{1,16384}$")
 _PAGE_REFERENCE = re.compile(
     r"^fmd2-page:v1:(?P<job>[0-9a-f-]{36}):(?P<file>[0-9]{1,6}\.(?:jpg|jpeg|png|webp))$"
+)
+_READY_PAGE_REFERENCE = re.compile(
+    r"^fmd2-page:v2:(?P<job>[0-9a-f-]{36}):(?P<generation>[0-9a-f-]{36}):"
+    r"(?P<file>[0-9]{1,6}\.(?:jpg|jpeg|png|webp))$",
+    re.IGNORECASE,
 )
 _PAGE_FILE = re.compile(r"^(?P<number>[0-9]{1,6})\.(?:jpg|jpeg|png|webp)$", re.IGNORECASE)
 
@@ -169,6 +179,16 @@ def _reference_parts(value: str, operation: SourceConnectorOperation) -> tuple[s
 
 def _reference_url(value: str, operation: SourceConnectorOperation) -> str:
     return _reference_parts(value, operation)[1]
+
+
+def fmd2_source_display_name(remote_series_reference: str) -> str | None:
+    try:
+        source_id, _ = _reference_parts(
+            remote_series_reference, SourceConnectorOperation.GET_SERIES
+        )
+    except SourceConnectorError:
+        return None
+    return FMD2_PUBLIC_SOURCES[source_id][0]
 
 
 def _pack_reference(url: str, source_id: str = FMD2_SOURCE_ID) -> str:
@@ -334,8 +354,15 @@ class Fmd2Connector:
             limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
         )
         self._start_lock = asyncio.Lock()
+        self._acquisition_lock = asyncio.Lock()
+        self._settlement_lock = asyncio.Lock()
         self._chapters: OrderedDict[str, ConnectorChapter] = OrderedDict()
+        self._catalog_lock = asyncio.Lock()
+        self._catalogs: OrderedDict[str, tuple[float, dict[str, object]]] = OrderedDict()
+        # Reader attempts restore ownership from SQLite; download recovery remains separate.
         self._unsettled_acquisitions: set[UUID] = set()
+        self._restored_acquisitions: set[UUID] = set()
+        self._page_secret_reference = SecretReference.generate()
         parsed_api = urlsplit(str(self._client.base_url))
         if (
             parsed_api.scheme != "http"
@@ -512,15 +539,49 @@ class Fmd2Connector:
     async def get_series(self, remote_series_reference: str) -> object:
         operation = SourceConnectorOperation.GET_SERIES
         manga_ref = _reference(remote_series_reference, operation)
+        payload = await self._catalog_payload(manga_ref, operation, "manga")
+        return dict(self._catalog_manga(payload, manga_ref, operation))
+
+    def _catalog_manga(
+        self, payload: dict[str, object], manga_ref: str, operation: SourceConnectorOperation
+    ) -> dict[str, object]:
         source_id, _ = _reference_parts(manga_ref, operation)
-        payload = await self._request_json("GET", f"/v1/manga/{manga_ref}", operation)
         manga = _object(payload.get("manga"), operation)
         if (
             _reference(manga.get("manga_ref"), operation) != manga_ref
             or manga.get("source_id") != source_id
         ):
             _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        self.normalize_metadata(manga)
         return manga
+
+    async def _catalog_payload(
+        self, manga_ref: str, operation: SourceConnectorOperation, required: str
+    ) -> dict[str, object]:
+        async with self._catalog_lock:
+            cached = self._catalogs.get(manga_ref)
+            if cached is not None and time.monotonic() - cached[0] < 60 and required in cached[1]:
+                self._catalogs.move_to_end(manga_ref)
+                return cached[1]
+            suffix = "/chapters" if required == "chapters" else ""
+            payload = await self._request_json("GET", f"/v1/manga/{manga_ref}{suffix}", operation)
+            if "manga" in payload:
+                self._catalog_manga(payload, manga_ref, operation)
+            if "chapters" in payload:
+                self._parse_catalog_chapters(payload, manga_ref, operation)
+            if required not in payload:
+                _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+            # FMD returns both fields from one source request; retain no images or credentials.
+            self._catalogs[manga_ref] = (time.monotonic(), payload)
+            self._catalogs.move_to_end(manga_ref)
+            while len(self._catalogs) > 16:
+                self._catalogs.popitem(last=False)
+            return payload
+
+    async def invalidate_catalog(self, remote_series_reference: str) -> None:
+        manga_ref = _reference(remote_series_reference, SourceConnectorOperation.GET_CHAPTERS)
+        async with self._catalog_lock:
+            self._catalogs.pop(manga_ref, None)
 
     def normalize_metadata(self, raw_metadata: object) -> ConnectorSeriesMetadata:
         operation = SourceConnectorOperation.NORMALIZE_METADATA
@@ -596,12 +657,13 @@ class Fmd2Connector:
     async def get_chapters(self, remote_series_reference: str) -> tuple[ConnectorChapter, ...]:
         operation = SourceConnectorOperation.GET_CHAPTERS
         manga_ref = _reference(remote_series_reference, operation)
+        payload = await self._catalog_payload(manga_ref, operation, "chapters")
+        return self._parse_catalog_chapters(payload, manga_ref, operation)
+
+    def _parse_catalog_chapters(
+        self, payload: dict[str, object], manga_ref: str, operation: SourceConnectorOperation
+    ) -> tuple[ConnectorChapter, ...]:
         manga_source, _ = _reference_parts(manga_ref, operation)
-        payload = await self._request_json(
-            "GET",
-            f"/v1/manga/{manga_ref}/chapters",
-            operation,
-        )
         chapters = payload.get("chapters")
         if not isinstance(chapters, list):
             _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
@@ -656,6 +718,44 @@ class Fmd2Connector:
             f"Chapter {ordinal}" if ordinal is not None else "Capítulo",
         )
 
+    async def open_online_pages(
+        self, session_id: UUID, remote_chapter_reference: str
+    ) -> tuple[ConnectorPageReference, ...]:
+        operation = SourceConnectorOperation.GET_PAGES
+        if type(session_id) is not UUID or session_id.version != 4:
+            raise ValueError("session_id must be a UUIDv4")
+        _manga, chapter, _ordinal = _unpack_chapter(remote_chapter_reference, operation)
+        plan = await self._request_json(
+            "POST",
+            "/v1/reader",
+            operation,
+            {"request_id": str(session_id), "chapter_ref": chapter},
+        )
+        count = plan.get("page_count")
+        if (
+            set(plan) != {"session_id", "page_count"}
+            or plan.get("session_id") != str(session_id)
+            or type(count) is not int
+            or not 1 <= count <= 10_000
+        ):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        return tuple(
+            ConnectorPageReference(f"fmd2-online:v1:{session_id}:{ordinal}")
+            for ordinal in range(1, count + 1)
+        )
+
+    async def close_online_pages(self, session_id: UUID) -> None:
+        if type(session_id) is not UUID or session_id.version != 4:
+            raise ValueError("session_id must be a UUIDv4")
+        result = await self._request_json(
+            "DELETE",
+            f"/v1/reader/{session_id}",
+            SourceConnectorOperation.GET_PAGES,
+            missing_ok=True,
+        )
+        if result not in ({"status": "closed"}, {"status": "absent"}):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, SourceConnectorOperation.GET_PAGES)
+
     async def acquire_pages(
         self,
         job_id: UUID,
@@ -671,73 +771,91 @@ class Fmd2Connector:
         )
         title = _text(chapter_title, operation, limit=256)
         job_text = str(job_id)
-        await self._settle_acquisitions()
-        created_job = False
-        try:
-            created = await self._request_json(
-                "POST",
-                "/v1/downloads",
-                operation,
-                {
-                    "request_id": job_text,
-                    "manga_ref": manga_ref,
-                    "chapter_ref": chapter_ref,
-                    "chapter_title": title,
-                },
-                expected_statuses=(200, 202),
-            )
-            if created.get("job_id") != job_text:
-                _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
-            created_job = True
-            self._unsettled_acquisitions.add(job_id)
-            last_progress: object = None
-            deadline = time.monotonic() + _STALLED_ACQUISITION_SECONDS
-            while True:
-                status = await self._request_json("GET", f"/v1/downloads/{job_text}", operation)
-                state = status.get("status")
-                if state == "completed":
-                    self._unsettled_acquisitions.discard(job_id)
-                    return self._completed_pages(status, job_id, operation)
-                if state == "failed":
-                    self._unsettled_acquisitions.discard(job_id)
-                    _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
-                if state == "cancelled":
-                    self._unsettled_acquisitions.discard(job_id)
-                    _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
-                if state not in {"queued", "running"}:
+        # Serialize native acquisition; observers must never settle its owner.
+        async with self._acquisition_lock:
+            await self._settle_acquisitions()
+            await self._ensure_started(operation)
+            terminal = False
+            try:
+                created = await self._request_json(
+                    "POST",
+                    "/v1/downloads",
+                    operation,
+                    {
+                        "request_id": job_text,
+                        "manga_ref": manga_ref,
+                        "chapter_ref": chapter_ref,
+                        "chapter_title": title,
+                    },
+                    expected_statuses=(200, 202),
+                    ensure_started=False,
+                )
+                if created.get("job_id") != job_text:
                     _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
-                progress = (status.get("completed_pages"), status.get("progress"))
-                if progress != last_progress:
-                    last_progress = progress
-                    deadline = time.monotonic() + _STALLED_ACQUISITION_SECONDS
-                elif time.monotonic() >= deadline:
-                    _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
-                await asyncio.sleep(1.0)
-        except asyncio.CancelledError:
-            with suppress(Exception):
-                await asyncio.shield(self._settle_acquisitions())
-            raise
-        except SourceConnectorError:
-            if created_job:
-                with suppress(SourceConnectorError):
-                    await self._settle_acquisitions()
-            raise
+                last_progress: object = None
+                deadline = time.monotonic() + _STALLED_ACQUISITION_SECONDS
+                while True:
+                    status = await self._request_json("GET", f"/v1/downloads/{job_text}", operation)
+                    state = status.get("status")
+                    if state in {"completed", "failed", "cancelled"}:
+                        terminal = True
+                        if state == "completed":
+                            return self._completed_pages(status, job_id, operation)
+                        _raise(
+                            ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=state == "failed"
+                        )
+                    if state not in {"queued", "running"}:
+                        _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+                    progress = (status.get("completed_pages"), status.get("progress"))
+                    if progress != last_progress:
+                        last_progress = progress
+                        deadline = time.monotonic() + _STALLED_ACQUISITION_SECONDS
+                    elif time.monotonic() >= deadline:
+                        _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
+                    await asyncio.sleep(1.0)
+            except BaseException:
+                if not terminal:
+                    # A lost POST acknowledgement can still leave a native task running.
+                    self._unsettled_acquisitions.add(job_id)
+                    with suppress(Exception):
+                        await asyncio.shield(self._settle_acquisitions())
+                raise
 
     async def _settle_acquisitions(self) -> None:
         """Do not admit another chapter while an abandoned native attempt may still run."""
         operation = SourceConnectorOperation.GET_PAGES
-        for pending in tuple(self._unsettled_acquisitions):
-            try:
-                status = await self._request_json("GET", f"/v1/downloads/{pending}", operation)
-            except SourceConnectorError:
-                await self.cancel_download(pending)
-                raise
-            if status.get("status") not in {"completed", "failed", "cancelled"}:
-                await self.cancel_download(pending)
-                status = await self._request_json("GET", f"/v1/downloads/{pending}", operation)
+        async with self._settlement_lock:
+            for pending in tuple(self._unsettled_acquisitions):
+                try:
+                    status = await self._request_json(
+                        "GET",
+                        f"/v1/downloads/{pending}",
+                        operation,
+                        missing_ok=pending in self._restored_acquisitions,
+                    )
+                except SourceConnectorError:
+                    await self.cancel_download(pending)
+                    raise
+                if status.get("status") == "absent" and pending in self._restored_acquisitions:
+                    self._unsettled_acquisitions.discard(pending)
+                    self._restored_acquisitions.discard(pending)
+                    continue
                 if status.get("status") not in {"completed", "failed", "cancelled"}:
-                    _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
-            self._unsettled_acquisitions.discard(pending)
+                    await self.cancel_download(pending)
+                    status = await self._request_json("GET", f"/v1/downloads/{pending}", operation)
+                    if status.get("status") not in {"completed", "failed", "cancelled"}:
+                        _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
+                self._unsettled_acquisitions.discard(pending)
+                self._restored_acquisitions.discard(pending)
+
+    def track_abandoned_acquisition(self, job_id: UUID) -> None:
+        """Restore durable reader ownership before admitting runtime acquisitions."""
+        if type(job_id) is not UUID or job_id.version != 4:
+            raise ValueError("job_id must be a UUIDv4")
+        if self._acquisition_lock.locked():
+            raise RuntimeError("Restoring acquisition ownership requires quiescence")
+        self._unsettled_acquisitions.add(job_id)
+        self._restored_acquisitions.add(job_id)
 
     async def cancel_download(self, job_id: UUID) -> None:
         operation = SourceConnectorOperation.GET_PAGES
@@ -746,6 +864,97 @@ class Fmd2Connector:
         await self._request_json(
             "DELETE", f"/v1/downloads/{job_id}", operation, expected_statuses=(200,)
         )
+
+    async def get_ready_pages(
+        self,
+        job_id: UUID,
+        previous: ConnectorPageAvailability | None = None,
+    ) -> ConnectorPageAvailability:
+        """Observe the same native acquisition without starting or cancelling a second one."""
+        operation = SourceConnectorOperation.GET_PAGES
+        if type(job_id) is not UUID or job_id.version != 4:
+            _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
+        if previous is not None and type(previous) is not ConnectorPageAvailability:
+            raise TypeError("previous must be a ConnectorPageAvailability")
+        status = await self._request_json(
+            "GET", f"/v1/downloads/{job_id}", operation, missing_ok=previous is None
+        )
+        if status.get("status") == "absent":
+            _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
+        if status.get("job_id") != str(job_id):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        state = status.get("status")
+        if type(state) is not str:
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        if state in {"failed", "cancelled"}:
+            _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=state == "failed")
+        if state not in {"queued", "running", "completed"}:
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        generation_text = status.get("page_generation")
+        try:
+            generation = UUID(generation_text) if type(generation_text) is str else None
+        except ValueError:
+            generation = None
+        if generation is None or generation.version != 4 or str(generation) != generation_text:
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        total = status.get("planned_pages")
+        entries = status.get("ready_pages")
+        if type(total) is not int or not 0 <= total <= _MAX_PAGES or not isinstance(entries, list):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        entry_values = cast(list[object], entries)
+        if len(entry_values) > total:
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        ready: dict[int, str] = {}
+        for entry in entry_values:
+            item = _object(entry, operation)
+            ordinal = item.get("ordinal")
+            name = item.get("file_name")
+            match = _PAGE_FILE.fullmatch(name) if type(name) is str else None
+            if (
+                type(ordinal) is not int
+                or not 1 <= ordinal <= total
+                or ordinal in ready
+                or match is None
+                or int(match.group("number")) != ordinal
+            ):
+                _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+            ready[ordinal] = cast(str, name)
+        if state == "completed":
+            completed = self._completed_pages(status, job_id, operation)
+            if total not in {0, len(completed)}:
+                _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+            total = len(completed)
+            completed_names = {
+                ordinal: page.remote_reference.rsplit(":", 1)[-1]
+                for ordinal, page in enumerate(completed, 1)
+            }
+            if any(completed_names[ordinal] != name for ordinal, name in ready.items()):
+                _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+            ready = completed_names
+        snapshot = ConnectorPageAvailability(
+            generation=generation,
+            total_pages=total,
+            pages=tuple(
+                (ordinal, ConnectorPageReference(f"fmd2-page:v2:{job_id}:{generation}:{name}"))
+                for ordinal, name in sorted(ready.items())
+            ),
+            is_complete=state == "completed",
+        )
+        snapshot_pages = dict(snapshot.pages)
+        if previous is not None and (
+            (previous.total_pages != 0 and previous.generation != snapshot.generation)
+            or (previous.total_pages != 0 and previous.total_pages != snapshot.total_pages)
+            or any(snapshot_pages.get(ordinal) != page for ordinal, page in previous.pages)
+            or (previous.is_complete and not snapshot.is_complete)
+        ):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        return snapshot
+
+    def page_secret_headers(self, reference: SecretReference) -> dict[str, str]:
+        """Resolve only this process's opaque page credential for the existing transport."""
+        if type(reference) is not SecretReference or reference != self._page_secret_reference:
+            raise ValueError("Unknown FMD2 page secret reference")
+        return {"Authorization": self._control_client.headers["Authorization"]}
 
     def _stage_files(self, job_id: UUID) -> tuple[Path, ...]:
         if type(job_id) is not UUID or job_id.version != 4:
@@ -785,7 +994,27 @@ class Fmd2Connector:
         )
         if status.get("job_id") != str(job_id) or status.get("status") != "completed":
             raise ValueError("Only a completed provider job can release its staging")
+        await self._release_staging(job_id)
 
+    async def release_reader_staging(self, job_id: UUID, *, restored: bool = False) -> None:
+        """Release a reader-owned terminal attempt after durable cache publication or recovery."""
+        if type(job_id) is not UUID or job_id.version != 4:
+            raise ValueError("job_id must be a UUIDv4")
+        status = await self._request_json(
+            "GET",
+            f"/v1/downloads/{job_id}",
+            SourceConnectorOperation.GET_PAGES,
+            missing_ok=restored,
+        )
+        if not (restored and status.get("status") == "absent") and (
+            status.get("job_id") != str(job_id)
+            or status.get("status") not in {"completed", "failed", "cancelled"}
+        ):
+            raise ValueError("Reader staging requires a confirmed terminal attempt")
+        self.existing_stage_bytes(job_id)
+        await self._release_staging(job_id)
+
+    async def _release_staging(self, job_id: UUID) -> None:
         def release() -> None:
             files = self._stage_files(job_id)
             for path in files:
@@ -797,10 +1026,35 @@ class Fmd2Connector:
         await asyncio.to_thread(release)
 
     def resolve_page(self, page_reference: ConnectorPageReference) -> PageFetchRequest:
+        if type(
+            page_reference
+        ) is ConnectorPageReference and page_reference.remote_reference.startswith(
+            "fmd2-online:v1:"
+        ):
+            parts = page_reference.remote_reference.split(":")
+            if len(parts) != 4:
+                _raise(ErrorCode.SRC_SCHEMA_CHANGED, SourceConnectorOperation.RESOLVE_PAGE)
+            try:
+                session_id = UUID(parts[2])
+                ordinal = int(parts[3])
+                if (
+                    session_id.version != 4
+                    or str(session_id) != parts[2]
+                    or str(ordinal) != parts[3]
+                    or not 1 <= ordinal <= 10_000
+                ):
+                    raise ValueError
+            except ValueError:
+                _raise(ErrorCode.SRC_SCHEMA_CHANGED, SourceConnectorOperation.RESOLVE_PAGE)
+            return PageFetchRequest(
+                url=f"{str(self._client.base_url).rstrip('/')}/v1/reader/{session_id}/pages/{ordinal}",
+                secret_reference=self._page_secret_reference,
+            )
         operation = SourceConnectorOperation.RESOLVE_PAGE
         if type(page_reference) is not ConnectorPageReference:
             _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
-        match = _PAGE_REFERENCE.fullmatch(page_reference.remote_reference)
+        ready_match = _READY_PAGE_REFERENCE.fullmatch(page_reference.remote_reference)
+        match = ready_match or _PAGE_REFERENCE.fullmatch(page_reference.remote_reference)
         if match is None:
             _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
         try:
@@ -810,6 +1064,18 @@ class Fmd2Connector:
         if job_id.version != 4:
             _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
         file_name = match.group("file")
+        if ready_match is not None:
+            try:
+                generation = UUID(ready_match.group("generation"))
+            except ValueError:
+                _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
+            if generation.version != 4:
+                _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
+            return PageFetchRequest(
+                url=f"{self.api_origin}/v1/downloads/{job_id}/ready/{generation}"
+                f"/files/{quote(file_name, safe='')}",
+                secret_reference=self._page_secret_reference,
+            )
         return PageFetchRequest(
             url=f"{self.api_origin}/v1/downloads/{job_id}/files/{quote(file_name, safe='')}"
         )
@@ -863,15 +1129,10 @@ class Fmd2Connector:
         *,
         expected_statuses: tuple[int, ...] = (200,),
         ensure_started: bool = True,
+        missing_ok: bool = False,
     ) -> dict[str, object]:
-        if ensure_started and self._owns_process:
-            if self._client.is_closed:
-                _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
-            if self._process is None or self._process.poll() is not None:
-                try:
-                    await self.start()
-                except OSError, RuntimeError:
-                    _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
+        if ensure_started:
+            await self._ensure_started(operation)
         try:
             client = (
                 self._control_client
@@ -879,7 +1140,8 @@ class Fmd2Connector:
                 else self._client
             )
             async with client.stream(method, path, json=payload) as response:
-                if response.status_code not in expected_statuses:
+                was_missing = response.status_code == 404 and missing_ok
+                if response.status_code not in expected_statuses and not was_missing:
                     _raise(
                         ErrorCode.SRC_CONNECTOR_FAILED,
                         operation,
@@ -902,7 +1164,22 @@ class Fmd2Connector:
             value: object = json.loads(bytes(body).decode("utf-8", errors="strict"))
         except UnicodeDecodeError, ValueError, RecursionError:
             _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
-        return _object(value, operation)
+        result = _object(value, operation)
+        if was_missing:
+            if result != {"error": {"code": "not_found"}}:
+                _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+            return {"status": "absent"}
+        return result
+
+    async def _ensure_started(self, operation: SourceConnectorOperation) -> None:
+        if self._owns_process:
+            if self._client.is_closed:
+                _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
+            if self._process is None or self._process.poll() is not None:
+                try:
+                    await self.start()
+                except OSError, RuntimeError:
+                    _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
 
     @staticmethod
     def _validate_sources(

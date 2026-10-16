@@ -72,3 +72,12 @@ Thumbs.db
 /YOMIRA_ESTADO_ACTUAL.md.atomic-replacement-original-*.bak
 /YOMIRA_ESTADO_ACTUAL.md.rollback-current-*.bak
 /.codex_tracker_k094_start.ps1
+
+# Per-machine migration and execution state
+/config/scheduled-tasks/
+/docs/MIGRATION_WINDOWS.md
+/docs/hybrid/
+
+
+/Abrir Yomira.cmd
+

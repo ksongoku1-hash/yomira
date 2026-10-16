@@ -162,7 +162,7 @@ def test_chapter_source_migration_keeps_versions_and_enforces_relationships(
     runner = MigrationRunner(database, tmp_path / "backups")
     try:
         report = runner.upgrade_to_head()
-        assert report.current_revision == "0023_whole_manga_export_size"
+        assert report.current_revision == "0024_reader_sessions"
 
         series = Series.new_local("Series", "Series")
         chapter = Chapter.new_local(

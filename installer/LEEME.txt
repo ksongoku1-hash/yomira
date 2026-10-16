@@ -1,38 +1,44 @@
-YOMIRA 0.1.11 — INSTALACION SENCILLA EN WINDOWS 10/11 DE 64 BITS
+YOMIRA 0.1.13 — LECTOR HIBRIDO PARA WINDOWS 10/11 X64
 
-1. Descarga Yomira-Setup-0.1.11.exe:
-   https://github.com/ksongoku1-hash/yomira/releases/tag/v0.1.11
-2. Abre el archivo y pulsa Instalar.
-3. Pulsa Finalizar dejando marcada la casilla Abrir Yomira.
+El codigo fuente de Yomira 0.1.13 esta disponible en GitHub; no se ha publicado una Release instalable.
 
-La pagina se abre automaticamente en tu navegador. Para usarla otro dia,
-abre el acceso directo Yomira del escritorio o del menu Inicio.
-No necesitas comandos, pip, Python, Node.js ni instalar FMD por separado.
+INSTALAR: abre Yomira-Setup-0.1.13.exe. Cierra la version anterior antes
+de actualizar. Conserva una copia de recuperacion de tus datos y progreso.
+El programa y la biblioteca se guardan en carpetas separadas.
 
-Cada amigo instala Yomira en su propio PC. Cada PC tiene su propia biblioteca.
-Los mangas se guardan en Documentos\Mangas de Yomira (incluida la ubicacion
-redirigida a OneDrive). Los datos y el progreso se guardan en:
-%LOCALAPPDATA%\Yomira\YomiraData
+VERSION PORTATIL: extrae TODO Yomira-Windows-x64-0.1.13.zip y abre
+Yomira.exe. No lo ejecutes dentro del ZIP. Se incluyen el motor y licencias;
+no necesitas instalar Python, Node.js ni FMD por separado.
 
-Puedes minimizar la ventana de Yomira. Para detener el programa y las
-descargas, vuelve a su ventana y pulsa Ctrl+C. Cerrar la pestana del navegador
-no detiene Yomira. Si no se abre la pagina, entra en:
-http://127.0.0.1:8000/library
+LECTURA ONLINE: en Buscar abre Leer online. Las paginas se solicitan
+progresivamente y se mantienen en memoria, sin guardar imagenes en disco.
+Necesitas conexion. La aplicacion conserva configuracion y progreso en disco.
 
-ACTUALIZAR: cierra Yomira e instala la nueva version. Tus mangas y progreso
-estan fuera de la carpeta del programa. Cierra cualquier version portatil
-anterior antes de usar la instalada.
+DESCARGAS: abre Descargar dentro del lector para guardar el capitulo actual,
+varios capitulos seleccionados o el catalogo completo disponible del manga.
+Las descargas usan la cola existente, verifican los archivos y crean CBZ
+con ComicInfo.xml. Abrir el CBZ conserva el progreso del capitulo.
 
-VERSION PORTATIL: descarga Yomira-Windows-x64-0.1.11.zip, extrae TODO su
-contenido en una carpeta y abre Yomira.exe. No lo abras dentro del ZIP.
+DATOS: el perfil predeterminado es %LOCALAPPDATA%\Yomira\YomiraData.
+Los mangas nuevos van a Documentos\Mangas de Yomira, incluida una ubicacion
+redirigida a OneDrive. El acceso directo de esta actualizacion local usa
+la biblioteca elegida durante la preparacion; no mezcla perfiles anteriores.
 
-Esta es una version de prueba sin firma digital. Windows puede mostrar
-un aviso. Comprueba que la descarga procede del GitHub indicado. Las fuentes
-externas pueden cambiar o dejar de responder.
+La interfaz se abre en el navegador al iniciar. Cerrar la pestana no detiene
+el programa. Para cerrar la consola de una ejecucion manual, pulsa Ctrl+C.
+No abras dos versiones simultaneamente.
 
-Se incluyen licencias y avisos en Licencias y Motor\licenses. El codigo
-fuente correspondiente de FMD se ofrece en la misma Release.
+Se conservan exportaciones, modos de lectura y organizacion de descargas.
+Se incluyen licencias en Licencias y Motor\licenses y el codigo del motor
+adaptado en la entrega. Version de prueba sin firma digital; comprueba las
+sumas SHA-256 de los archivos recibidos.
 
-ORGANIZAR: en Ver capitulos pulsa el triángulo arriba/abajo y filtra por
-estado o idioma. En Descargas usa Pausar grupo / Reanudar grupo.
-La pausa se aplica al terminar el capitulo en curso y se conserva al cerrar.
+CONTINUIDAD: puedes pasar al capitulo anterior o siguiente de la misma fuente
+e idioma. Si una pagina falla, Reintentar pagina reabre el capitulo y conserva
+la posicion. Si cambia su cantidad de paginas, el lector detiene la reapertura
+para proteger el progreso guardado.
+
+La recuperacion tras un cierre inesperado del motor se verifica en Windows
+con una fuente ficticia. Quedan pendientes fuentes externas y una prueba del
+instalador en un Windows limpio. Las fuentes pueden cambiar o dejar de responder;
+utiliza unicamente accesos autorizados y respeta sus limites.

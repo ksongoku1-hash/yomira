@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { MetadataField, MetadataValue } from "../api/client";
@@ -69,10 +69,42 @@ function renderDetail(client: QueryClient) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/series/${seriesId}`]}>
         <Link to={`/series/${secondSeriesId}`}>Abrir segunda serie</Link>
-        <Routes><Route element={<SeriesDetailPage />} path="/series/:seriesId" /></Routes>
+        <Routes><Route element={<SeriesDetailPage />} path="/series/:seriesId" /><Route element={<ReaderDestination />} path="/reader/:chapterId" /></Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+function ReaderDestination() {
+  const location = useLocation();
+  return <p>{location.pathname}{location.search}</p>;
+}
+
+it.each([false, true])("continues from persisted progress and chooses the available copy (local=%s)", async (local) => {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === `/api/v1/series/${seriesId}`) return Promise.resolve(response({data: seriesRecord(), meta: {}}));
+    if (path === "/api/v1/reader/progress/recent?limit=20") return Promise.resolve(response({
+      data: [{series_id: seriesId, display_title: "Mi título local", chapter_id: cbrChapterId,
+        display_label: "Capítulo 8", page_index: 9, percentage: "50.00", updated_at: "2026-10-12T00:00:00Z"}], meta: {limit: 20},
+    }));
+    if (path.endsWith("/download-source")) return Promise.resolve(response({data: {
+      chapter_id: cbrChapterId, connector_id: "yomira.mock", remote_series_id: "fixture", chapter_remote_id: "chapter-8",
+    }, meta: {}}));
+    if (path.endsWith("/availability")) return Promise.resolve(response({data: {
+      linked: true, ready_remote_ids: local ? ["chapter-8"] : [], ready_labels: [], busy_remote_ids: [],
+    }}));
+    return Promise.resolve(response({data: [], meta: {limit: 100, offset: 0, total: 0}}));
+  }));
+  renderDetail(new QueryClient({defaultOptions: {queries: {retry: false, gcTime: 0}}}));
+  fireEvent.click(await screen.findByRole("link", {name: "Continuar Capítulo 8 · Página 10"}));
+  expect(await screen.findByText(`/reader/${cbrChapterId}${local ? "" : "?online=1"}`)).toBeInTheDocument();
+});
+
+function refreshButton() {
+  const menu = screen.getByLabelText("Más acciones del manga");
+  if (!menu.closest("details")?.open) fireEvent.click(menu);
+  return screen.getByRole("button", { name: "Actualizar metadatos y portada" });
 }
 
 function metadataButton() {
@@ -81,6 +113,37 @@ function metadataButton() {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("shows source metadata, cover and online chapters for a series with no downloaded chapters", async () => {
+  const base = seriesRecord();
+  const record = {...base, cover_asset_id: null, description: null,
+    metadata: base.metadata.map((item) => ["cover", "description"].includes(item.field)
+      ? {...item, value: null, local_value: null, authority: null, source_conflict: true} : item),
+    reading_sources: [{series_source_id: "123e4567-e89b-42d3-a456-426614174003",
+      connector_id: "yomira.mock", remote_series_id: "fixture", display_name: "Fuente elegida",
+      author: "Autor de la fuente", description: "Sinopsis de la fuente elegida",
+      genres: ["Deporte"], status: "completed", language: "es"}],
+  };
+  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === `/api/v1/series/${seriesId}`) return Promise.resolve(response({data: record, meta: {}}));
+    if (path.endsWith("/chapters") && path.includes("/connectors/")) return Promise.resolve(response({
+      data: [{remote_id: "chapter-1", remote_url: null, remote_label: "1", chapter_raw_label: "1",
+        chapter_sort_key: [1], language: "es", display_label: "Capítulo 1"}],
+      meta: {connector_id: "yomira.mock", remote_series_id: "fixture"},
+    }));
+    if (path.endsWith("/cover")) return Promise.resolve(response({data: {cover_url: "https://example.test/cover.jpg"},
+      meta: {connector_id: "yomira.mock", remote_series_id: "fixture"}}));
+    return Promise.resolve(response({data: [], meta: {limit: 100, offset: 0, total: 0}}));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderDetail(new QueryClient({defaultOptions: {queries: {retry: false}}}));
+  expect(await screen.findByRole("button", {name: "Leer online Capítulo 1"})).toBeInTheDocument();
+  expect(screen.getByText("Sinopsis de la fuente elegida")).toBeInTheDocument();
+  expect(await screen.findByRole("img", {name: "Portada de Mi título local"})).toHaveAttribute("src", "https://example.test/cover.jpg");
+  expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/download-jobs"))).toBe(false);
+  expect(screen.getByText(/todavía no tiene capítulos descargados/)).toBeInTheDocument();
+});
 
 describe("series metadata refresh", () => {
   it("loads chapters in descending order and restores ascending order", async () => {
@@ -139,7 +202,7 @@ describe("series metadata refresh", () => {
     const cover = await screen.findByRole("img", { name: "Portada de Mi título local" });
     expect(document.querySelector('div[aria-hidden="true"] > img'))
       .toHaveAttribute("src", cover.getAttribute("src"));
-    fireEvent.click(await screen.findByRole("button", { name: "Actualizar metadatos y portada" }));
+    fireEvent.click(refreshButton());
     expect(await screen.findByText(/Búsqueda terminada. Quedan datos pendientes: Autor/))
       .toBeInTheDocument();
     expect(screen.queryByText("Metadatos y portada actualizados.")).not.toBeInTheDocument();
@@ -222,6 +285,11 @@ describe("series metadata refresh", () => {
     renderDetail(client);
 
     const searchLink = await screen.findByRole("link", { name: "Buscar capítulos" });
+    const onlineLink = screen.getByRole("link", { name: "Elegir fuente para lectura online" });
+    const onlineTarget = new URL(onlineLink.getAttribute("href") ?? "", "http://localhost");
+    expect(onlineTarget.searchParams.get("q")).toBe("Mi título local");
+    expect(onlineTarget.searchParams.has("connector")).toBe(false);
+    expect(screen.getByRole("heading", { name: "Leer online" })).toBeInTheDocument();
     const target = new URL(searchLink.getAttribute("href") ?? "", "http://localhost");
     expect(target.pathname).toBe("/search");
     expect(target.searchParams.get("q")).toBe("Mi título local");
@@ -265,7 +333,7 @@ describe("series metadata refresh", () => {
     fireEvent.click(within(firstCandidate).getByRole("button", { name: "Usar esta ficha" }));
     expect(await screen.findByRole("button", { name: "Actualizando ficha externa…" })).toBeDisabled();
     expect(metadataButton()).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Actualizar metadatos y portada" })).toBeDisabled();
+    expect(refreshButton()).toBeDisabled();
     for (const button of screen.getAllByRole("button", { name: "Quitar corrección" })) expect(button).toBeDisabled();
     await waitFor(() => expect(finishApply).toBeDefined());
     record = updated;
@@ -402,7 +470,7 @@ describe("series metadata refresh", () => {
     await screen.findByRole("heading", { level: 1, name: "Mi título local" });
     fireEvent.click(metadataButton());
     expect(await screen.findByRole("button", { name: "Buscando datos externos…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Actualizar metadatos y portada" })).toBeDisabled();
+    expect(refreshButton()).toBeDisabled();
     await waitFor(() => expect(finishSearch).toBeDefined());
     fireEvent.click(screen.getByRole("link", { name: "Abrir segunda serie" }));
     await screen.findByRole("heading", { level: 1, name: "Segunda serie" });
@@ -439,13 +507,13 @@ describe("series metadata refresh", () => {
     const setQueryData = vi.spyOn(client, "setQueryData");
     renderDetail(client);
     await screen.findByRole("heading", { level: 1, name: "Mi título local" });
-    fireEvent.click(screen.getByRole("button", { name: "Actualizar metadatos y portada" }));
+    fireEvent.click(refreshButton());
     await screen.findByRole("button", { name: "Actualizando metadatos y portada…" });
     await waitFor(() => expect(finishRefresh).toBeDefined());
     fireEvent.click(screen.getByRole("link", { name: "Abrir segunda serie" }));
     await screen.findByRole("heading", { level: 1, name: "Segunda serie" });
     try {
-      expect(screen.getByRole("button", { name: "Actualizar metadatos y portada" })).not.toBeDisabled();
+      expect(refreshButton()).not.toBeDisabled();
       expect(screen.queryByRole("button", { name: "Actualizando metadatos y portada…" }))
         .not.toBeInTheDocument();
     } finally {
@@ -491,7 +559,7 @@ describe("series metadata refresh", () => {
     expect(new URL(initialSource ?? "", "http://127.0.0.1:8000").searchParams.get("variant"))
       .toBe("large");
     fireEvent.error(image);
-    fireEvent.click(screen.getByRole("button", { name: "Actualizar metadatos y portada" }));
+    fireEvent.click(refreshButton());
     expect(await screen.findByRole("button", { name: "Actualizando metadatos y portada…" }))
       .toBeDisabled();
     for (const button of screen.getAllByRole("button", { name: "Quitar corrección" })) {
@@ -501,7 +569,7 @@ describe("series metadata refresh", () => {
     record = refreshed;
     finishRefresh?.(response({ data: refreshed, meta: {} }));
     expect(await screen.findByText("Metadatos y portada actualizados.")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Actualizar metadatos y portada" }))
+    await waitFor(() => expect(refreshButton())
       .not.toBeDisabled());
     expect(screen.getByRole("heading", { level: 1, name: "Mi título local" })).toBeInTheDocument();
     expect(screen.getByText("Autor elegido por ti")).toBeInTheDocument();
@@ -529,14 +597,14 @@ describe("series metadata refresh", () => {
     }));
     renderDetail(client);
     await screen.findByRole("heading", { level: 1, name: "Mi título local" });
-    fireEvent.click(screen.getByRole("button", { name: "Actualizar metadatos y portada" }));
+    fireEvent.click(refreshButton());
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("La fuente no respondió.");
     expect(alert).toHaveTextContent("SRC_NETWORK_ERROR");
     expect(alert).toHaveTextContent("trace-metadata-refresh");
     expect(screen.getByRole("heading", { level: 1, name: "Mi título local" })).toBeInTheDocument();
     expect(screen.getByText("Autor elegido por ti")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Actualizar metadatos y portada" })).not.toBeDisabled();
+    expect(refreshButton()).not.toBeDisabled();
     expect(screen.queryByText("Metadatos y portada actualizados.")).not.toBeInTheDocument();
   });
 
@@ -573,7 +641,7 @@ describe("series metadata refresh", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderDetail(client);
     await screen.findByRole("heading", { level: 1, name: "Mi título local" });
-    fireEvent.click(screen.getByRole("button", { name: "Actualizar metadatos y portada" }));
+    fireEvent.click(refreshButton());
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("IMG_DECODE_FAILED");
     expect(alert).toHaveTextContent("trace-partial-cover-refresh");
@@ -589,7 +657,7 @@ describe("series metadata refresh", () => {
     expect(coverUrl.pathname).toBe(`/api/v1/series/${seriesId}/cover`);
     expect(coverUrl.searchParams.get("v")).toBe(`${coverAssetId}:${updatedRecord.updated_at}`);
     expect(screen.queryByText("Metadatos y portada actualizados.")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Actualizar metadatos y portada" })).not.toBeDisabled();
+    expect(refreshButton()).not.toBeDisabled();
   });
 
   it("keeps a source-only cover as a placeholder until a local asset exists", async () => {

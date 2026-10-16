@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextvars import Context
 from time import monotonic
 from typing import Protocol, cast
@@ -151,7 +151,9 @@ class DownloadDispatcher:
             if monotonic() < deadline:
                 continue
             try:
-                probe = getattr(self._worker, "source_available", None)
+                probe: Callable[[UUID], Awaitable[bool]] | None = getattr(
+                    self._worker, "source_available", None
+                )
                 available = callable(probe) and await asyncio.wait_for(probe(job_id), timeout=5.0)
             except Exception:
                 available = False

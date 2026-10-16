@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC
 from typing import Literal, cast
@@ -11,9 +12,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import UUID4, BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
+from app.connectors.metadata import ConnectorCapability
 from app.domain.reader_progress import ReaderProgress
 from app.errors import ApiErrorEnvelope
 from app.runtime import RuntimeState
+from app.services.jobs import InvalidChapterSelection
+from app.services.online_reader import OnlineReaderSessionService
 from app.services.reader_asset import (
     MAX_READER_PAGE_SIZE,
     ReaderAssetConflict,
@@ -27,6 +31,7 @@ from app.services.reader_progress import (
     ReaderProgressPageOutOfRange,
     ReaderProgressService,
 )
+from app.services.reader_session import CachedReaderPageStream, ReaderSessionService
 from app.services.recent_views import DEFAULT_RECENT_LIMIT, MAX_RECENT_LIMIT
 
 router = APIRouter(tags=["reader"])
@@ -55,6 +60,107 @@ class ReaderChapterListEnvelope(BaseModel):
 class ReaderChapterEnvelope(BaseModel):
     data: ReaderChapterResponse
     meta: dict[str, str]
+
+
+class ReaderSessionRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    restart: bool = False
+
+
+class ReaderDownloadSourceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chapter_id: UUID
+    connector_id: str = Field(min_length=1, max_length=512)
+    remote_series_id: str = Field(min_length=1, max_length=512)
+    chapter_remote_id: str = Field(min_length=1, max_length=512)
+
+
+class ReaderDownloadSourceEnvelope(BaseModel):
+    data: ReaderDownloadSourceResponse | None
+    meta: dict[str, str]
+
+
+@router.get(
+    "/api/v1/reader/{chapter_id}/download-source", response_model=ReaderDownloadSourceEnvelope
+)
+def get_reader_download_source(chapter_id: UUID4, request: Request) -> ReaderDownloadSourceEnvelope:
+    runtime = cast(RuntimeState, request.app.state.runtime)
+    service, registry = runtime.download_job_service, runtime.connector_registry
+    if service is None or registry is None:
+        raise HTTPException(status_code=503, detail="Download source lookup is unavailable.")
+    try:
+        source = service.reader_download_source(UUID(str(chapter_id)))
+    except InvalidChapterSelection:
+        raise HTTPException(status_code=404, detail="Chapter was not found.") from None
+    if source is None:
+        return ReaderDownloadSourceEnvelope(data=None, meta={})
+    metadata = next((item for item in registry.registered_metadata
+                     if item.connector_id == source.connector_id), None)
+    required = {ConnectorCapability.METADATA, ConnectorCapability.CHAPTER_LIST,
+                ConnectorCapability.PAGE_LIST}
+    if (metadata is None or metadata.connector_version != source.connector_version
+            or not required.issubset(metadata.capabilities)):
+        return ReaderDownloadSourceEnvelope(data=None, meta={})
+    return ReaderDownloadSourceEnvelope(data=ReaderDownloadSourceResponse(
+        chapter_id=UUID(str(chapter_id)), connector_id=source.connector_id,
+        remote_series_id=source.remote_series_id, chapter_remote_id=source.chapter_remote_id,
+    ), meta={})
+
+
+class ReaderSessionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    session_id: UUID
+    chapter_id: UUID
+    state: Literal["acquiring", "complete", "interrupted", "failed"]
+    page_count: int
+    ready_pages: tuple[int, ...]
+    error_code: str | None
+
+
+class ReaderSessionEnvelope(BaseModel):
+    data: ReaderSessionResponse
+    meta: dict[str, str]
+
+
+def _session_service(request: Request) -> ReaderSessionService | OnlineReaderSessionService:
+    runtime = cast(RuntimeState, request.app.state.runtime)
+    if runtime.reader_session_service is None:
+        raise HTTPException(status_code=503, detail="Online reader service is unavailable.")
+    return runtime.reader_session_service
+
+
+@router.post("/api/v1/reader/{chapter_id}/session", response_model=ReaderSessionEnvelope)
+async def open_reader_session(
+    chapter_id: UUID4,
+    body: ReaderSessionRequest,
+    request: Request,
+) -> ReaderSessionEnvelope:
+    try:
+        current = await _session_service(request).open(UUID(str(chapter_id)), restart=body.restart)
+    except ReaderAssetError as error:
+        raise _translate_reader_error(error) from None
+    return ReaderSessionEnvelope(data=ReaderSessionResponse.model_validate(current), meta={})
+
+
+@router.get("/api/v1/reader/{chapter_id}/session", response_model=ReaderSessionEnvelope)
+async def get_reader_session(chapter_id: UUID4, request: Request) -> ReaderSessionEnvelope:
+    try:
+        current = _session_service(request).status(UUID(str(chapter_id)))
+    except ReaderAssetError as error:
+        raise _translate_reader_error(error) from None
+    return ReaderSessionEnvelope(data=ReaderSessionResponse.model_validate(current), meta={})
+
+
+@router.delete("/api/v1/reader/{chapter_id}/session", response_model=ReaderSessionEnvelope)
+async def pause_reader_session(chapter_id: UUID4, request: Request) -> ReaderSessionEnvelope:
+    try:
+        current = await _session_service(request).pause(UUID(str(chapter_id)))
+    except ReaderAssetError as error:
+        raise _translate_reader_error(error) from None
+    return ReaderSessionEnvelope(data=ReaderSessionResponse.model_validate(current), meta={})
 
 
 class ReaderProgressRequest(BaseModel):
@@ -238,6 +344,9 @@ async def get_reader_chapter(
 ) -> ReaderChapterEnvelope:
     service = _reader_service(request)
     chapter = service.get_chapter(UUID(str(chapter_id)))
+    runtime = cast(RuntimeState, request.app.state.runtime)
+    if chapter is None and runtime.reader_session_service is not None:
+        chapter = runtime.reader_session_service.get_chapter(UUID(str(chapter_id)))
     if chapter is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -319,7 +428,7 @@ async def put_reader_progress(
         422: {"model": ApiErrorEnvelope},
         503: {"model": ApiErrorEnvelope},
     },
-    summary="Stream one verified page from a published CBZ",
+    summary="Stream one verified local or online page",
 )
 async def get_reader_page(
     chapter_id: UUID4,
@@ -327,7 +436,22 @@ async def get_reader_page(
     request: Request,
 ) -> StreamingResponse:
     service = _reader_service(request)
-    task = asyncio.create_task(asyncio.to_thread(service.open_page, UUID(str(chapter_id)), page))
+    runtime = cast(RuntimeState, request.app.state.runtime)
+    online = service.get_chapter(UUID(str(chapter_id))) is None
+    operation: Callable[[UUID, int], ReaderPageStream | CachedReaderPageStream] = service.open_page
+    if (
+        online
+        and runtime.reader_session_service is not None
+        and not isinstance(runtime.reader_session_service, OnlineReaderSessionService)
+    ):
+        operation = runtime.reader_session_service.open_page
+    task: asyncio.Task[ReaderPageStream | CachedReaderPageStream]
+    if online and isinstance(runtime.reader_session_service, OnlineReaderSessionService):
+        task = asyncio.create_task(
+            runtime.reader_session_service.open_page(UUID(str(chapter_id)), page)
+        )
+    else:
+        task = asyncio.create_task(asyncio.to_thread(operation, UUID(str(chapter_id)), page))
     try:
         stream = await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -339,7 +463,9 @@ async def get_reader_page(
         stream.iter_chunks(),
         media_type=stream.media_type,
         headers={
-            "Cache-Control": "private, no-transform",
+            "Cache-Control": "no-store, private, no-transform"
+            if online
+            else "private, no-transform",
             "Content-Length": str(stream.size_bytes),
             "ETag": stream.etag,
         },
@@ -347,7 +473,7 @@ async def get_reader_page(
     )
 
 
-def _close_unclaimed_page(task: asyncio.Task[ReaderPageStream]) -> None:
+def _close_unclaimed_page(task: asyncio.Task[ReaderPageStream | CachedReaderPageStream]) -> None:
     if not task.cancelled():
         with suppress(Exception):
             task.result().close()

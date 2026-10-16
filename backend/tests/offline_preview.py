@@ -45,6 +45,7 @@ from app.services.download_transport import (
     DownloadTransport,
     DownloadTransportPolicy,
     NetworkOrigin,
+    SecretHeaderProvider,
 )
 from app.settings import Settings, load_settings
 from app.single_instance import WindowsMutexGuard
@@ -184,6 +185,7 @@ def isolated_preview_composition(
         data_root_identity: DataRootIdentity,
         storage_gate: SharedStorageGate,
         disk_budget_manager: DiskBudgetManager,
+        secret_header_provider: SecretHeaderProvider | None = None,
     ) -> DownloadTransport:
         if policy.allowed_origins != expected_origins:
             raise RuntimeError("The preview download allowlist is not the exact fixture origin.")
@@ -197,6 +199,7 @@ def isolated_preview_composition(
             data_root_identity=data_root_identity,
             storage_gate=storage_gate,
             disk_budget_manager=disk_budget_manager,
+            secret_header_provider=secret_header_provider,
             test_transport=injected_transport,
         )
 

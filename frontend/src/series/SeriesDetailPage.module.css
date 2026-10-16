@@ -7,8 +7,8 @@
   padding: clamp(1rem, 3vw, 2rem);
   border-radius: 1.25rem;
   border: 1px solid var(--panel-border);
-  box-shadow: var(--panel-shadow);
-  background: var(--background);
+  background: #0e0c13;
+  --accent: #b6a0e0; --accent-hover: #c8b5ee;
 }
 
 .pageHeader {
@@ -92,8 +92,7 @@
   padding: clamp(1rem, 3vw, 2rem);
   border: 1px solid var(--panel-border);
   border-radius: 1rem;
-  background: linear-gradient(145deg, #131c29d9, #0e1622f5 65%);
-  box-shadow: var(--panel-shadow);
+  background: #15121c;
 }
 
 .cover {
@@ -108,6 +107,13 @@
   gap: 1.5rem;
   min-width: 0;
 }
+
+.onlineControl { display: grid; gap: 0.5rem; color: var(--text-secondary); }
+.onlineControl select, .onlineControl input { min-height: 2.75rem; min-width: 0; padding: 0.6rem; border: 1px solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface); color: var(--text); font: inherit; }
+.onlineTools { display: flex; flex-wrap: wrap; align-items: end; gap: 0.75rem; }
+.onlineTools .onlineControl { flex: 1; min-width: 10rem; }
+.onlineList { max-height: 25rem; overflow-y: auto; scrollbar-color: var(--border-strong) transparent; }
+[aria-label="Capítulos online"] .chapterItem { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 
 .provenance {
   display: grid;
@@ -131,7 +137,7 @@
 .provenance[open] summary { margin-bottom: 0.75rem; border-bottom: 1px solid var(--border-color); }
 .primaryButton { display: inline-flex; align-items: center; justify-content: center; justify-self: start; min-height: 2.75rem; padding: 0.75rem 1.1rem; border-radius: var(--radius-control); background: var(--accent); color: var(--background); font-weight: 700; text-decoration: none; }
 .primaryButton:hover { background: var(--accent-hover); }
-.chapterLink[aria-current="page"] { border-color: var(--accent); background: #75d5ff12; }
+.chapterLink[aria-current="page"] { border-color: var(--accent); background: #b6a0e012; }
 
 .description h2 {
   margin: 0 0 0.5rem;
@@ -390,7 +396,7 @@
 
 .chapterLink {
   display: flex;
-  min-height: 3.25rem;
+  min-height: 2.75rem;
   align-items: center;
   gap: 0.75rem;
   padding: 0.7rem 0.8rem;
@@ -399,7 +405,7 @@
   background: var(--surface-soft);
   color: var(--text);
   text-decoration: none;
-  box-shadow: inset 0 1px 0 #d8efff06;
+
   transition: border-color 160ms ease, background 160ms ease;
 }
 
@@ -407,7 +413,7 @@
   border-color: var(--accent);
   background: var(--surface-hover);
 }
-.chapterLink[aria-current="page"] .chapterMark { border-color: var(--accent); background: #75d5ff22; }
+.chapterLink[aria-current="page"] .chapterMark { border-color: var(--accent); background: #b6a0e022; }
 
 .chapterMark {
   flex: 0 0 auto;
@@ -650,3 +656,26 @@
   flex-wrap: wrap;
   gap: 0.65rem;
 }
+
+.backLink { color: var(--text-secondary); text-decoration: none; font-size: 0.85rem; justify-self: start; padding: 0.5rem 0; }
+.backLink:hover { color: var(--accent); }
+.seriesFacts { margin: 0.5rem 0; color: var(--text-secondary); font-size: 0.85rem; }
+.pageHeader { align-items: start; padding-bottom: 0; border: 0; }
+.pageHeader h1 { font-size: clamp(1.6rem, 3.5vw, 2.6rem); }
+.contextMenu { position: relative; flex-shrink: 0; }
+.contextMenu > summary { display: flex; justify-content: center; align-items: center; width: 2.75rem; height: 2.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; list-style: none; cursor: pointer; color: var(--text); font-size: 1.5rem; }
+.contextMenu > summary::-webkit-details-marker { display: none; }
+.menuContent { position: absolute; right: 0; top: 3rem; z-index: 10; display: grid; gap: 0.4rem; width: min(20rem, 70vw); padding: 0.65rem; border: 1px solid var(--border-strong); border-radius: 0.75rem; background: #1c1726; box-shadow: 0 8px 24px #0005; }
+.contextMenu:not([open]) .menuContent { display: none; }
+.menuContent .secondaryButton { justify-content: start; text-align: left; font-size: 0.85rem; font-weight: 500; }
+.chapterState { color: var(--accent); font-size: 0.75rem; }
+.chapterList { gap: 0.25rem; }
+.chapterLink { border-color: transparent; background: #ffffff03; padding: 0.5rem 0.65rem; }
+.chapterItem { min-height: 2.75rem; border-bottom: 1px solid #ffffff08; }
+.secondaryButton { font-size: 0.85rem; font-weight: 500; background: #ffffff06; }
+.selectionBar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.65rem; border: 1px solid #b6a0e04d; border-radius: 0.6rem; background: #b6a0e00d; }
+.chapterSelect { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
+.chapterSelect input { width: 1.1rem; height: 1.1rem; accent-color: var(--accent); flex-shrink: 0; }
+:where(.contextMenu summary, .backLink, .onlineControl input, .onlineControl select, .chapterSelect input):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 639px) { .pageHeader { flex-direction: row; } .menuContent { width: min(18rem, 75vw); } .chapterPageCount { font-size: 0.72rem; } }
+@media (prefers-reduced-motion: reduce) { .chapterLink { transition: none; } }

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Protocol
@@ -30,16 +31,20 @@ class ReaderProgressService:
     database: SQLiteDatabase
     chapters: ReaderChapterLookup
     repository: ReaderProgressRepository
+    page_available: Callable[[UUID, int], bool] | None
 
     def __init__(
         self,
         database: SQLiteDatabase,
         chapters: ReaderChapterLookup,
         repository: ReaderProgressRepository | None = None,
+        *,
+        page_available: Callable[[UUID, int], bool] | None = None,
     ) -> None:
         self.database = database
         self.chapters = chapters
         self.repository = repository or ReaderProgressRepository()
+        self.page_available = page_available
 
     def get(self, chapter_id: UUID) -> ReaderProgress | None:
         chapter = self._get_available_chapter(chapter_id)
@@ -58,6 +63,8 @@ class ReaderProgressService:
     def save(self, chapter_id: UUID, page_index: int) -> ReaderProgress:
         chapter = self._get_available_chapter(chapter_id)
         if type(page_index) is not int or not 0 <= page_index < chapter.page_count:
+            raise ReaderProgressPageOutOfRange
+        if self.page_available is not None and not self.page_available(chapter_id, page_index):
             raise ReaderProgressPageOutOfRange
 
         if chapter.page_count == 1:
