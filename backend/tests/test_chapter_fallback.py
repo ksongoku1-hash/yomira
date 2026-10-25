@@ -1,9 +1,10 @@
 import asyncio
 import base64
 import json
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from uuid import UUID
 
 import httpx
 import pytest
@@ -12,17 +13,23 @@ from support.cbz import index_test_job
 from support.sqlite import open_test_database
 
 from app.connectors.fmd2 import FMD2_API_ORIGIN, Fmd2Connector
+from app.connectors.registry import ConnectorRegistration, ConnectorRegistry
+from app.connectors.sandbox import ConnectorHostContext
+from app.domain.chapter import chapter_number
 from app.domain.download_job import DownloadJobStatus
 from app.errors import ErrorCode
 from app.fmd2_bridge import FMD2_METADATA, FMD2_PUBLIC_SOURCES, fmd2_chapter_location
+from app.persistence.database import SQLiteDatabase
 from app.persistence.migrations.runner import MigrationRunner
 from app.persistence.models.chapter import ChapterRow
 from app.persistence.models.chapter_source import ChapterSourceRow
 from app.persistence.models.download_job import DownloadJobRow
 from app.persistence.models.series import SeriesRow
-from app.services.chapter_fallback import ChapterFallbackService, _chapter_number
+from app.secrets.vault import WindowsDpapiSecretVault
+from app.services.chapter_fallback import ChapterFallbackService
+from app.services.download_dispatcher import DownloadDispatcher
 from app.services.download_worker import DownloadWorkerResult
-from app.services.jobs import DownloadJobService
+from app.services.jobs import DownloadJobService, DownloadJobSummary
 
 TMO = "9185eb6c49324a849c7d7925a41ef3a3"
 INMANGA = "03ae42ac9141443fa0711bd401c0203d"
@@ -52,16 +59,37 @@ def reference(source: str, path: str = "/naruto") -> str:
         ("Capítulo 2.5a", None),
     ],
 )
-def test_chapter_number_does_not_guess_specials(label, expected):
-    number = _chapter_number(label)
+def test_chapter_number_does_not_guess_specials(label: str, expected: str | None) -> None:
+    number = chapter_number(label)
     assert (str(number) if number is not None else None) == expected
 
 
-async def setup(data_root: Path, *, options=None):
+def fixture_registry(data_root: Path, connector: Fmd2Connector) -> ConnectorRegistry:
+    def create_connector(_context: ConnectorHostContext) -> Fmd2Connector:
+        return connector
+
+    return ConnectorRegistry(
+        context=ConnectorHostContext(secret_vault=WindowsDpapiSecretVault(data_root)),
+        registrations=(ConnectorRegistration(FMD2_METADATA, create_connector),),
+    )
+
+
+async def setup(
+    data_root: Path, *, options: Mapping[str, bool] | None = None
+) -> tuple[
+    SQLiteDatabase,
+    httpx.AsyncClient,
+    Fmd2Connector,
+    DownloadJobService,
+    ChapterFallbackService,
+    DownloadJobSummary,
+    DownloadWorkerResult,
+    list[str],
+]:
     options = options or {}
     database = open_test_database(data_root)
     MigrationRunner(database, data_root / "backups").upgrade_to_head()
-    calls = []
+    calls: list[str] = []
     results = [
         {
             "source_id": site,
@@ -83,7 +111,7 @@ async def setup(data_root: Path, *, options=None):
     if options.get("different_title"):
         results[1]["title"] = "Naruto Full Color"
 
-    def handler(request):
+    def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.url.path)
         if request.url.path == "/v1/search":
             return httpx.Response(200, json={"data": results})
@@ -135,10 +163,11 @@ async def setup(data_root: Path, *, options=None):
         headers={"Authorization": "Bearer " + "a" * 64},
     )
     connector = Fmd2Connector(data_root / "fmd.exe", data_root / "staging", api_client=client)
-    registry = SimpleNamespace(resolve=lambda connector_id: connector)
+    registry = fixture_registry(data_root, connector)
     service = DownloadJobService(database)
     metadata = connector.normalize_metadata(await connector.get_series(reference(TMO)))
     chapters = await connector.get_chapters(reference(TMO))
+    assert chapters[0].remote_id is not None
     summary = service.create_selected_jobs(
         connector=FMD2_METADATA,
         remote_series_id=reference(TMO),
@@ -147,7 +176,9 @@ async def setup(data_root: Path, *, options=None):
         selected_remote_ids=(chapters[0].remote_id,),
     )[0]
     with database.write_session() as session:
-        session.get(DownloadJobRow, str(summary.job.job_id)).status = "FAILED"
+        row = session.get(DownloadJobRow, str(summary.job.job_id))
+        assert row is not None
+        row.status = "FAILED"
     result = DownloadWorkerResult(
         replace(summary.job, status=DownloadJobStatus.FAILED),
         summary.series_id,
@@ -163,8 +194,10 @@ async def setup(data_root: Path, *, options=None):
     return database, client, connector, service, fallback, summary, result, calls
 
 
-def test_fallback_keeps_canonical_chapter_and_durable_attempts_across_restart(tmp_path):
-    async def exercise():
+def test_fallback_keeps_canonical_chapter_and_durable_attempts_across_restart(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
         database, client, connector, service, fallback, summary, result, _ = await setup(tmp_path)
         try:
             assert await fallback.recover(result)
@@ -179,21 +212,29 @@ def test_fallback_keeps_canonical_chapter_and_durable_attempts_across_restart(tm
             availability = service.chapter_availability(FMD2_METADATA.connector_id, reference(TMO))
             with database.read_session() as session:
                 original = session.get(ChapterSourceRow, str(summary.job.chapter_source_id))
-                assert original.remote_id in availability["busy_remote_ids"]
+                assert original is not None
+                busy_remote_ids = availability["busy_remote_ids"]
+                assert isinstance(busy_remote_ids, list)
+                assert original.remote_id in busy_remote_ids
             assert service.list_jobs(archived=True).items[0].job.job_id == result.job.job_id
             assert not await fallback.recover(result)
             with database.read_session() as session:
                 assert session.scalar(select(func.count()).select_from(ChapterRow)) == 1
                 assert session.scalar(select(func.count()).select_from(SeriesRow)) == 1
-                remote = session.get(
+                source_row = session.get(
                     ChapterSourceRow, str(replacement.job.chapter_source_id)
-                ).remote_id
+                )
+                assert source_row is not None and source_row.remote_id is not None
+                remote = source_row.remote_id
             assert fmd2_chapter_location(remote)[1] == INMANGA
 
             # A provider changes its ordinal, but the physical source was already attempted.
             with database.write_session() as session:
-                session.get(DownloadJobRow, str(replacement.job.job_id)).status = "FAILED"
+                job_row = session.get(DownloadJobRow, str(replacement.job.job_id))
+                assert job_row is not None
+                job_row.status = "FAILED"
                 row = session.get(ChapterSourceRow, str(replacement.job.chapter_source_id))
+                assert row is not None and row.remote_id is not None
                 token = row.remote_id.split(":", 2)[2]
                 payload = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
                 payload = payload[:3] + [99]
@@ -201,22 +242,28 @@ def test_fallback_keeps_canonical_chapter_and_durable_attempts_across_restart(tm
                     json.dumps(payload).encode()
                 ).decode().rstrip("=")
             restarted = ChapterFallbackService(
-                database, SimpleNamespace(resolve=lambda _: connector)
+                database, fixture_registry(tmp_path, connector)
             )
             failed = replace(result, job=replace(replacement.job, status=DownloadJobStatus.FAILED))
             assert await restarted.recover(failed)
             newest = service.list_jobs().items[0]
             with database.read_session() as session:
-                remote = session.get(ChapterSourceRow, str(newest.job.chapter_source_id)).remote_id
+                source_row = session.get(ChapterSourceRow, str(newest.job.chapter_source_id))
+                assert source_row is not None and source_row.remote_id is not None
+                remote = source_row.remote_id
             assert fmd2_chapter_location(remote)[1] == NOVEL
             with database.write_session() as session:
-                session.get(DownloadJobRow, str(newest.job.job_id)).status = "FAILED"
+                job_row = session.get(DownloadJobRow, str(newest.job.job_id))
+                assert job_row is not None
+                job_row.status = "FAILED"
             assert await restarted.recover(
                 replace(failed, job=replace(newest.job, status=DownloadJobStatus.FAILED))
             )
             last = service.list_jobs().items[0]
             with database.write_session() as session:
-                session.get(DownloadJobRow, str(last.job.job_id)).status = "FAILED"
+                job_row = session.get(DownloadJobRow, str(last.job.job_id))
+                assert job_row is not None
+                job_row.status = "FAILED"
             assert not await restarted.recover(
                 replace(failed, job=replace(last.job, status=DownloadJobStatus.FAILED))
             )
@@ -238,8 +285,10 @@ def test_fallback_keeps_canonical_chapter_and_durable_attempts_across_restart(tm
         "duplicate_chapter",
     ],
 )
-def test_fallback_rejects_unsafe_candidate_and_moves_to_next_source(tmp_path, option):
-    async def exercise():
+def test_fallback_rejects_unsafe_candidate_and_moves_to_next_source(
+    tmp_path: Path, option: str
+) -> None:
+    async def exercise() -> None:
         database, client, _, service, fallback, _, result, _ = await setup(
             tmp_path, options={option: True}
         )
@@ -247,7 +296,9 @@ def test_fallback_rejects_unsafe_candidate_and_moves_to_next_source(tmp_path, op
             assert await fallback.recover(result)
             job = service.list_jobs().items[0].job
             with database.read_session() as session:
-                remote = session.get(ChapterSourceRow, str(job.chapter_source_id)).remote_id
+                source_row = session.get(ChapterSourceRow, str(job.chapter_source_id))
+                assert source_row is not None and source_row.remote_id is not None
+                remote = source_row.remote_id
             assert fmd2_chapter_location(remote)[1] == NOVEL
         finally:
             await client.aclose()
@@ -259,8 +310,8 @@ def test_fallback_rejects_unsafe_candidate_and_moves_to_next_source(tmp_path, op
 @pytest.mark.parametrize(
     "state", ["cancelled", "archived", "busy", "completed", "disk", "special", "other_series"]
 )
-def test_fallback_preserves_user_actions_and_storage_failures(tmp_path, state):
-    async def exercise():
+def test_fallback_preserves_user_actions_and_storage_failures(tmp_path: Path, state: str) -> None:
+    async def exercise() -> None:
         database, client, connector, service, fallback, summary, result, calls = await setup(
             tmp_path
         )
@@ -279,6 +330,7 @@ def test_fallback_preserves_user_actions_and_storage_failures(tmp_path, state):
             else:
                 with database.write_session() as session:
                     row = session.get(DownloadJobRow, str(result.job.job_id))
+                    assert row is not None
                     if state == "cancelled":
                         row.cancel_requested_at_us = row.updated_at_us
                     elif state == "busy":
@@ -286,9 +338,9 @@ def test_fallback_preserves_user_actions_and_storage_failures(tmp_path, state):
                     elif state == "completed":
                         row.status = "COMPLETED"
                     elif state == "special":
-                        session.get(
-                            ChapterRow, str(summary.chapter_id)
-                        ).display_label = "Capítulo 2.5 Extra"
+                        chapter_row = session.get(ChapterRow, str(summary.chapter_id))
+                        assert chapter_row is not None
+                        chapter_row.display_label = "Capítulo 2.5 Extra"
                 if state == "archived":
                     service.archive_job(result.job.job_id)
                 if state == "disk":
@@ -299,7 +351,9 @@ def test_fallback_preserves_user_actions_and_storage_failures(tmp_path, state):
                 assert recovered
                 job = service.list_jobs().items[0].job
                 with database.read_session() as session:
-                    remote = session.get(ChapterSourceRow, str(job.chapter_source_id)).remote_id
+                    source_row = session.get(ChapterSourceRow, str(job.chapter_source_id))
+                    assert source_row is not None and source_row.remote_id is not None
+                    remote = source_row.remote_id
                 assert fmd2_chapter_location(remote)[1] == NOVEL
             else:
                 assert not recovered
@@ -311,20 +365,25 @@ def test_fallback_preserves_user_actions_and_storage_failures(tmp_path, state):
     asyncio.run(exercise())
 
 
-def test_dispatcher_enqueues_alternative_before_advancing_and_reports_search(tmp_path):
-    async def exercise():
-        from app.services.download_dispatcher import DownloadDispatcher
+def test_dispatcher_enqueues_alternative_before_advancing_and_reports_search(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
         from app.services.job_recovery import RecoveryCoordinator
 
         database, client, _, service, fallback, summary, result, _ = await setup(tmp_path)
         try:
 
             class Runner:
-                async def run_job(self, job_id):
+                async def run_job(self, job_id: UUID) -> DownloadWorkerResult:
                     assert job_id == result.job.job_id
                     return result
 
-            dispatcher = DownloadDispatcher(
+            class ManualDispatcher(DownloadDispatcher):
+                async def run_one(self, job_id: UUID) -> None:
+                    await self._run_one(job_id)
+
+            dispatcher = ManualDispatcher(
                 database=database,
                 worker=Runner(),
                 chapter_fallback=fallback,
@@ -334,13 +393,13 @@ def test_dispatcher_enqueues_alternative_before_advancing_and_reports_search(tmp
             proceed = asyncio.Event()
             original = fallback.recover
 
-            async def hold(result):
+            async def hold(result: DownloadWorkerResult) -> bool:
                 recovered.set()
                 await proceed.wait()
                 return await original(result)
 
             fallback.recover = hold
-            task = asyncio.create_task(dispatcher._run_one(summary.job.job_id))
+            task = asyncio.create_task(dispatcher.run_one(summary.job.job_id))
             await recovered.wait()
             assert dispatcher.recovering_job_id == summary.job.job_id
             proceed.set()
@@ -355,8 +414,8 @@ def test_dispatcher_enqueues_alternative_before_advancing_and_reports_search(tmp
     asyncio.run(exercise())
 
 
-def test_fallback_accepts_the_same_author_with_reversed_name_order(tmp_path):
-    async def exercise():
+def test_fallback_accepts_the_same_author_with_reversed_name_order(tmp_path: Path) -> None:
+    async def exercise() -> None:
         database, client, _, service, fallback, _, result, _ = await setup(
             tmp_path,
             options={"reordered_author": True},
@@ -365,7 +424,9 @@ def test_fallback_accepts_the_same_author_with_reversed_name_order(tmp_path):
             assert await fallback.recover(result)
             job = service.list_jobs().items[0].job
             with database.read_session() as session:
-                remote = session.get(ChapterSourceRow, str(job.chapter_source_id)).remote_id
+                source_row = session.get(ChapterSourceRow, str(job.chapter_source_id))
+                assert source_row is not None and source_row.remote_id is not None
+                remote = source_row.remote_id
             assert fmd2_chapter_location(remote)[1] == INMANGA
         finally:
             await client.aclose()
@@ -374,15 +435,19 @@ def test_fallback_accepts_the_same_author_with_reversed_name_order(tmp_path):
     asyncio.run(exercise())
 
 
-def test_retrying_original_source_reuses_the_alternate_attempt_without_duplicates(tmp_path):
-    async def exercise():
+def test_retrying_original_source_reuses_the_alternate_attempt_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
         database, client, connector, service, fallback, _, result, _ = await setup(tmp_path)
         try:
             assert await fallback.recover(result)
             alternative = service.list_jobs().items[0]
             retried = service.retry_job(result.job.job_id)
+            assert retried is not None
             assert retried.job.job_id == alternative.job.job_id and not retried.created
             chapters = await connector.get_chapters(reference(TMO))
+            assert chapters[0].remote_id is not None
             repeated = service.create_selected_jobs(
                 connector=FMD2_METADATA,
                 remote_series_id=reference(TMO),
@@ -394,9 +459,12 @@ def test_retrying_original_source_reuses_the_alternate_attempt_without_duplicate
             )[0]
             assert repeated.job.job_id == alternative.job.job_id and not repeated.created
             with database.write_session() as session:
-                session.get(DownloadJobRow, str(alternative.job.job_id)).status = "COMPLETED"
+                job_row = session.get(DownloadJobRow, str(alternative.job.job_id))
+                assert job_row is not None
+                job_row.status = "COMPLETED"
             index_test_job(database, alternative.job.job_id)
             retried = service.retry_job(result.job.job_id)
+            assert retried is not None
             assert retried.job.job_id == alternative.job.job_id
             assert retried.job.status is DownloadJobStatus.COMPLETED
             with database.read_session() as session:

@@ -1,0 +1,13 @@
+YOMIRA — INICIO EDITABLE
+
+Abre «Yomira - Inicio editable.html» con doble clic para ver la maqueta.
+Para cambiarla, abre ese mismo archivo con tu editor o pásaselo a la IA que uses.
+El CSS está dentro del HTML, separado en bloques A, B, C y D.
+El contenido HTML tiene secciones numeradas para facilitar el rediseño.
+
+Mantén la carpeta assets al lado del HTML si quieres ver las portadas.
+Puedes devolverme únicamente el HTML rediseñado; las portadas ya están guardadas.
+Si agregas imágenes nuevas, incluye también esos archivos al devolver el diseño.
+
+Esta maqueta usa datos de ejemplo y botones de demostración.
+No modifica la aplicación, las descargas ni tu progreso de lectura.

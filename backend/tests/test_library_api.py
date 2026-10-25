@@ -33,6 +33,23 @@ from app.settings import Settings
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
 
 
+def test_library_search_and_global_order_are_bounded_and_validated(tmp_path: Path) -> None:
+    target_app, database, library = _configured_app(tmp_path)
+    try:
+        for title in ("Zulu", "Bravo", "Alfa"):
+            library.add_series(Series.new_local(title, title, now=NOW))
+        response = get("/api/v1/library?limit=1&offset=1&q=a&sort=title", target_app)
+        assert response.status_code == 200, response.text
+        assert [item["display_title"] for item in response.json()["data"]] == ["Bravo"]
+        assert response.json()["meta"] == {"limit": 1, "offset": 1, "total": 2}
+        for invalid in ("sort=unknown", "q=" + "a" * 201):
+            error = get("/api/v1/library?" + invalid, target_app)
+            assert error.status_code == 422
+            assert error.json()["error"]["trace_id"] == error.headers["x-trace-id"]
+    finally:
+        database.close()
+
+
 def test_folder_open_has_fixed_targets_and_a_readable_error(tmp_path: Path) -> None:
     app, database, _library = _configured_app(tmp_path)
     service = Mock(spec=LocalImportService)

@@ -4,8 +4,8 @@ import time
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from typing import cast
-from uuid import uuid4
+from typing import Never, cast
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -38,6 +38,14 @@ from app.services.library import LibraryService
 from app.services.local_import import LocalImportService
 from app.services.metadata import MetadataService
 from app.services.reader_asset import ReaderAssetLimits, ReaderAssetService
+
+
+class _TestLocalImportService(LocalImportService):
+    async def fill_metadata(self, series_id: UUID) -> None:
+        await self._fill_metadata(series_id)
+
+    def fingerprint(self, path: Path) -> tuple[tuple[str, int, int, int], ...]:
+        return self._fingerprint(path)
 
 
 def _image(color: str) -> bytes:
@@ -136,8 +144,8 @@ def _fixture(tmp_path: Path):
         disk_budget_manager=disk,
     )
 
-    def importer_factory(additional_roots: tuple[Path, ...] = ()) -> LocalImportService:
-        return LocalImportService(
+    def importer_factory(additional_roots: tuple[Path, ...] = ()) -> _TestLocalImportService:
+        return _TestLocalImportService(
             database=database,
             library_root=identity,
             builder=builder,
@@ -202,19 +210,20 @@ def test_folder_status_and_open_reject_a_replaced_library(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The shared fixture normally identifies folders by path; this check needs inode identity.
-    monkeypatch.setattr(
-        "app.persistence.windows_paths._get_file_id_info",
-        lambda path: (0x594F4D495241, Path(path).stat().st_ino.to_bytes(16, "little")),
-    )
+    def file_identity(path: Path) -> tuple[int, bytes]:
+        return 0x594F4D495241, path.stat().st_ino.to_bytes(16, "little")
+
+    monkeypatch.setattr("app.persistence.windows_paths._get_file_id_info", file_identity)
     database, root, _reader, covers, http, importer_factory = _fixture(tmp_path)
     importer = importer_factory()
-    opened = []
-    monkeypatch.setattr(
-        "app.services.local_import.os.startfile",
-        lambda path, operation: opened.append((Path(path), operation)),
-    )
+    opened: list[tuple[Path, str]] = []
+
+    def open_folder(path: str, operation: str) -> None:
+        opened.append((Path(path), operation))
+
+    monkeypatch.setattr("app.services.local_import.os.startfile", open_folder)
     try:
-        folders = importer.status()["folders"]
+        folders = cast(list[dict[str, object]], importer.status()["folders"])
         assert [folder["kind"] for folder in folders] == ["library", "inbox", "downloads"]
         assert all(folder["problem"] is None for folder in folders)
         importer.open_folder("inbox")
@@ -227,7 +236,10 @@ def test_folder_status_and_open_reject_a_replaced_library(
         moved = tmp_path / "library-moved"
         root.rename(moved)
         root.mkdir()
-        assert all(folder["problem"] for folder in importer.status()["folders"])
+        assert all(
+            folder["problem"]
+            for folder in cast(list[dict[str, object]], importer.status()["folders"])
+        )
         with pytest.raises(OSError):
             importer.open_folder("library")
         assert len(opened) == 2
@@ -243,7 +255,7 @@ def test_folder_setup_remains_readable_when_storage_writes_are_blocked(tmp_path:
     try:
         database.storage_gate.close("FILESYSTEM_DISK_FULL")
         importer = importer_factory()
-        folders = importer.status()["folders"]
+        folders = cast(list[dict[str, object]], importer.status()["folders"])
         assert folders[0]["problem"] is None
         assert all(folder["problem"] for folder in folders[1:])
         assert not list(root.iterdir())
@@ -321,7 +333,7 @@ def test_metadata_lookup_finishes_or_stops_after_three_failures(
     original_lookup = covers.ensure_cover
     calls = 0
 
-    async def unresolved(_series_id):
+    async def unresolved(_series_id: UUID) -> bool:
         nonlocal calls
         calls += 1
         if unavailable:
@@ -336,8 +348,8 @@ def test_metadata_lookup_finishes_or_stops_after_three_failures(
         series_id = LibraryService(database).list_series(limit=1, offset=0).items[0].series_id
         if unavailable:
             assert importer.status()["pending_metadata"] == 1
-            await importer._fill_metadata(series_id)
-            await importer._fill_metadata(series_id)
+            await importer.fill_metadata(series_id)
+            await importer.fill_metadata(series_id)
         assert calls == (3 if unavailable else 1)
         assert importer.status()["pending_metadata"] == 0
         assert importer.status()["metadata_review"] == 1
@@ -410,7 +422,7 @@ def test_rejected_original_links_only_one_available_copy(tmp_path: Path, copy_st
         if copy_state == "missing":
             for archive in (root / "chapters").rglob("*.cbz"):
                 archive.unlink()
-        errors = importer.status()["errors"]
+        errors = cast(list[dict[str, str]], importer.status()["errors"])
         assert len(errors) == 1
         assert errors[0].get("chapter_id") == (str(chapter_id) if copy_state == "ready" else None)
         assert broken.read_bytes() == b"incomplete original"
@@ -573,7 +585,7 @@ def test_original_download_roots_join_existing_series_and_keep_originals(
         assert len(list((root / "chapters").rglob("*.cbz"))) == 1
         with monkeypatch.context() as context:
 
-            def unexpected_decode(*args, **kwargs):
+            def unexpected_decode(*args: object, **kwargs: object) -> Never:
                 raise AssertionError("Unchanged original must use the verified import record")
 
             context.setattr("app.services.local_import.validate_image_file", unexpected_decode)
@@ -592,7 +604,7 @@ def test_original_download_roots_join_existing_series_and_keep_originals(
         outside = tmp_path / "outside.epub"
         outside.write_bytes(before)
         with pytest.raises(ValueError, match="fuera"):
-            importer._fingerprint(outside)
+            importer.fingerprint(outside)
         await covers.close()
         await http.close()
 

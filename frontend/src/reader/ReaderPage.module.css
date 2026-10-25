@@ -94,6 +94,8 @@
   gap: 0.5rem;
 }
 
+.selectionSummary { flex-basis: 100%; margin: 0; color: var(--text-secondary); font-size: 0.85rem; line-height: 1.5; }
+
 .zoomValue {
   min-width: 3.5rem;
   color: var(--text-secondary);
@@ -459,17 +461,15 @@
 .page {
   position: relative; display: flex; flex-direction: column; gap: 0;
   width: 100%; height: 100dvh; min-height: 22rem; margin: 0;
-  overflow: hidden; background: #0b0a10;
-  --accent: #b6a0e0; --accent-hover: #c8b5ee;
+  overflow: hidden; background: #080c13;
 }
 .readerChrome {
   position: absolute; inset: 0; z-index: 5; pointer-events: none;
   transition: opacity 160ms ease;
 }
-.pageHeader { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 4rem; padding: 0.5rem 1rem; background: #14111bea; border-bottom: 1px solid #ffffff12; pointer-events: auto; }
+.pageHeader { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 4rem; padding: 0.5rem 1rem; background: #080c13f5; border-bottom: 1px solid var(--panel-border); pointer-events: auto; }
 .pageHeader > div { min-width: 0; }
 .pageHeader h1 { margin-top: 0.25rem; font-size: clamp(1rem, 2vw, 1.2rem); }
-.readingStatus { margin: 0.25rem 0 0; color: var(--text-secondary); font-size: 0.72rem; }
 .eyebrow { display: inline; margin: 0 0 0 0.8rem; font-size: 0.7rem; letter-spacing: 0.02em; text-transform: none; }
 .textLink { font-size: 0.8rem; }
 .headerActions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
@@ -482,8 +482,8 @@
 .secondaryButton { padding: 0.5rem 0.75rem; font-size: 0.82rem; }
 .modeControls { align-items: center; flex-wrap: nowrap; gap: 0.3rem; }
 .modeControls button { padding-inline: 0.65rem; }
-.controls { gap: 0.4rem; padding: 0; border: 0; background: transparent; grid-template-columns: auto auto auto; justify-content: end; }
-.pageNumber { color: var(--accent); }
+.controls { gap: 0.4rem; padding: 0; border: 0; background: transparent; grid-template-columns: auto auto auto; justify-content: center; }
+.pageNumber { color: var(--text-secondary); }
 .readerChrome > .progressMessage, .readerChrome > .settingsMessage:not([role="alert"]) {
   grid-column: 1 / -1; padding: 0; border: 0; background: transparent; font-size: 0.72rem;
 }
@@ -512,7 +512,7 @@
 .thumbnail img { display: block; max-width: 100%; height: 6rem; object-fit: contain; }
 .thumbnail:hover { border-color: var(--accent); }
 .readerCanvas, .verticalViewport {
-  flex: 1; min-height: 0; height: auto; width: 100%; border: 0; border-radius: 0; background: #0b0a10;
+  flex: 1; min-height: 0; height: auto; width: 100%; border: 0; border-radius: 0; background: #080c13;
 }
 .readerCanvas { display: flex; align-items: flex-start; padding: calc(var(--reader-top, 72px) + 8px) 0.75rem calc(var(--reader-bottom, 64px) + 8px); overscroll-behavior: contain; scrollbar-gutter: stable; }
 .readerCanvas > .statusMessage, .readerCanvas > .pageError { margin-inline: auto; }
@@ -543,7 +543,6 @@
 .ereaderProfile .primaryButton { background: #111; color: #fff; }
 .page.ereaderProfile { background: #fff; color: #111; }
 .ereaderProfile .chapterEnd span, .ereaderProfile .shortcuts { color: #111; }
-.ereaderProfile .readingStatus { color: #111; }
 .ereaderProfile .readerChrome > .progressMessage { background: #fff; color: #111; }
 .ereaderProfile .navigator input { background: #fff; border-color: #111; color: #111; }
 .verticalViewport { touch-action: pan-x pan-y pinch-zoom; }
@@ -562,8 +561,8 @@
 }
 @media (prefers-reduced-motion: reduce) { .readerChrome { transition: none; } }
 
-.bottomBar { position: absolute; bottom: 0; left: 0; right: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.6rem; padding: 0.5rem 1rem max(0.5rem, env(safe-area-inset-bottom)); border-top: 1px solid #ffffff12; background: #14111bea; pointer-events: auto; }
-.progressSlider { width: min(18rem, 25vw); min-height: 2rem; accent-color: var(--accent); cursor: pointer; }
+.bottomBar { position: absolute; bottom: 0; left: 0; right: 0; display: grid; align-items: center; gap: 0; padding: 0 1.5rem max(0.5rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--panel-border); background: #080c13f5; pointer-events: auto; }
+.progressSlider { grid-row: 1; width: 100%; min-height: 2.75rem; accent-color: var(--accent); cursor: pointer; }
 .navigator { top: auto; bottom: calc(var(--reader-bottom, 64px) + 8px); left: 0.75rem; width: auto; }
 .panelHeading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 1rem; }
 .panelHeading h2 { margin: 0; font-size: 1rem; }
@@ -572,11 +571,11 @@
 .preferenceFields select { width: 100%; padding: 0.65rem; border: 1px solid var(--border-strong); border-radius: 0.5rem; background: var(--surface-soft); color: var(--text); font: inherit; }
 .preferenceFields input { accent-color: var(--accent); width: 1.1rem; height: 1.1rem; }
 .modeControls { flex-wrap: wrap; margin-bottom: 1rem; }
-.modeControls button[aria-pressed="true"] { background: #b6a0e01a; }
+.modeControls button[aria-pressed="true"] { background: #75d5ff1a; }
 .readerTools button[aria-pressed="true"] { border-color: var(--accent); }
 .readerChrome > .progressFailure, .readerChrome > .settingsMessage { position: absolute; top: calc(var(--reader-top, 72px) + 8px); left: 1rem; right: 1rem; pointer-events: auto; z-index: 8; background: var(--surface); }
 .readerChrome > .settingsMessage { right: auto; padding: 0.5rem 0.75rem; max-width: calc(100% - 2rem); }
-.readerChrome > .progressMessage { background: #14111bea; }
+.readerChrome > .progressMessage { background: #080c13f5; }
 .compact .secondaryButton { min-height: 2.5rem; padding: 0.4rem 0.65rem; font-size: 0.78rem; }
 .secondaryButton { background: #ffffff08; border-color: #ffffff20; font-weight: 500; }
 .ereaderProfile .bottomBar, .ereaderProfile .pageHeader, .ereaderProfile .preferenceFields select { background: #fff; color: #111; border-color: #111; }
@@ -588,10 +587,207 @@
   .compact .headerActions button { min-height: 2.5rem; font-size: 0.7rem; padding: 0.25rem 0.4rem; }
   .bottomBar { gap: 0.25rem; padding: 0.35rem; }
   .bottomBar > .controls { flex: 1; }
-  .progressSlider { width: 100%; min-height: 1.5rem; }
+  .progressSlider { width: 100%; min-height: 2.75rem; }
 }
 
 .chapterEnd { margin-bottom: calc(var(--reader-bottom, 64px) + 8px); }
 .chapterFinished .readerCanvas { padding-bottom: 0.5rem; }
 .chapterFinished .verticalViewport { margin-bottom: 0.5rem; }
 .ereaderProfile .modeControls button[aria-pressed="true"] { background: #111; color: #fff; }
+
+.pageHeader { min-height: 4.5rem; flex-wrap: nowrap; }
+.readerIdentity { display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 0; }
+.readerTitle { min-width: 0; flex: 1; }
+.readerTitle .eyebrow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.readerTitle .eyebrow { display: block; margin: 0; color: var(--text-secondary); }
+.readerTitle h1 { margin: 0; font-size: 1rem; }
+.headerActions { align-items: center; flex-wrap: nowrap; flex-shrink: 0; }
+.toolbarButton, .pageNavigation, .primaryButton { gap: 0.5rem; text-decoration: none; }
+.secondaryButton, .primaryButton { transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease; }
+.secondaryButton svg, .primaryButton svg, .readerIdentity svg { flex-shrink: 0; }
+.iconButton { width: 2.75rem; min-width: 2.75rem; height: 2.75rem; padding: 0.5rem; flex-shrink: 0; }
+.headerActions button[aria-expanded="true"], .headerActions button[aria-pressed="true"] { border-color: var(--accent); background: #75d5ff19; }
+.primaryButton { border: 1px solid transparent; cursor: pointer; font: inherit; font-size: 0.85rem; font-weight: 650; }
+.primaryButton:hover:not(:disabled) { background: var(--accent-hover); }
+.primaryButton:disabled { cursor: not-allowed; opacity: 0.55; }
+.controlGroupTitle, .panelEyebrow { margin: 0 0 0.5rem; color: var(--text-muted); font-size: 0.7rem; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; }
+.panelHeading { margin-bottom: 0; }
+.panelDescription { color: var(--text-secondary); font-size: 0.85rem; line-height: 1.5; }
+.headerActions .downloadPanel { width: min(34rem, calc(100% - 1.5rem)); max-height: calc(100dvh - var(--reader-top, 72px) - var(--reader-bottom, 64px) - 24px); background: var(--surface); border-color: #75d5ff33; }
+.downloadChapterList { border-block: 1px solid #ffffff10; scrollbar-width: thin; }
+.downloadChapterList li { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.35rem; border-bottom: 1px solid #ffffff08; }
+.downloadChapterList li[data-current="true"] { background: #75d5ff0e; }
+.downloadChapterList label { min-width: 0; flex: 1; cursor: pointer; }
+.downloadChapterList input { width: 1rem; height: 1rem; flex-shrink: 0; accent-color: var(--accent); }
+.downloadChapterName { display: grid; min-width: 0; gap: 0.1rem; font-size: 0.85rem; overflow-wrap: anywhere; }
+.downloadChapterName small { color: var(--text-muted); font-size: 0.7rem; }
+.downloadMore { font-size: 0.8rem; }
+.downloadMore summary { padding: 0.65rem 0.4rem; cursor: pointer; color: var(--text-secondary); }
+.downloadMore > button { margin-top: 0.5rem; }
+.ereaderProfile .headerActions .downloadPanel, .ereaderProfile .downloadChapterList li[data-current="true"] { background: #fff; color: #111; border-color: #111; }
+.ereaderProfile .panelDescription, .ereaderProfile .panelEyebrow, .ereaderProfile .controlGroupTitle, .ereaderProfile .downloadChapterName small, .ereaderProfile .selectionSummary { color: #111; }
+.ereaderProfile .secondaryButton, .ereaderProfile .primaryButton { transition: none; }
+.chapterDropdown { position: absolute; top: calc(100% + 0.5rem); bottom: auto; left: 0.75rem; z-index: 7; width: min(34rem, calc(100% - 1.5rem)); max-height: calc(100dvh - var(--reader-top, 72px) - var(--reader-bottom, 64px) - 24px); margin: 0; background: var(--surface); border-color: #75d5ff33; box-shadow: 0 16px 48px #0008; pointer-events: auto; }
+.page, .readerCanvas, .verticalViewport { background: var(--reader-background, #080c13); }
+.readerCanvas .pageImage, .verticalViewport .verticalPageImage { filter: brightness(var(--reader-brightness, 1)); }
+.ereaderProfile .readerCanvas .pageImage, .ereaderProfile .verticalViewport .verticalPageImage { filter: none; }
+.panelHint { margin: 0.35rem 0 0; color: var(--text-secondary); font-size: 0.75rem; line-height: 1.5; }
+.thumbnail[aria-current="page"] { border-color: var(--accent); outline: 1px solid var(--accent); }
+.navigator { width: min(30rem, calc(100% - 1.5rem)); }
+.thumbnails { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; max-width: 20rem; min-height: 8.5rem; gap: 0.5rem; }
+.thumbnail { width: 100%; min-width: 0; height: 8.5rem; grid-template-rows: 6rem auto; overflow: hidden; }
+.chapterSearch { display: grid; gap: 0.4rem; color: var(--text-secondary); font-size: 0.8rem; }
+.chapterSearch input { width: 100%; min-height: 2.75rem; padding: 0.65rem; border: 1px solid var(--border-strong); border-radius: 0.5rem; background: var(--surface-soft); color: var(--text); font: inherit; }
+.ereaderProfile .chapterDropdown { background: #fff; color: #111; border-color: #111; }
+@media (max-width: 700px) {
+  .pageHeader { min-height: 4.5rem; align-items: center; gap: 0.5rem; }
+  .readerIdentity { gap: 0.4rem; }
+  .readerTitle h1 { font-size: 0.9rem; }
+  .readerTitle .eyebrow { font-size: 0.65rem; }
+  .toolbarLabel { display: none; }
+  .headerActions .secondaryButton, .compact .headerActions button, .readerIdentity .iconButton { min-width: 2.75rem; width: 2.75rem; height: 2.75rem; padding: 0.4rem; }
+  .headerActions .downloadPanel .secondaryButton:not(.iconButton) { width: auto; }
+  .headerActions .downloadPanel .secondaryButton { max-width: none; }
+  .headerActions .downloadPanel .primaryButton { max-width: none; height: auto; }
+  .pageNavigation { min-width: 2.5rem; }
+}
+
+.readerTools > .downloadMore { flex-basis: 100%; min-width: 0; }
+
+.readerTitle .downloadSection { min-width: 0; }
+.readerTitle .chapterTrigger { max-width: 100%; min-height: 2.75rem; justify-content: flex-start; gap: 0.5rem; padding: 0; border-color: transparent; background: transparent; font: inherit; font-weight: 600; }
+.chapterTriggerText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chapterTrigger svg { transform: rotate(90deg); }
+.chapterTrigger[aria-expanded="true"] svg { transform: rotate(270deg); }
+.headerActions > .downloadSection > button, .headerActions > button { width: 2.75rem; min-width: 2.75rem; min-height: 2.75rem; padding: 0.5rem; }
+.headerActions > .downloadSection > button > .toolbarLabel, .headerActions > button > .toolbarLabel { display: none; }
+.page:not(.ereaderProfile) .readerIdentity > .iconButton,
+.page:not(.ereaderProfile) .headerActions > button,
+.page:not(.ereaderProfile) .headerActions > .downloadSection > button,
+.page:not(.ereaderProfile) .controls > button { border-color: transparent; background: transparent; }
+.page:not(.ereaderProfile) .pageHeader button:hover:not(:disabled),
+.page:not(.ereaderProfile) .controls > button:hover:not(:disabled) { background: var(--surface-hover); }
+.controls > button { min-height: 2.75rem; }
+.pageNumber { min-width: 8rem; }
+.ereaderProfile .chapterTrigger { color: #111; background: #fff; border-color: #111; }
+.iconLabel { display: inline-flex; align-items: center; gap: 0.45rem; }
+.readerTools label input, .preferenceFields label input { flex-shrink: 0; }
+
+.optionsPanel {
+  --option-bg: #0e1726; --option-card: #14213a; --option-line: #223556;
+  --option-text: #e6eefc; --option-muted: #8ea3c7; --option-accent: #4cc2ff;
+  --option-selected: linear-gradient(160deg, #17325f, #12294d);
+  --option-solid: linear-gradient(160deg, #2b7bff, #1f5fd1);
+  --option-selected-text: #fff; --option-glow: #4cc2ff40;
+  width: min(400px, calc(100% - 1.5rem)); min-width: 0;
+  box-sizing: border-box; padding: 18px; border: 1px solid var(--option-line);
+  border-radius: 22px; background: var(--option-bg); color: var(--option-text);
+  box-shadow: 0 20px 60px #0008; font-size: 14px; line-height: 1.4;
+  color-scheme: dark; scrollbar-width: thin; overscroll-behavior: contain;
+  scroll-padding-block: 6rem 1rem;
+}
+.optionsPanel .panelHeading {
+  position: sticky; top: -18px; z-index: 2; align-items: flex-start; gap: 10px;
+  margin: -18px -18px 0; padding: 18px; background: var(--option-bg);
+}
+.optionsPanel .panelHeading h2 { margin: 0; color: var(--option-text); font-size: 18px; line-height: 1.35; }
+.optionsPanel .panelHeading .panelHint { margin-top: 2px; }
+.optionsPanel .panelHint, .optionsPanel .shortcuts { color: var(--option-muted); font-size: 11.5px; line-height: 1.5; }
+.optionsPanel .panelHint { margin-top: 8px; }
+.optionsPanel .secondaryButton {
+  min-width: 0; min-height: 44px; gap: 6px; padding: 8px;
+  border: 1px solid var(--option-line); border-radius: 12px;
+  background: var(--option-card); color: var(--option-text); font-size: 12.5px; font-weight: 600;
+}
+.optionsPanel .secondaryButton:hover:not(:disabled) { border-color: var(--option-accent); background: var(--option-card); }
+.optionsPanel .secondaryButton[aria-pressed="true"],
+.optionsPanel .secondaryButton[aria-pressed="true"]:hover {
+  border-color: var(--option-accent); background: var(--option-selected);
+  color: var(--option-selected-text); box-shadow: 0 0 0 3px var(--option-glow);
+}
+.optionsPanel :focus-visible { outline: 2px solid var(--option-accent); outline-offset: 3px; }
+.optionsPanel .secondaryButton svg, .iconLabel svg { width: 16px; height: 16px; flex-shrink: 0; }
+.optionsPanel .iconButton { width: 44px; min-width: 44px; height: 44px; padding: 10px; }
+.optionGroup { min-width: 0; margin: 20px 0 0; padding: 0; border: 0; }
+.optionGroup legend { display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 8px; padding: 0; color: var(--option-muted); font-size: 11px; font-weight: 650; letter-spacing: 0.12em; text-transform: uppercase; }
+.optionGroup legend::after { content: ""; height: 1px; background: var(--option-line); flex: 1; }
+.optionsPreview { --preview-bg: #0b1220; --preview-paper: #15233d; --preview-ink: #dbe6ff; position: relative; display: flex; align-items: center; justify-content: center; height: 130px; margin-top: 0; overflow: hidden; border: 1px solid var(--option-line); border-radius: 14px; background: var(--preview-bg); }
+.optionsPreview[data-theme="sepia"] { --preview-bg: #f1e4c8; --preview-paper: #fbf3df; --preview-ink: #4a3720; }
+.optionsPreview[data-theme="light"] { --preview-bg: #f5f7fb; --preview-paper: #fff; --preview-ink: #1b2538; }
+.previewStage { display: flex; gap: 4px; transform: scale(var(--preview-zoom, 1)); filter: brightness(var(--preview-brightness, 1)); transition: transform 180ms ease, filter 180ms ease; }
+.optionsPreview[data-mode="double"][data-rtl="true"] .previewStage { flex-direction: row-reverse; }
+.optionsPreview:is([data-mode="vertical"], [data-mode="webtoon"]) .previewStage { flex-direction: column; transform: scale(calc(var(--preview-zoom, 1) * 0.55)); }
+.optionsPreview[data-mode="webtoon"] .previewStage { gap: 0; }
+.optionsPreview[data-mode="webtoon"] .previewPage { border-radius: 0; }
+.previewPage { display: flex; flex: none; flex-direction: column; gap: 4px; box-sizing: border-box; width: 56px; height: 76px; padding: 7px 6px; border-radius: 4px; background: var(--preview-paper); color: var(--preview-ink); box-shadow: 0 2px 6px #0005; }
+.previewPage i { display: block; height: 4px; border-radius: 2px; background: currentColor; opacity: 0.35; }
+.previewPage i:nth-child(2) { width: 70%; }
+.previewPage i:nth-child(4) { width: 50%; }
+.previewTag { position: absolute; right: 8px; bottom: 6px; padding: 2px 7px; border-radius: 99px; background: #0009; color: #dbe6ff; font-size: 10px; }
+.modeTiles, .optionTiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.optionsPanel .optionTile { flex-direction: column; gap: 6px; padding: 10px 6px; text-align: center; }
+.optionsPanel .optionTile svg { width: 26px; height: 26px; color: var(--option-muted); }
+.optionsPanel .optionTile[aria-pressed="true"] svg { color: var(--option-accent); }
+.optionsPanel .modeTiles svg { width: 38px; height: 30px; stroke-width: 1.5; }
+.optionsPanel .switchRow { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; box-sizing: border-box; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--option-line); border-radius: 12px; background: var(--option-card); color: var(--option-text); font-size: 12.5px; cursor: pointer; }
+.optionsPanel .switchRow input { appearance: none; position: relative; flex: none; width: 42px; height: 24px; margin: 0; border: 0; border-radius: 99px; background: #26385c; cursor: pointer; transition: background-color 180ms ease; }
+.switchRow input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform 180ms ease; }
+.optionsPanel .switchRow input:checked { background: var(--option-solid); }
+.switchRow input:checked::after { transform: translateX(18px); }
+.segmented { display: flex; gap: 3px; min-width: 0; padding: 3px; border: 1px solid var(--option-line); border-radius: 12px; background: var(--option-card); }
+.optionsPanel .segmented .secondaryButton { flex: 1; gap: 4px; padding: 6px; border: 0; background: transparent; color: var(--option-muted); }
+.optionsPanel .segmented .secondaryButton[aria-pressed="true"] { background: var(--option-solid); color: var(--option-selected-text); box-shadow: none; }
+.directionLtr { display: inline-flex; transform: rotate(180deg); }
+.zoomControls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.zoomControls > button { width: 44px; min-width: 44px; padding-inline: 8px; flex: none; }
+.optionsPanel .zoomValue { min-width: 48px; color: var(--option-text); font-size: 15px; font-weight: 650; }
+.optionsPanel .optionRange { appearance: none; flex: 1; width: 100%; min-width: 0; height: 44px; margin: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.optionRange::-webkit-slider-runnable-track { height: 6px; border-radius: 99px; background: var(--option-line); }
+.optionRange::-webkit-slider-thumb { appearance: none; width: 20px; height: 20px; margin-top: -7px; border: 3px solid var(--option-bg); border-radius: 50%; background: var(--option-accent); box-shadow: 0 0 0 2px var(--option-accent); }
+.optionRange::-moz-range-track { height: 6px; border-radius: 99px; background: var(--option-line); }
+.optionRange::-moz-range-thumb { width: 16px; height: 16px; border: 3px solid var(--option-bg); border-radius: 50%; background: var(--option-accent); }
+.optionsPanel .optionRange:disabled { cursor: not-allowed; opacity: 0.55; }
+.fitControls { margin-top: 8px; }
+.backgroundChoices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.themeSwatch { display: block; width: 34px; height: 34px; border: 2px solid var(--option-line); border-radius: 50%; background: linear-gradient(135deg, #0b1220 50%, #15233d 50%); }
+.themeSwatch[data-theme="sepia"] { background: linear-gradient(135deg, #f1e4c8 50%, #fbf3df 50%); }
+.themeSwatch[data-theme="light"] { background: linear-gradient(135deg, #f5f7fb 50%, #fff 50%); }
+.brightnessControl { display: flex; align-items: center; gap: 10px; margin-top: 10px; color: var(--option-muted); }
+.brightnessControl > svg { flex: none; width: 18px; height: 18px; }
+.brightnessControl > span { min-width: 38px; color: var(--option-text); font-size: 14px; font-weight: 650; text-align: right; }
+.advancedOptions { margin-top: 18px; }
+.advancedOptions > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--option-line); border-radius: 12px; background: var(--option-card); color: var(--option-text); font-weight: 600; cursor: pointer; list-style: none; }
+.advancedOptions > summary::-webkit-details-marker { display: none; }
+.advancedOptions > summary:hover { border-color: var(--option-accent); }
+.advancedOptions > summary svg { width: 16px; height: 16px; transform: rotate(90deg); transition: transform 180ms ease; }
+.advancedOptions[open] > summary svg { transform: rotate(270deg); }
+.optionsPanel .preferenceFields { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; border: 0; }
+.controlLabel { display: block; margin-top: 4px; color: var(--option-muted); font-size: 12px; }
+.shortcutKeys { display: flex; gap: 6px; }
+.optionsPanel .shortcutKeys .secondaryButton { flex: 1; border-bottom-width: 3px; font-weight: 700; }
+.optionsPanel .preferenceFields .switchRow { margin: 0; }
+.optionsPanel .shortcuts { margin-top: 10px; }
+.ereaderProfile .optionsPanel {
+  --option-bg: #fff; --option-card: #fff; --option-line: #111;
+  --option-text: #111; --option-muted: #111; --option-accent: #111;
+  --option-selected: #111; --option-solid: #111; --option-glow: transparent;
+  background: #fff; color: #111; border-color: #111; color-scheme: light;
+}
+.ereaderProfile .optionsPanel .optionTile[aria-pressed="true"] svg { color: #fff; }
+.ereaderProfile .optionsPreview { --preview-bg: #fff; --preview-paper: #fff; --preview-ink: #111; }
+.ereaderProfile .previewStage { filter: none; }
+.ereaderProfile .previewPage { border: 1px solid #111; }
+.ereaderProfile .previewTag { background: #fff; color: #111; border: 1px solid #111; }
+.ereaderProfile .switchRow input { background: #fff; border: 1px solid #111; }
+.ereaderProfile .switchRow input::after { top: 2px; left: 2px; background: #111; }
+.ereaderProfile .switchRow input:checked::after { background: #fff; }
+.ereaderProfile .themeSwatch { background: linear-gradient(135deg, #111 50%, #fff 50%); }
+.ereaderProfile .themeSwatch[data-theme="sepia"] { background: linear-gradient(135deg, #999 50%, #fff 50%); }
+.ereaderProfile .themeSwatch[data-theme="light"] { background: #fff; }
+@media (max-width: 480px) {
+  .optionsPanel .fitControls .secondaryButton { flex-direction: column; gap: 3px; padding-inline: 3px; font-size: 11.5px; }
+  .optionsPanel .segmented .secondaryButton { padding-inline: 3px; font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .optionsPanel *, .optionsPanel *::after { transition: none; }
+}

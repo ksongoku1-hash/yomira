@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import cast
+from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
@@ -17,6 +17,7 @@ from app.runtime import RuntimeState
 from app.services.jobs import (
     DEFAULT_DOWNLOAD_JOB_PAGE_SIZE,
     MAX_DOWNLOAD_JOB_PAGE_SIZE,
+    MAX_DOWNLOAD_STATUS_FILTERS,
     DownloadGroupPage,
     DownloadJobService,
     DownloadJobSummary,
@@ -55,6 +56,7 @@ class DownloadJobListMeta(BaseModel):
     waiting_sources: int = 0
     retry_after_seconds: int = 0
     recovering_job_id: UUID | None = None
+    filtered_total: int | None = None
 
 
 class DownloadJobListEnvelope(BaseModel):
@@ -117,6 +119,7 @@ async def set_download_group_paused(
 @router.get(
     "",
     response_model=DownloadJobListEnvelope,
+    response_model_exclude_unset=True,
     responses={
         422: {"model": ApiErrorEnvelope},
         503: {"model": ApiErrorEnvelope},
@@ -132,24 +135,29 @@ def list_download_jobs(
     ),
     offset: int = Query(default=0, ge=0, le=10_000_000),
     archived: bool = Query(default=False),
+    status: Annotated[
+        list[DownloadJobStatus] | None, Query(max_length=MAX_DOWNLOAD_STATUS_FILTERS)
+    ] = None,
 ) -> DownloadJobListEnvelope:
-    page = _job_service(request).list_jobs(limit=limit, offset=offset, archived=archived)
+    page = _job_service(request).list_jobs(
+        limit=limit, offset=offset, archived=archived, statuses=tuple(status or ())
+    )
     runtime = cast(RuntimeState, request.app.state.runtime)
     dispatcher = runtime.download_dispatcher
     waiting, retry_after = dispatcher.source_wait if dispatcher is not None else (0, 0)
-    return DownloadJobListEnvelope(
-        data=[_job_item(item) for item in page.items],
-        meta=DownloadJobListMeta(
-            limit=page.limit,
-            offset=page.offset,
-            total=page.total,
-            states={DownloadJobStatus(key): value for key, value in page.states.items()},
-            page_progress=list(page.page_progress),
-            waiting_sources=waiting,
-            retry_after_seconds=retry_after,
-            recovering_job_id=dispatcher.recovering_job_id if dispatcher is not None else None,
-        ),
+    meta = DownloadJobListMeta(
+        limit=page.limit,
+        offset=page.offset,
+        total=page.total,
+        states={DownloadJobStatus(key): value for key, value in page.states.items()},
+        page_progress=list(page.page_progress),
+        waiting_sources=waiting,
+        retry_after_seconds=retry_after,
+        recovering_job_id=dispatcher.recovering_job_id if dispatcher is not None else None,
     )
+    if page.filtered_total is not None:
+        meta.filtered_total = page.filtered_total
+    return DownloadJobListEnvelope(data=[_job_item(item) for item in page.items], meta=meta)
 
 
 @router.post(

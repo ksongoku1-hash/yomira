@@ -76,6 +76,51 @@ def test_fmd2_online_plan_does_not_create_a_download(tmp_path: Path) -> None:
     assert not (tmp_path / "staging").exists()
 
 
+def test_novelcool_online_resume_prepares_its_catalog_and_reuses_it(tmp_path: Path) -> None:
+    website = "424747b0135c4240a902eb9cfcb11db9"
+    manga = "fmd2:v1:" + (website + "\n/novel/The-Boxer.html").encode().hex()
+    chapter = "fmd2:v1:" + (website + "\n/chapter-16-id").encode().hex()
+    reference = "yomira-fmd2:v3:" + base64.urlsafe_b64encode(
+        json.dumps(
+            [website, "/novel/The-Boxer.html", "/chapter-16-id"], separators=(",", ":")
+        ).encode()
+    ).decode().rstrip("=")
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.method == "GET":
+            assert request.url.path == f"/v1/manga/{manga}/chapters"
+            return httpx.Response(
+                200,
+                json={
+                    "chapters": [{"chapter_ref": chapter, "title": "Capítulo 16", "ordinal": 16}]
+                },
+            )
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"status": "closed"})
+        assert request.url.path == "/v1/reader"
+        return httpx.Response(
+            200, json={"session_id": json.loads(request.content)["request_id"], "page_count": 2}
+        )
+
+    connector = _connector(tmp_path, httpx.MockTransport(handler))
+
+    async def exercise() -> None:
+        try:
+            for _ in range(2):
+                sid = uuid4()
+                assert len(await connector.open_online_pages(sid, reference)) == 2
+                await connector.close_online_pages(sid)
+        finally:
+            await connector.close()
+
+    asyncio.run(exercise())
+    assert calls.count(f"/v1/manga/{manga}/chapters") == 1
+    assert calls.count("/v1/reader") == 2
+    assert not (tmp_path / "staging").exists()
+
+
 @pytest.mark.parametrize("count", [True, 0, -1, 10_001, "3"])
 def test_fmd2_rejects_invalid_online_plans(tmp_path: Path, count: object) -> None:
     sid = uuid4()

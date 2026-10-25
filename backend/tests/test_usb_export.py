@@ -105,10 +105,10 @@ def test_fat32_rejects_a_single_file_over_4_gib_before_writing(
     asset = replace(_asset(library_root / "manga.cbz", b"original"), size_bytes=1 << 32)
     service, provider = _service(library_root, destination)
     provider.target = replace(provider.target, file_system="FAT32")
-    monkeypatch.setattr(
-        service, "_inspect_plain_file", lambda *_args, **_kwargs:
-        SimpleNamespace(st_size=asset.size_bytes),
-    )
+    def inspect_large_file(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(st_size=asset.size_bytes)
+
+    monkeypatch.setattr(service, "_inspect_plain_file", inspect_large_file)
     with pytest.raises(ExportFailure) as raised:
         service.export_asset(asset, target_id=provider.target.target_id)
     assert raised.value.stage == "destination_file_size_limit"

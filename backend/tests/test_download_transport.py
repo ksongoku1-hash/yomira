@@ -151,6 +151,7 @@ class _Harness:
         self.transport = httpx.MockTransport(handler)
         self.client = httpx.AsyncClient(transport=self.transport)
         self.delays: list[float] = []
+        self.now = 0.0
         self.reserved_attempts: list[tuple[UUID, int, int]] = []
         self.policy = DownloadTransportPolicy(
             allowed_origins=frozenset(
@@ -177,6 +178,7 @@ class _Harness:
             self.delays.append(delay)
             if sleep is not None:
                 await sleep(delay)
+            self.now += delay
 
         self.service = DownloadTransport(
             self.client,
@@ -186,6 +188,7 @@ class _Harness:
             test_transport=self.transport,
             secret_header_provider=secret_header_provider,
             sleep=record_sleep,
+            clock=lambda: self.now,
         )
 
     async def close(self) -> None:
@@ -294,9 +297,7 @@ async def test_temporary_inventory_yields_event_loop(
 
     def release_after_heartbeat_or_timeout() -> None:
         if inventory_started.wait(timeout=1.0):
-            watchdog_observation["heartbeat_ran"] = heartbeat_ran_before_release.wait(
-                timeout=0.1
-            )
+            watchdog_observation["heartbeat_ran"] = heartbeat_ran_before_release.wait(timeout=0.1)
         release_inventory.set()
 
     watchdog = threading.Thread(target=release_after_heartbeat_or_timeout, daemon=True)
@@ -421,9 +422,7 @@ async def test_download_uses_connector_origin_subset_for_request(tmp_path: Path)
         return _response((b"reader-page",))
 
     harness = _Harness(tmp_path, handler)
-    connector_origins = frozenset(
-        {NetworkOrigin.from_url("https://reader.example.invalid/")}
-    )
+    connector_origins = frozenset({NetworkOrigin.from_url("https://reader.example.invalid/")})
     try:
         result = await harness.service.download(
             PageFetchRequest("https://reader.example.invalid/page.jpg"),
@@ -451,9 +450,7 @@ async def test_download_rejects_global_origin_outside_connector_subset(
         return _response((b"should-not-fetch",))
 
     harness = _Harness(tmp_path, handler)
-    connector_origins = frozenset(
-        {NetworkOrigin.from_url("https://reader.example.invalid/")}
-    )
+    connector_origins = frozenset({NetworkOrigin.from_url("https://reader.example.invalid/")})
     try:
         with pytest.raises(DownloadTransportError) as raised:
             await harness.service.download(
@@ -480,9 +477,7 @@ async def test_referer_must_stay_inside_connector_origin_subset(tmp_path: Path) 
         return _response((b"should-not-fetch",))
 
     harness = _Harness(tmp_path, handler)
-    connector_origins = frozenset(
-        {NetworkOrigin.from_url("https://reader.example.invalid/")}
-    )
+    connector_origins = frozenset({NetworkOrigin.from_url("https://reader.example.invalid/")})
     try:
         with pytest.raises(DownloadTransportError) as raised:
             await harness.service.download(
@@ -515,9 +510,7 @@ async def test_redirect_must_stay_inside_connector_origin_subset(tmp_path: Path)
         )
 
     harness = _Harness(tmp_path, handler)
-    connector_origins = frozenset(
-        {NetworkOrigin.from_url("https://reader.example.invalid/")}
-    )
+    connector_origins = frozenset({NetworkOrigin.from_url("https://reader.example.invalid/")})
     try:
         with pytest.raises(DownloadTransportError) as raised:
             await harness.service.download(
@@ -603,13 +596,7 @@ async def test_job_temporary_budget_rejects_first_excess_byte_before_writing_it(
     )
     job_id = uuid4()
     previous_attempt = (
-        harness.data_root
-        / "temp"
-        / "jobs"
-        / str(job_id)
-        / "pages"
-        / "1"
-        / "attempt-1.part"
+        harness.data_root / "temp" / "jobs" / str(job_id) / "pages" / "1" / "attempt-1.part"
     )
     previous_attempt.parent.mkdir(parents=True)
     previous_attempt.write_bytes(b"1234")
@@ -626,13 +613,7 @@ async def test_job_temporary_budget_rejects_first_excess_byte_before_writing_it(
         await harness.close()
 
     current_attempt = (
-        harness.data_root
-        / "temp"
-        / "jobs"
-        / str(job_id)
-        / "pages"
-        / "2"
-        / "attempt-1.part"
+        harness.data_root / "temp" / "jobs" / str(job_id) / "pages" / "2" / "attempt-1.part"
     )
     assert raised.value.code is ErrorCode.DL_TEMPORARY_BUDGET_EXCEEDED
     assert raised.value.stage == "temporary_budget_chunk"
@@ -656,13 +637,7 @@ async def test_job_temporary_budget_preflight_counts_old_part_before_network(
     harness = _Harness(tmp_path, handler)
     job_id = uuid4()
     previous_attempt = (
-        harness.data_root
-        / "temp"
-        / "jobs"
-        / str(job_id)
-        / "pages"
-        / "1"
-        / "attempt-1.part"
+        harness.data_root / "temp" / "jobs" / str(job_id) / "pages" / "1" / "attempt-1.part"
     )
     previous_attempt.parent.mkdir(parents=True)
     previous_attempt.write_bytes(b"ambiguous")
@@ -705,13 +680,7 @@ async def test_job_temporary_budget_reuses_inventory_for_sequential_page_transfe
     harness = _Harness(tmp_path, handler, max_bytes=5, chunk_size=5)
     job_id = uuid4()
     previous_attempt = (
-        harness.data_root
-        / "temp"
-        / "jobs"
-        / str(job_id)
-        / "pages"
-        / "99"
-        / "attempt-2.part"
+        harness.data_root / "temp" / "jobs" / str(job_id) / "pages" / "99" / "attempt-2.part"
     )
     previous_attempt.parent.mkdir(parents=True)
     previous_attempt.write_bytes(b"old")
@@ -762,13 +731,7 @@ async def test_job_temporary_budget_reuses_inventory_for_sequential_page_transfe
         )
 
         preserved_after_finish = (
-            harness.data_root
-            / "temp"
-            / "jobs"
-            / str(job_id)
-            / "pages"
-            / "98"
-            / "attempt-1.part"
+            harness.data_root / "temp" / "jobs" / str(job_id) / "pages" / "98" / "attempt-1.part"
         )
         preserved_after_finish.parent.mkdir(parents=True)
         preserved_after_finish.write_bytes(b"x")
@@ -784,13 +747,7 @@ async def test_job_temporary_budget_reuses_inventory_for_sequential_page_transfe
         await harness.close()
 
     rejected_attempt = (
-        harness.data_root
-        / "temp"
-        / "jobs"
-        / str(job_id)
-        / "pages"
-        / "3"
-        / "attempt-1.part"
+        harness.data_root / "temp" / "jobs" / str(job_id) / "pages" / "3" / "attempt-1.part"
     )
     assert first.path.read_bytes() == b"12345"
     assert second.path.read_bytes() == b"ab"
@@ -813,9 +770,7 @@ async def test_ambiguous_partial_write_invalidates_job_temporary_budget_snapshot
     monkeypatch.setattr(download_transport_module, "MAX_JOB_TEMPORARY_BYTES", 5)
     harness = _Harness(
         tmp_path,
-        lambda request: _response(
-            (b"abcd" if request.url.path == "/first" else b"1234",)
-        ),
+        lambda request: _response((b"abcd" if request.url.path == "/first" else b"1234",)),
         max_bytes=4,
         chunk_size=4,
     )
@@ -871,13 +826,7 @@ async def test_ambiguous_partial_write_invalidates_job_temporary_budget_snapshot
             )
 
         partial_path = (
-            harness.data_root
-            / "temp"
-            / "jobs"
-            / str(job_id)
-            / "pages"
-            / "1"
-            / "attempt-1.part"
+            harness.data_root / "temp" / "jobs" / str(job_id) / "pages" / "1" / "attempt-1.part"
         )
         assert partial_path.read_bytes() == b"ab"
 
@@ -893,13 +842,7 @@ async def test_ambiguous_partial_write_invalidates_job_temporary_budget_snapshot
         await harness.close()
 
     second_attempt_path = (
-        harness.data_root
-        / "temp"
-        / "jobs"
-        / str(job_id)
-        / "pages"
-        / "2"
-        / "attempt-1.part"
+        harness.data_root / "temp" / "jobs" / str(job_id) / "pages" / "2" / "attempt-1.part"
     )
     assert raised.value.code is ErrorCode.DL_TEMPORARY_BUDGET_EXCEEDED
     assert raised.value.stage == "temporary_budget_chunk"
@@ -1014,13 +957,7 @@ async def test_job_temporary_budget_initial_inventory_is_shared_by_concurrent_pa
     assert inventory_calls == 1
     assert request_calls == 2
     temporary_files = list(
-        (
-            harness.data_root
-            / "temp"
-            / "jobs"
-            / str(job_id)
-            / "pages"
-        ).rglob("attempt-1.part")
+        (harness.data_root / "temp" / "jobs" / str(job_id) / "pages").rglob("attempt-1.part")
     )
     assert sorted(path.stat().st_size for path in temporary_files) == [0, 3]
     assert sum(path.stat().st_size for path in temporary_files) == 3
@@ -1433,7 +1370,7 @@ async def test_retries_use_fixed_1_3_8_schedule_and_new_durable_attempt_paths(
 
 
 @_async_test
-async def test_retry_after_is_bounded_by_explicit_policy(tmp_path: Path) -> None:
+async def test_long_retry_after_pauses_host_without_retrying_early(tmp_path: Path) -> None:
     call_count = 0
 
     def handler(_: httpx.Request) -> httpx.Response:
@@ -1445,24 +1382,40 @@ async def test_retry_after_is_bounded_by_explicit_policy(tmp_path: Path) -> None
 
     harness = _Harness(tmp_path, handler, max_retry_after_seconds=2.5)
     try:
-        await harness.service.download(
-            PageFetchRequest("https://cdn.example.invalid/image.jpg"),
-            job_id=uuid4(),
-            ordinal=1,
-            attempt=1,
-            reserve_next_attempt=harness.reserve_next_attempt,
-        )
+
+        async def fetch(host: str) -> None:
+            await harness.service.fetch_memory(
+                PageFetchRequest(f"https://{host}/image.jpg"),
+                session_id=uuid4(),
+                ordinal=1,
+                allowed_origins=frozenset({NetworkOrigin.from_url(f"https://{host}")}),
+            )
+
+        with pytest.raises(DownloadTransportError) as first:
+            await fetch("cdn.example.invalid")
+        assert first.value.stage == "source_retry_after"
+        with pytest.raises(DownloadTransportError) as blocked:
+            await fetch("cdn.example.invalid")
+        assert blocked.value.stage == "source_cooldown"
+        assert call_count == 1 and harness.delays == []
+        await fetch("reader.example.invalid")
+        assert call_count == 2
+        harness.now = 899.0
+        with pytest.raises(DownloadTransportError):
+            await fetch("cdn.example.invalid")
+        assert call_count == 2
+        harness.now = 900.0
+        await fetch("cdn.example.invalid")
+        assert call_count == 3
     finally:
         await harness.close()
 
-    assert harness.delays == [2.5]
+    assert harness.delays == []
 
 
 @pytest.mark.parametrize("status_code", [403, 404])
 @_async_test
-async def test_forbidden_and_not_found_are_not_retried(
-    tmp_path: Path, status_code: int
-) -> None:
+async def test_forbidden_and_not_found_are_not_retried(tmp_path: Path, status_code: int) -> None:
     calls = 0
 
     def handler(_: httpx.Request) -> httpx.Response:
@@ -2055,6 +2008,7 @@ async def test_durable_cancellation_while_waiting_for_semaphore_sends_no_new_get
             )
         )
         semaphore = harness.service._host_semaphores["cdn.example.invalid"]  # pyright: ignore[reportPrivateUsage]
+
         async def wait_for_host_waiter() -> None:
             while not semaphore._waiters:
                 await asyncio.sleep(0.001)
@@ -2321,16 +2275,17 @@ async def test_approved_redirect_limit_accepts_five_and_rejects_six(
     ("retry_after", "expected_delay"),
     [
         ("60", 60.0),
-        ("600", 60.0),
+        ("600", None),
+        ("999999999999999999999999", None),
         ("not-an-http-date", 1.0),
         ("Sun, 06 Nov 1994 08:49:37 GMT", 0.0),
     ],
 )
 @_async_test
-async def test_approved_retry_after_cap_handles_exact_excess_malformed_and_past(
+async def test_retry_after_respects_exact_excess_malformed_and_past(
     tmp_path: Path,
     retry_after: str,
-    expected_delay: float,
+    expected_delay: float | None,
 ) -> None:
     calls = 0
 
@@ -2343,14 +2298,25 @@ async def test_approved_retry_after_cap_handles_exact_excess_malformed_and_past(
 
     harness = _Harness(tmp_path, handler, max_retry_after_seconds=60.0)
     try:
-        await harness.service.download(
-            PageFetchRequest("https://cdn.example.invalid/retry-after.jpg"),
-            job_id=uuid4(),
-            ordinal=1,
-            attempt=1,
-            reserve_next_attempt=harness.reserve_next_attempt,
-        )
+
+        async def download() -> None:
+            await harness.service.download(
+                PageFetchRequest("https://cdn.example.invalid/retry-after.jpg"),
+                job_id=uuid4(),
+                ordinal=1,
+                attempt=1,
+                reserve_next_attempt=harness.reserve_next_attempt,
+            )
+
+        if expected_delay is None:
+            with pytest.raises(DownloadTransportError) as error:
+                await download()
+            assert error.value.stage == "source_retry_after"
+            assert calls == 1 and harness.reserved_attempts == []
+        else:
+            await download()
+            assert calls == 2
     finally:
         await harness.close()
 
-    assert harness.delays == [expected_delay]
+    assert harness.delays == ([] if expected_delay is None else [expected_delay])

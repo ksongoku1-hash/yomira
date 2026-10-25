@@ -303,6 +303,7 @@ class SQLiteDatabase:
         if not isinstance(dbapi_connection, sqlite3.Connection):
             raise DatabaseInitializationError()
 
+        dbapi_connection.create_function("yomira_casefold", 1, str.casefold, deterministic=True)
         cursor = dbapi_connection.cursor()
         try:
             configured_values = (

@@ -1,6 +1,36 @@
 export const API_BASE_URL = "/api/v1";
 export const API_VERSION = 1;
 
+export interface AppUpdateStatus {
+  state: "unsupported" | "idle" | "checking" | "up_to_date" | "downloading" | "ready" | "installing" | "error";
+  current_version: string;
+  latest_version: string | null;
+  downloaded_bytes: number;
+  total_bytes: number;
+  message: string;
+  releases_url: string;
+}
+
+export async function appUpdates(action?: "check" | "install"): Promise<AppUpdateStatus> {
+  const { payload, response } = await requestJson(
+    `/system/updates${action ? `/${action}` : ""}`,
+    action ? { method: "POST", headers: { "X-Yomira-Update": "1" } } : {},
+  );
+  if (!isRecord(payload) ||
+    typeof payload.state !== "string" ||
+    !["unsupported", "idle", "checking", "up_to_date", "downloading", "ready", "installing", "error"].includes(payload.state) ||
+    typeof payload.current_version !== "string" ||
+    (payload.latest_version !== null && typeof payload.latest_version !== "string") ||
+    typeof payload.downloaded_bytes !== "number" || !Number.isSafeInteger(payload.downloaded_bytes) || payload.downloaded_bytes < 0 ||
+    typeof payload.total_bytes !== "number" || !Number.isSafeInteger(payload.total_bytes) || payload.total_bytes < payload.downloaded_bytes ||
+    typeof payload.message !== "string" ||
+    payload.releases_url !== "https://github.com/ksongoku1-hash/yomira/releases") {
+    throw new ApiError({ code: null, message: "No se pudo leer el estado de actualizacion.",
+      retryable: true, status: response.status, traceId: null });
+  }
+  return payload as unknown as AppUpdateStatus;
+}
+
 const errorFamilies = new Set([
   "API",
   "SYS",
@@ -191,6 +221,8 @@ export interface LibraryPageRequest {
   limit: number;
   offset: number;
   readingStatus?: LibraryReadingStatus;
+  query?: string;
+  sort?: "title" | "recent" | "updated";
 }
 
 export interface ConnectorSearchResult {
@@ -284,6 +316,7 @@ export interface DownloadJobCreation extends DownloadJobSummary {
 export interface DownloadJobsPage {
   data: DownloadJobSummary[];
   meta: { limit: number; offset: number; total: number;
+    filteredTotal?: number;
     states?: Partial<Record<DownloadJobStatus, number>>;
     pageProgress?: {jobId: string; knownPages: number; validatedPages: number}[];
     waitingSources?: number;
@@ -947,10 +980,12 @@ export async function getDownloadJobsPage({
   limit,
   offset,
   archived = false,
+  statuses = [],
 }: {
   limit: number;
   offset: number;
   archived?: boolean;
+  statuses?: readonly DownloadJobStatus[];
 }): Promise<DownloadJobsPage> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
     throw new RangeError("limit must be between 1 and 100");
@@ -958,9 +993,13 @@ export async function getDownloadJobsPage({
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > 10_000_000) {
     throw new RangeError("offset must be between 0 and 10000000");
   }
+  if (statuses.length > downloadJobStatuses.size || statuses.some((status) => !downloadJobStatuses.has(status))) {
+    throw new RangeError("statuses must contain supported job states");
+  }
 
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (archived) params.set("archived", "true");
+  for (const status of new Set(statuses)) params.append("status", status);
   const { payload, response } = await requestJson(`/download-jobs?${params.toString()}`);
   if (
     !isRecord(payload) ||
@@ -968,6 +1007,7 @@ export async function getDownloadJobsPage({
     !Array.isArray(payload.data) ||
     !isRecord(payload.meta) ||
     !hasExactKeys(payload.meta, ["limit", "offset", "total",
+      ...("filtered_total" in payload.meta ? ["filtered_total"] : []),
       ...("states" in payload.meta ? ["states"] : []),
       ...("page_progress" in payload.meta ? ["page_progress"] : []),
       ...("waiting_sources" in payload.meta ? ["waiting_sources"] : []),
@@ -984,12 +1024,18 @@ export async function getDownloadJobsPage({
   ) {
     throw invalidDownloadJobsResponse(response);
   }
+  const filteredTotal = payload.meta.filtered_total;
+  if ((statuses.length > 0 || filteredTotal !== undefined) &&
+      (typeof filteredTotal !== "number" || !Number.isSafeInteger(filteredTotal) ||
+        filteredTotal < 0 || filteredTotal > payload.meta.total || payload.data.length > filteredTotal)) {
+    throw invalidDownloadJobsResponse(response);
+  }
 
   const data: DownloadJobSummary[] = [];
   const jobIds = new Set<string>();
   for (const record of payload.data) {
     const item = parseDownloadJobSummary(record);
-    if (item === null || jobIds.has(item.jobId)) {
+    if (item === null || jobIds.has(item.jobId) || (statuses.length > 0 && !statuses.includes(item.status))) {
       throw invalidDownloadJobsResponse(response);
     }
     jobIds.add(item.jobId);
@@ -1013,6 +1059,10 @@ export async function getDownloadJobsPage({
     Object.values(states).reduce<number>((sum, count) => sum + (count as number), 0) !== payload.meta.total)) {
     throw invalidDownloadJobsResponse(response);
   }
+  if (states !== undefined && statuses.length > 0 &&
+    [...new Set(statuses)].reduce((sum, status) => sum + ((states as Record<string, number>)[status] ?? 0), 0) !== filteredTotal) {
+    throw invalidDownloadJobsResponse(response);
+  }
   const pageProgress: NonNullable<DownloadJobsPage["meta"]["pageProgress"]> = [];
   if (payload.meta.page_progress !== undefined) {
     if (!Array.isArray(payload.meta.page_progress)) throw invalidDownloadJobsResponse(response);
@@ -1029,6 +1079,7 @@ export async function getDownloadJobsPage({
     }
   }
   return { data, meta: { limit, offset, total: payload.meta.total,
+    ...(filteredTotal === undefined ? {} : {filteredTotal: filteredTotal as number}),
     ...(payload.meta.recovering_job_id === undefined ? {} : {recoveringJobId:payload.meta.recovering_job_id as string | null}),
     ...(states === undefined ? {} : {states:states as Partial<Record<DownloadJobStatus, number>>}),
     ...(payload.meta.page_progress === undefined ? {} : {pageProgress}),
@@ -1454,10 +1505,34 @@ export async function registerOnlineReaderChapter(
   return { chapterId: payload.data.chapter_id, seriesId: payload.data.series_id };
 }
 
-export async function openOnlineReaderChapter(chapterId: string): Promise<ReaderChapter> {
+export interface ReaderOpen {
+  chapter: ReaderChapter;
+  progress: ReaderProgress | null;
+}
+
+export async function openOnlineReader(chapterId: string, restart = false, prepare = false): Promise<ReaderOpen> {
+  if (!UUID_V4_PATTERN.test(chapterId)) throw new RangeError("chapterId must be a UUID v4");
+  const { payload, response } = await requestJson(`/reader/${encodeURIComponent(chapterId)}/open`, {
+    method: "POST", body: JSON.stringify({ restart, ...(prepare ? { prepare: true } : {}) }),
+  });
+  if (!isRecord(payload) || !hasExactKeys(payload, ["data", "meta"]) ||
+    !isRecord(payload.meta) || Object.keys(payload.meta).length !== 0 ||
+    !isRecord(payload.data) || !hasExactKeys(payload.data, ["chapter", "progress"])) {
+    throw invalidReaderResponse(response);
+  }
+  const chapter = parseReaderChapter(payload.data.chapter);
+  const progress = payload.data.progress === null ? null : parseReaderProgress(payload.data.progress, chapterId);
+  if (chapter === null || chapter.chapterId !== chapterId ||
+    (payload.data.progress !== null && (progress === null || progress.seriesId !== chapter.seriesId))) {
+    throw invalidReaderResponse(response);
+  }
+  return { chapter, progress };
+}
+
+export async function openOnlineReaderChapter(chapterId: string, restart = false): Promise<ReaderChapter> {
   if (!UUID_V4_PATTERN.test(chapterId)) throw new RangeError("chapterId must be a UUID v4");
   const { payload, response } = await requestJson(`/reader/${encodeURIComponent(chapterId)}/session`, {
-    method: "POST", body: JSON.stringify({ restart: true }),
+    method: "POST", body: JSON.stringify({ restart }),
   });
   if (
     !isRecord(payload) || !hasExactKeys(payload, ["data", "meta"]) ||
@@ -1468,9 +1543,14 @@ export async function openOnlineReaderChapter(chapterId: string): Promise<Reader
     payload.data.chapter_id !== chapterId || payload.data.state !== "complete" ||
     typeof payload.data.page_count !== "number" || !Number.isSafeInteger(payload.data.page_count) ||
     payload.data.page_count < 1 || payload.data.page_count > MAX_READER_PAGE_COUNT ||
-    !Array.isArray(payload.data.ready_pages) || payload.data.ready_pages.length !== 0 ||
+    !Array.isArray(payload.data.ready_pages) || payload.data.ready_pages.length > payload.data.page_count ||
+    payload.data.ready_pages.some((page: unknown) => typeof page !== "number" || !Number.isSafeInteger(page) ||
+      page < 1 || page > MAX_READER_PAGE_COUNT) ||
+    new Set(payload.data.ready_pages).size !== payload.data.ready_pages.length ||
     payload.data.error_code !== null
   ) throw invalidReaderResponse(response);
+  const pageCount = payload.data.page_count;
+  if (payload.data.ready_pages.some((page: number) => page > pageCount)) throw invalidReaderResponse(response);
   return getReaderChapter(chapterId);
 }
 
@@ -1501,11 +1581,13 @@ export async function getReaderChaptersPage({
   limit,
   offset,
   order = "asc",
+  query = "",
 }: {
   seriesId: string;
   limit: number;
   offset: number;
   order?: "asc" | "desc";
+  query?: string;
 }): Promise<ReaderChaptersPage> {
   if (!UUID_V4_PATTERN.test(seriesId)) {
     throw new RangeError("seriesId must be a UUID v4");
@@ -1520,6 +1602,8 @@ export async function getReaderChaptersPage({
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (order !== "asc" && order !== "desc") throw new RangeError("Invalid chapter order");
   if (order === "desc") params.set("order", order);
+  if (typeof query !== "string" || query.length > 200) throw new RangeError("Invalid chapter search");
+  if (query.trim()) params.set("q", query.trim());
   const { payload, response } = await requestJson(
     `/reader/series/${encodeURIComponent(seriesId)}/chapters?${params.toString()}`,
   );
@@ -1552,7 +1636,7 @@ export async function getReaderChaptersPage({
     chapterIds.add(chapter.chapterId);
     data.push(chapter);
   }
-  if (data.length > limit || offset + data.length > payload.meta.total) {
+  if (data.length > limit || (data.length > 0 && offset + data.length > payload.meta.total)) {
     throw invalidReaderResponse(response);
   }
 
@@ -2395,6 +2479,8 @@ export async function getLibraryPage({
   limit,
   offset,
   readingStatus,
+  query = "",
+  sort,
 }: LibraryPageRequest): Promise<LibraryPage> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
     throw new RangeError("limit must be between 1 and 500");
@@ -2402,9 +2488,15 @@ export async function getLibraryPage({
   if (!Number.isSafeInteger(offset) || offset < 0) {
     throw new RangeError("offset must be a non-negative safe integer");
   }
+  if (query.length > 200) throw new RangeError("query must not exceed 200 characters");
+  if (sort !== undefined && !["title", "recent", "updated"].includes(sort)) {
+    throw new RangeError("sort is not supported");
+  }
 
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (readingStatus !== undefined) params.set("reading_status", readingStatus);
+  if (query.trim()) params.set("q", query.trim());
+  if (sort !== undefined) params.set("sort", sort);
   const { payload, response } = await requestJson(`/library?${params.toString()}`);
   const meta = isRecord(payload) && isRecord(payload.meta) ? payload.meta : null;
   if (
@@ -2469,12 +2561,13 @@ export async function getRecentLibrary(limit = 4): Promise<RecentLibraryPage> {
   return { data, meta: { limit } };
 }
 
-export async function getRecentReaderProgress(limit = 4): Promise<RecentReaderProgressPage> {
+export async function getRecentReaderProgress(limit = 4, perSeries = false): Promise<RecentReaderProgressPage> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_HOME_RECENT_LIMIT) {
     throw new RangeError("limit must be between 1 and 20");
   }
 
   const params = new URLSearchParams({ limit: String(limit) });
+  if (perSeries) params.set("per_series", "true");
   const { payload, response } = await requestJson(
     `/reader/progress/recent?${params.toString()}`,
   );
@@ -2492,6 +2585,7 @@ export async function getRecentReaderProgress(limit = 4): Promise<RecentReaderPr
 
   const data: RecentReaderProgress[] = [];
   const chapterIds = new Set<string>();
+  const seriesIds = new Set<string>();
   for (const record of payload.data) {
     if (
       !isRecord(record) ||
@@ -2518,11 +2612,13 @@ export async function getRecentReaderProgress(limit = 4): Promise<RecentReaderPr
       !/^(?:0|[1-9]\d?|100)\.\d{2}$/.test(record.percentage) ||
       (record.percentage.startsWith("100.") && record.percentage !== "100.00") ||
       !isTimestamp(record.updated_at) ||
-      chapterIds.has(record.chapter_id)
+      chapterIds.has(record.chapter_id) ||
+      (perSeries && seriesIds.has(record.series_id))
     ) {
       throw invalidReaderResponse(response);
     }
     chapterIds.add(record.chapter_id);
+    seriesIds.add(record.series_id);
     data.push({
       seriesId: record.series_id,
       seriesDisplayTitle: record.display_title,
@@ -2795,4 +2891,49 @@ export async function getSystemVersion(): Promise<VersionResponse> {
   }
 
   return { app_version: payload.app_version, api_version: payload.api_version };
+}
+
+export interface Recommendation {
+  remoteId: string; title: string; aliases: string[]; genres: string[]; coverUrl: string | null;
+}
+
+export interface PublicSource { sourceId:string; name:string; language:string }
+export async function getPublicSources(): Promise<PublicSource[]> {
+  const {payload,response}=await requestJson("/connectors/public-sources");
+  const invalid=()=>new ApiError({code:null,message:"No se pudo consultar la lista de fuentes.",retryable:true,status:response.status,traceId:response.headers.get("X-Trace-ID")});
+  if(!isRecord(payload)||!Array.isArray(payload.data)||payload.data.length>32) throw invalid();
+  const seen=new Set<string>();
+  return payload.data.map((item:unknown)=>{
+    if(!isRecord(item)||typeof item.source_id!=="string"||!/^[A-Za-z0-9._-]{1,80}$/.test(item.source_id)||seen.has(item.source_id)||
+      typeof item.name!=="string"||!item.name.trim()||item.name.length>80||typeof item.language!=="string"||!['es','en'].includes(item.language)) throw invalid();
+    seen.add(item.source_id);
+    return {sourceId:item.source_id,name:item.name,language:item.language as string};
+  });
+}
+export interface RecommendationFeed {
+  data: Recommendation[];
+  meta: { provider: "MangaDex"; status: "ready" | "stale" | "unavailable"; updatedAt: string | null; retryAt: string | null };
+}
+export async function getRecommendations(): Promise<RecommendationFeed> {
+  const {payload, response} = await requestJson("/recommendations");
+  const invalid = () => new ApiError({code: null, message: "No se pudo leer la lista de recomendaciones.",
+    retryable: true, status: response.status, traceId: response.headers.get("X-Trace-ID")});
+  const shortText = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 200 && !Array.from(value).some((char)=>char.charCodeAt(0)<32);
+  const texts = (value: unknown, limit: number): value is string[] => Array.isArray(value) && value.length <= limit && value.every(shortText);
+  const timestamp = (value: unknown): value is string | null => value === null || (typeof value === "string" && value.length <= 40 && Number.isFinite(Date.parse(value)));
+  if (!isRecord(payload) || !Array.isArray(payload.data) || payload.data.length > 24 || !isRecord(payload.meta) ||
+      payload.meta.provider !== "MangaDex" || payload.meta.criterion !== "followed_count" ||
+      typeof payload.meta.status !== "string" || !["ready", "stale", "unavailable"].includes(payload.meta.status) ||
+      !timestamp(payload.meta.updated_at) || !timestamp(payload.meta.retry_at)) throw invalid();
+  const data: Recommendation[] = [];
+  const seen = new Set<string>();
+  for (const item of payload.data) {
+    if (!isRecord(item) || typeof item.remote_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(item.remote_id) ||
+        seen.has(item.remote_id) || !shortText(item.title) || !texts(item.aliases, 6) || !texts(item.genres, 64) ||
+        !(item.cover_url === null || (typeof item.cover_url === "string" && /^https:\/\/uploads\.mangadex\.org\/covers\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(?:jpg|jpeg|png|webp)$/.test(item.cover_url)))) throw invalid();
+    seen.add(item.remote_id);
+    data.push({remoteId:item.remote_id, title:item.title, aliases:item.aliases, genres:item.genres, coverUrl:item.cover_url});
+  }
+  if (payload.meta.status === "unavailable" && data.length || payload.meta.status !== "unavailable" && payload.meta.updated_at === null) throw invalid();
+  return {data, meta:{provider:"MangaDex", status:payload.meta.status as RecommendationFeed["meta"]["status"], updatedAt:payload.meta.updated_at, retryAt:payload.meta.retry_at}};
 }

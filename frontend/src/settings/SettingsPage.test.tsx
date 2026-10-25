@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsPage } from "./SettingsPage";
 import { useAppearanceStore } from "../app/appearanceStore";
 
+vi.mock("../app/AppUpdates", () => ({ AppUpdates: () => null }));
+
 function mockResponse(payload: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,

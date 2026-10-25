@@ -5,6 +5,7 @@ import { ApiError, getReaderSettings, putReaderSettings } from "../api/client";
 import type { ReaderSettings } from "../api/client";
 import { LocalImportPanel } from "../library/LibraryPage";
 import { useAppearanceStore } from "../app/appearanceStore";
+import { AppUpdates } from "../app/AppUpdates";
 import styles from "./SettingsPage.module.css";
 
 const READER_SETTINGS_QUERY_KEY = ["reader-settings"] as const;
@@ -116,6 +117,7 @@ export function SettingsPage() {
       </header>
 
       <LocalImportPanel />
+      <AppUpdates />
 
       <section aria-labelledby="appearance-title" className={styles.appearanceCard}>
         <h2 id="appearance-title">Apariencia</h2>

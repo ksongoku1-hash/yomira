@@ -35,7 +35,7 @@
 }
 
 body {
-  min-width: 320px;
+  min-width: 0;
   min-height: 100vh;
   margin: 0;
   background: var(--background);
@@ -49,6 +49,8 @@ input {
 button, a, input, select, summary { -webkit-tap-highlight-color: #75d5ff25; }
 button, input, select { accent-color: var(--accent); }
 button, a { touch-action: manipulation; }
+button, a, summary { transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease; }
+button svg, a svg { flex-shrink: 0; }
 ::selection { background: #75d5ff38; color: var(--text); }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 

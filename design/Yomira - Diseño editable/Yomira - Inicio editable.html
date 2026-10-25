@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Yomira — Inicio editable</title>
+  <meta name="description" content="Maqueta independiente y editable del inicio de Yomira.">
+  <!--
+    CÓMO REDISEÑAR ESTE ARCHIVO
+    1. Modifica los colores y tamaños en los tres bloques CSS de abajo.
+    2. Busca las secciones numeradas del HTML para mover o cambiar el contenido.
+    3. Conserva la carpeta assets junto al HTML para mantener las portadas.
+    4. Guarda el archivo .html y ábrelo con doble clic para ver tus cambios.
+    5. Devuelve el HTML completo para integrar tu nuevo diseño en Yomira.
+
+    Los botones son de demostración. No hay conexión con el programa real.
+    Se usa la marca SVG de Yomira para mantener el archivo ligero.
+  -->
+  <style>
+/* A. COLORES, TIPOGRAFÍA Y BASE GENERAL */
+:root {
+  --background: #080c13;
+  --surface: #131c29;
+  --surface-soft: #0e1622;
+  --surface-hover: #1d2c40;
+  --text: #eef6ff;
+  --text-secondary: #c5d3e5;
+  --text-muted: #9aaec7;
+  --accent: #75d5ff;
+  --accent-hover: #b1e9ff;
+  --border-color: #28374c;
+  --border-strong: #405572;
+  --panel-background: linear-gradient(145deg, #1c293c99, #0e1622ee 70%);
+  --panel-border: #9bc3ec2b;
+  --panel-shadow: inset 0 1px 0 #d8efff09, 0 14px 36px #00000030;
+  --radius-panel: 1rem;
+  --radius-control: 0.6rem;
+  --title-size: clamp(2rem, 3.2vw, 3rem);
+  --motion-fast: 160ms;
+  --success: #9ce6bb;
+  --warning: #f0d79a;
+  color-scheme: dark;
+  color: var(--text);
+  background: var(--background);
+  font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  font-synthesis: none;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 0;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--background);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button, a, input, select, summary { -webkit-tap-highlight-color: #75d5ff25; }
+button, input, select { accent-color: var(--accent); }
+button, a { touch-action: manipulation; }
+button, a, summary { transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease; }
+button svg, a svg { flex-shrink: 0; }
+::selection { background: #75d5ff38; color: var(--text); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+@media (prefers-contrast: more) {
+  :root { --border-color: #7a92ae; --border-strong: #9aaec7; --panel-border: #7a92ae; --text-muted: #c5d3e5; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+/* B. BARRA LATERAL, NAVEGACIÓN Y VERSIÓN MÓVIL */
+.appShell { min-height: 100dvh; background: var(--background); color: var(--text); }
+.appShell:not(.readerShell) {
+  --background: #060b14; --surface: #0d1524; --surface-soft: #121e35;
+  --surface-hover: #172846; --panel-border: #1f3153; --border-color: #1f3153;
+  --border-strong: #37537b; --text: #e8f0ff; --text-secondary: #b9cbe8;
+  --text-muted: #8aa0c6; --accent: #4cc2ff; --accent-hover: #8ddaff;
+}
+.topBar {
+  position: fixed; z-index: 20; inset: 0 auto 0 0; display: flex;
+  flex-direction: column; gap: 6px; width: 72px; height: 100dvh;
+  padding: 14px 10px; border-right: 1px solid var(--panel-border);
+  background: var(--surface); transition: width 220ms ease;
+}
+.topBar:is(:hover, :focus-within) { width: 200px; box-shadow: 12px 0 32px #0004; }
+.brand { display: flex; align-items: center; gap: 0; min-height: 54px; padding: 0 6px 14px; color: var(--text); text-decoration: none; flex: none; white-space: nowrap; }
+.brandCopy { display: grid; max-width: 0; overflow: hidden; opacity: 0; }
+.brand strong { font-size: 17px; line-height: 1.25; }
+.brand small { color: var(--text-muted); font-size: 10px; line-height: 1.1; }
+.brandMark { flex: none; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: linear-gradient(135deg, #2b7bff, var(--accent)); }
+.navigation, .navigationSection { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.navigation { min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+.navigationSection h2 { display: none; }
+.navigationLink { display: flex; align-items: center; gap: 0; min-height: 48px; padding: 11px 16px; border-radius: 14px; color: var(--text-muted); font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap; transition: color var(--motion-fast), background var(--motion-fast); }
+.navigationLink:hover { color: var(--text); background: var(--surface-soft); }
+.navigationLinkActive { color: var(--accent); background: linear-gradient(135deg, #17356b, #12294d); box-shadow: inset 3px 0 0 var(--accent); }
+.navigationIcon { display: inline-flex; justify-content: center; width: 20px; flex: none; }
+.navigationIcon svg, .menuButton > svg { width: 20px; height: 20px; flex: none; }
+.navigationLabel, .menuLabel { display: block; max-width: 0; overflow: hidden; opacity: 0; white-space: nowrap; }
+.topBar:is(:hover, :focus-within) .brand { gap: 10px; }
+.topBar:is(:hover, :focus-within) .brandCopy,
+.topBar:is(:hover, :focus-within) .navigationLabel,
+.topBar:is(:hover, :focus-within) .menuLabel { max-width: 140px; opacity: 1; }
+.topBar:is(:hover, :focus-within) .navigationLink,
+.topBar:is(:hover, :focus-within) .menuButton { gap: 12px; }
+.localStatus { display: flex; align-items: center; gap: 0; flex: none; min-height: 44px; margin-top: auto; padding: 10px 22px; color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.localDot { display: block; width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px #4cc2ff66; }
+.topBar:is(:hover, :focus-within) .localStatus { gap: 12px; padding-inline: 16px; }
+.menuButton { display: flex; align-items: center; gap: 0; flex: none; min-height: 44px; width: 100%; padding: 10px 16px; border: 0; border-radius: 14px; background: transparent; color: var(--text-muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.menuButton:hover, .menuButton[aria-expanded="true"] { background: var(--surface-soft); color: var(--text); }
+.navigationLink:focus-visible, .menuButton:focus-visible { outline-offset: -2px; }
+.moreNavigation { position: absolute; bottom: 14px; left: calc(100% + 10px); min-width: 200px; padding: 6px; border: 1px solid var(--border-strong); border-radius: 16px; background: var(--surface); box-shadow: 0 12px 40px #0008; }
+.moreNavigation .navigationLink { gap: 12px; padding: 12px; font-size: 14px; }
+.moreNavigation svg { width: 20px; height: 20px; flex: none; }
+.appMain { min-width: 0; margin-left: 72px; }
+.mainContent { width: 100%; max-width: 1180px; margin: 0 auto; padding: 18px 28px 60px; }
+.readerShell .topBar { display: none; }
+.readerShell .appMain { margin-left: 0; }
+.readerShell .mainContent { width: 100%; max-width: none; padding: 0; }
+.skipLink { position: fixed; top: 12px; left: 16px; z-index: 100; padding: 12px 16px; border-radius: var(--radius-control); background: var(--accent); color: var(--background); transform: translateY(-180%); }
+.skipLink:focus { transform: none; }
+.simpleGraphics { --panel-shadow: none; --panel-background: var(--surface); }
+.simpleGraphics, .simpleGraphics * { box-shadow: none !important; backdrop-filter: none !important; }
+.simpleGraphics *, .simpleGraphics *::before, .simpleGraphics *::after { animation: none !important; transition: none !important; }
+@media (max-width: 820px) {
+  .topBar, .topBar:is(:hover, :focus-within) {
+    inset: auto 0 0; width: 100%; height: auto; min-height: 64px;
+    flex-direction: row; align-items: stretch; gap: 0;
+    padding: 6px 6px max(6px, env(safe-area-inset-bottom));
+    border-right: 0; border-top: 1px solid var(--panel-border); box-shadow: none;
+  }
+  .topBar .brand, .localStatus { display: none; }
+  .navigation { display: flex; flex: 4; overflow: visible; gap: 0; }
+  .navigationSection { display: contents; }
+  .navigationLink, .topBar:is(:hover, :focus-within) .navigationLink {
+    flex: 1; flex-direction: column; justify-content: center; gap: 3px;
+    min-width: 0; min-height: 48px; padding: 4px 2px; font-size: 10.5px;
+  }
+  .navigationLabel, .menuLabel { max-width: none; opacity: 1; }
+  .navigationIcon svg { width: 21px; height: 21px; }
+  .navigationLinkActive { box-shadow: inset 0 -2px var(--accent); }
+  .menuButton, .topBar:is(:hover, :focus-within) .menuButton {
+    flex: 1; flex-direction: column; justify-content: center; gap: 3px;
+    min-width: 0; min-height: 48px; width: auto; padding: 4px 2px; font-size: 10.5px;
+  }
+  .moreNavigation { top: auto; right: 8px; bottom: calc(100% + 8px); left: auto; max-width: calc(100vw - 16px); }
+  .moreNavigation .navigationLink, .topBar:is(:hover, :focus-within) .moreNavigation .navigationLink { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 12px; font-size: 14px; }
+  .appMain { margin-left: 0; }
+  .mainContent { padding: 14px 14px calc(92px + env(safe-area-inset-bottom)); }
+}
+@media (prefers-contrast: more) {
+  .appShell:not(.readerShell) { --border-color: #7a92ae; --border-strong: #9aaec7; --panel-border: #7a92ae; --text-muted: #c5d3e5; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+
+
+/* C. INICIO: DESTACADO, PROGRESO, TARJETAS Y BOTONES */
+.page { display: grid; gap: 20px; min-width: 0; }
+.pageHeader { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.quickSearch { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; padding: 0 6px 0 14px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--surface); color: var(--text-muted); }
+.quickSearch:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px #4cc2ff38; }
+.quickSearch > svg { flex: none; }
+.quickSearch input { flex: 1; min-width: 0; width: 100%; min-height: 46px; padding: 10px 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 14px; }
+.quickSearch input:focus-visible { outline: 0; }
+.quickSearch input::placeholder { color: var(--text-muted); opacity: 1; }
+.quickSearch kbd { padding: 1px 7px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 11px; }
+.quickSearch button { display: grid; place-items: center; flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.quickSearch button:hover { background: var(--surface-hover); color: var(--accent); }
+.surpriseButton { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 46px; padding: 9px 14px; border: 0; border-radius: 99px; background: linear-gradient(135deg, #2b7bff, var(--accent)); color: #04101f; font: inherit; font-size: 13px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.surpriseButton:hover:not(:disabled) { filter: brightness(1.1); }
+.surpriseButton:disabled { opacity: 0.5; cursor: not-allowed; }
+.serviceReady { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.serviceReady::before { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px #4cc2ff70; content: ""; }
+.eyebrow { margin: 0; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; }
+.welcome { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 210px; align-items: center; gap: 30px; min-width: 0; overflow: hidden; padding: 34px; border: 1px solid var(--border-color); border-radius: 26px; background: radial-gradient(600px 300px at 85% 40%, #c81e2847, transparent 70%), linear-gradient(135deg, #0f1c35, #08101d); }
+.welcome:not(:has(> .heroPoster)) { grid-template-columns: minmax(0, 1fr); }
+.welcomeCopy { display: grid; justify-items: start; min-width: 0; }
+.welcomeCopy h1 { max-width: 23ch; margin: 8px 0 10px; color: var(--text); font-size: clamp(36px, 5vw, 62px); font-weight: 750; line-height: 1.04; letter-spacing: -0.03em; overflow-wrap: anywhere; text-wrap: balance; }
+.welcomeCopy h1 span { color: var(--accent); }
+.intro { margin: 0 0 18px; color: var(--text-muted); font-size: 14px; line-height: 1.5; }
+.heroReading { display: flex; align-items: center; gap: 14px; width: min(100%, 520px); padding: 12px 14px; border: 1px solid var(--border-color); border-radius: 16px; background: #0a142699; }
+.progressRing, .cardRing { display: grid; place-items: center; flex: none; width: 54px; height: 54px; border-radius: 50%; background: conic-gradient(var(--accent) var(--progress, 0%), var(--border-color) 0); }
+.progressRing i, .cardRing i { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--surface); color: var(--text); font-size: 11.5px; font-style: normal; font-weight: 700; font-variant-numeric: tabular-nums; }
+.resumeTitle { display: grid; gap: 3px; min-width: 0; margin: 0; color: var(--accent); font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.resumeTitle > span { color: var(--text); font-size: 14px; line-height: 1.45; }
+.resumeTitle small { color: var(--text-muted); font-size: 12px; font-weight: 400; }
+.resumeTitle > small:first-child { color: var(--accent); font-weight: 650; }
+.heroActions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; max-width: 100%; }
+.primaryAction, .secondaryAction, .chapterPickerLink, .libraryLink, .diagnosticsLink, .readAction, .chapterAction { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; max-width: 100%; border: 1px solid transparent; border-radius: 12px; color: var(--text); font: inherit; font-size: 13px; font-weight: 700; text-decoration: none; cursor: pointer; }
+.primaryAction { padding: 13px 20px; background: linear-gradient(135deg, #2b7bff, var(--accent)); color: #04101f; }
+.secondaryAction { padding: 13px 18px; border-color: var(--border-color); background: var(--surface-hover); }
+.secondaryAction:hover, .chapterAction:hover { border-color: var(--accent); }
+.secondaryAction:disabled { cursor: not-allowed; opacity: 0.65; }
+.splitAction { display: inline-flex; max-width: 100%; border-radius: 14px; background: linear-gradient(135deg, #2b7bff, var(--accent)); box-shadow: 0 8px 28px #4cc2ff38; }
+.splitAction .primaryAction, .chapterPickerLink { background: transparent; color: #04101f; }
+.splitAction .primaryAction { border-radius: 14px 0 0 14px; font-weight: 800; }
+.chapterPickerLink { flex: none; min-width: 44px; padding: 13px; border-left-color: #0003; border-radius: 0 14px 14px 0; }
+.chapterPickerLink svg { transform: rotate(90deg); }
+.primaryAction:hover { filter: brightness(1.1); }
+.splitAction .primaryAction:hover, .chapterPickerLink:hover { background: #ffffff24; }
+.heroPoster { justify-self: center; width: 100%; min-width: 0; overflow: hidden; border: 1px solid #ffffff1f; border-radius: 14px; background: var(--surface-soft); color: var(--text); text-decoration: none; box-shadow: 0 14px 40px #0007; transform: rotate(2deg); transition: transform 180ms ease, border-color 180ms ease; }
+.heroPoster > span:first-child { display: block; }
+.heroPoster img, .heroPoster [role="img"] { display: block; width: 100%; aspect-ratio: 2 / 3; object-fit: contain; border: 0; border-radius: 0; }
+.heroPoster .coverPlaceholder { display: grid; }
+.heroPoster .coverPlaceholder img { width: 48px; aspect-ratio: 1; }
+.posterCaption { display: none; }
+.featuredTitle { display: grid; gap: 3px; max-width: 100%; margin-top: 4px; color: var(--text); font-size: 14px; font-weight: 650; text-decoration: none; overflow-wrap: anywhere; }
+.featuredTitle span { color: var(--text-muted); font-size: 12px; font-weight: 400; }
+.featuredTitle:hover { color: var(--accent); }
+.serviceCard { display: grid; grid-column: 1 / -1; justify-items: start; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--surface); }
+.serviceCard h2, .sectionHeader h2 { margin: 0; color: var(--text); font-size: 22px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.35; }
+.servicePending, .serviceUnavailable p, .statusMessage, .sectionDescription { margin: 0; color: var(--text-muted); line-height: 1.5; }
+.serviceUnavailable, .serviceError { display: grid; justify-items: start; gap: 10px; min-width: 0; }
+.serviceError, .sectionError { padding: 16px; border: 1px solid #754044; border-radius: 14px; background: #211619; color: var(--text-secondary); }
+.serviceError h3, .sectionError h3 { margin: 0 0 8px; color: var(--text); font-size: 16px; }
+.serviceError p, .sectionError p { margin: 6px 0 0; overflow-wrap: anywhere; }
+.errorDetails { font-size: 13px; }
+.errorDetails code { color: #ffd5d8; overflow-wrap: anywhere; }
+.libraryLink, .diagnosticsLink { padding: 6px 0; color: var(--accent); }
+.recentSections { display: flex; flex-direction: column; gap: 40px; min-width: 0; margin-top: 20px; }
+.recentSection { display: grid; gap: 14px; min-width: 0; }
+.sectionHeader { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 12px; min-width: 0; }
+.sectionHeader > div { display: grid; gap: 3px; min-width: 0; }
+.sectionDescription { font-size: 12px; }
+.sectionHeader .progressFilters { display: flex; gap: 3px; max-width: 100%; padding: 3px; border: 1px solid var(--border-color); border-radius: 99px; background: var(--surface); }
+.progressFilters button { flex: 0 0 auto; min-width: 0; min-height: 44px; padding: 6px 14px; border: 0; border-radius: 99px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12.5px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.progressFilters button:hover { color: var(--text); }
+.progressFilters button[aria-pressed="true"] { background: linear-gradient(135deg, #2b7bff, #1f5fd1); color: #fff; }
+.continueList { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 14px; margin: 0; padding: 0; list-style: none; }
+.recentItem { min-width: 0; }
+.progressItem { position: relative; display: flex; gap: 14px; height: 100%; min-width: 0; padding: 12px; border: 1px solid var(--border-color); border-radius: 18px; background: var(--surface); transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease; }
+.progressChapterLink { display: block; align-self: start; flex: none; width: 86px; border-radius: 12px; color: var(--text); text-decoration: none; }
+.progressCover, .coverPlaceholder { width: 100%; aspect-ratio: 2 / 3; border: 1px solid #ffffff1f; border-radius: 12px; object-fit: contain; background: var(--surface-soft); }
+.coverPlaceholder { display: grid; align-content: center; justify-items: center; gap: 14px; padding: 12px; color: var(--text-muted); font-size: 12px; text-align: center; overflow-wrap: anywhere; }
+.continueList .coverPlaceholder { padding: 6px; }
+.continueList .coverPlaceholder > span { display: none; }
+.cardRing { position: absolute; top: 12px; left: 76px; width: 34px; height: 34px; }
+.cardRing i { width: 26px; height: 26px; font-size: 9px; }
+.progressInfo { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.progressSeriesLink { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--text); font-size: 15px; font-weight: 700; line-height: 1.4; text-decoration: none; overflow-wrap: anywhere; }
+.progressSeriesLink:hover { color: var(--accent); }
+.progressPosition { margin: 2px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.readingBar { appearance: none; width: 100%; height: 5px; margin: 10px 0 6px; border: 0; border-radius: 99px; overflow: hidden; background: var(--border-color); accent-color: var(--accent); }
+.readingBar::-webkit-progress-bar { background: var(--border-color); }
+.readingBar::-webkit-progress-value { border-radius: 99px; background: linear-gradient(90deg, #2b7bff, var(--accent)); }
+.readingBar::-moz-progress-bar { border-radius: 99px; background: linear-gradient(90deg, #2b7bff, var(--accent)); }
+.savedAt { margin-bottom: 8px; color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+.progressActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.readAction, .chapterAction { padding: 6px 12px; border-radius: 10px; font-size: 12px; }
+.readAction { background: var(--accent); color: #04101f; }
+.readAction:hover { background: var(--accent-hover); }
+.chapterAction { border-color: var(--border-color); background: var(--surface-hover); }
+.recentList { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 130px), 1fr)); gap: 14px; margin: 0; padding: 0; list-style: none; }
+.seriesLink { display: grid; align-content: start; gap: 10px; height: 100%; min-width: 0; border-radius: 14px; color: var(--text); text-decoration: none; }
+.recentCover { width: 100%; aspect-ratio: 2 / 3; border: 1px solid #ffffff1f; border-radius: 14px; background: var(--surface-soft); transition: transform 180ms ease, border-color 180ms ease; }
+.seriesCopy { display: grid; gap: 4px; min-width: 0; }
+.itemTitle { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; min-width: 0; font-size: 13px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
+.itemMetadata { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; color: var(--text-muted); font-size: 11px; }
+.seriesArrow { display: none; }
+.emptyState { display: grid; justify-items: center; gap: 14px; padding: 32px 16px; border: 1px dashed var(--border-strong); border-radius: 18px; text-align: center; }
+.emptyState p, .filterEmpty { margin: 0; color: var(--text-muted); font-size: 14px; }
+.filterEmpty { padding: 20px; border: 1px dashed var(--border-color); border-radius: 14px; }
+.emptyMark { width: 32px; height: 32px; background: url("assets/yomira.svg") center / contain no-repeat; }
+.sectionError { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+@media (hover: hover) and (pointer: fine) {
+  .progressItem:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 10px 30px #0005; }
+  .heroPoster:hover { border-color: var(--accent); transform: rotate(0) scale(1.04); }
+  .seriesLink:hover .recentCover { border-color: var(--accent); transform: translateY(-4px) scale(1.03); }
+}
+@media (max-width: 1000px) {
+  .welcome { grid-template-columns: minmax(0, 1fr) 170px; gap: 24px; padding: 28px; }
+  .pageHeader { flex-wrap: wrap; }
+  .serviceReady { margin-left: auto; }
+}
+@media (max-width: 820px) {
+  .welcome { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 22px; }
+  .heroPoster, .serviceReady { display: none; }
+  .welcomeCopy h1 { font-size: clamp(36px, 7vw, 50px); }
+  .pageHeader { align-items: stretch; }
+  .quickSearch { flex-basis: 100%; }
+  .surpriseButton { margin-left: auto; }
+}
+@media (max-width: 480px) {
+  .quickSearch { gap: 7px; }
+  .quickSearch kbd { display: none; }
+  .heroReading { gap: 10px; padding: 12px; }
+  .heroActions { gap: 8px; width: 100%; }
+  .splitAction { width: 100%; }
+  .splitAction .primaryAction { flex: 1; min-width: 0; padding-inline: 10px; }
+  .heroActions > .secondaryAction { flex: 1 1 auto; padding-inline: 10px; font-size: 12px; }
+  .progressItem { gap: 12px; }
+  .progressChapterLink { width: 68px; }
+  .cardRing { left: 54px; }
+  .readAction, .chapterAction { gap: 4px; padding-inline: 8px; }
+  .progressActions { gap: 4px; }
+  .sectionError { align-items: flex-start; flex-direction: column; }
+}
+
+
+/* D. ESTADOS LOCALES DE LA MAQUETA */
+[hidden] { display: none !important; }
+#demo-status { padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--surface); }
+  </style>
+</head>
+<body>
+<!--
+  MAQUETA EDITABLE DE YOMIRA — INICIO
+  Todos los títulos, porcentajes y fechas de esta página son datos de ejemplo.
+  Este archivo no modifica la aplicación, sus descargas ni tu progreso.
+  Puedes cambiar las clases, los colores, el orden de las secciones y el contenido.
+-->
+<div class="appShell">
+  <a class="skipLink" href="#main-content">Saltar al contenido</a>
+
+  <!-- 1. NAVEGACIÓN: barra lateral en escritorio y barra inferior en móvil. -->
+  <header class="topBar">
+    <a class="brand" href="#main-content" aria-label="Yomira · Inicio">
+      <img class="brandMark" src="assets/yomira.svg" alt="" width="40" height="40">
+      <span class="brandCopy"><strong>Yomira</strong><small>Tu mundo entre páginas</small></span>
+    </a>
+    <nav class="navigation" id="primary-navigation" aria-label="Navegación principal">
+      <div class="navigationSection">
+        <a class="navigationLink navigationLinkActive" href="#main-content" data-nav="Inicio" aria-label="Inicio" aria-current="page" title="Inicio">
+          <span class="navigationIcon"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7v11h-6v-7H9v7H3V10Z"></path></svg></span><span class="navigationLabel">Inicio</span>
+        </a>
+        <a class="navigationLink" href="#recent-library-title" data-nav="Biblioteca" aria-label="Biblioteca" title="Biblioteca">
+          <span class="navigationIcon"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7Z"></path></svg></span><span class="navigationLabel">Biblioteca</span>
+        </a>
+        <a class="navigationLink" href="#demo-search" data-nav="Buscar" aria-label="Buscar" title="Buscar">
+          <span class="navigationIcon"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 18a7 7 0 1 1 0-14a7 7 0 0 1 0 14Zm5-2 5 5"></path></svg></span><span class="navigationLabel">Buscar</span>
+        </a>
+      </div>
+      <div class="navigationSection">
+        <a class="navigationLink" href="#main-content" data-nav="Descargas" aria-label="Cola de descargas" title="Descargas">
+          <span class="navigationIcon"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"></path></svg></span><span class="navigationLabel">Descargas</span>
+        </a>
+      </div>
+    </nav>
+    <div class="localStatus" title="Biblioteca local">
+      <span class="localDot" aria-hidden="true"></span><span class="navigationLabel">Biblioteca local</span>
+    </div>
+    <button class="menuButton" id="demo-menu" type="button" aria-controls="more-navigation" aria-expanded="false" aria-label="Abrir navegación" title="Más opciones">
+      <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11v2m7-2v2m7-2v2"></path></svg><span class="menuLabel">Más</span>
+    </button>
+    <nav class="moreNavigation" id="more-navigation" aria-label="Más opciones" hidden>
+      <a class="navigationLink" href="#main-content" data-demo="Exportar USB"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1ZM9 7h6M9 11h6M11 17h2"></path></svg>Exportar USB</a>
+      <a class="navigationLink" href="#main-content" data-demo="Ajustes"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h8m4 0h4M4 12h2m4 0h10M4 18h10m4 0h2M12 3v6M6 9v6m8 0v6"></path></svg>Ajustes</a>
+      <a class="navigationLink" href="#main-content" data-demo="Diagnóstico"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12C6 3 18 3 22 12 18 21 6 21 2 12Zm13 0a3 3 0 1 1-6 0a3 3 0 0 1 6 0Z"></path></svg>Diagnóstico</a>
+    </nav>
+  </header>
+
+  <div class="appMain">
+    <main class="mainContent" id="main-content" tabindex="-1">
+      <div class="page">
+
+        <!-- 2. BUSCADOR Y ACCESO ALEATORIO: solo actúan sobre esta maqueta. -->
+        <header class="pageHeader">
+          <form class="quickSearch" id="demo-search-form" role="search" aria-label="Buscar historias">
+            <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 18a7 7 0 1 1 0-14a7 7 0 0 1 0 14Zm5-2 5 5"></path></svg>
+            <input id="demo-search" type="text" aria-label="Buscar una historia" placeholder="Busca una historia…" maxlength="200">
+            <kbd aria-hidden="true">/</kbd>
+            <button type="submit" aria-label="Buscar historias" title="Buscar historias"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></button>
+          </form>
+          <button class="surpriseButton" id="demo-surprise" type="button" title="Elegir una tarjeta de ejemplo"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z"></path></svg>Sorpréndeme</button>
+          <p class="serviceReady">Maqueta local · datos de ejemplo</p>
+        </header>
+        <p class="statusMessage" id="demo-status" role="status" aria-live="polite" hidden></p>
+
+        <!-- 3. DESTACADO: cambia aquí el manga, el texto y el progreso del encabezado. -->
+        <section class="welcome" aria-labelledby="home-title">
+          <div class="welcomeCopy">
+            <p class="eyebrow">Retoma tu lectura</p>
+            <h1 id="home-title">The Boxer</h1>
+            <p class="intro">Continúa desde la última página guardada.</p>
+            <div class="heroReading">
+              <span class="progressRing" role="progressbar" aria-label="Progreso de Capítulo 25" aria-valuemin="0" aria-valuemax="100" aria-valuenow="36" style="--progress:36%"><i>36%</i></span>
+              <p class="resumeTitle"><small>Donde lo dejaste</small><span>Capítulo 25 · El rey de la división de peso ligero</span><small>Página 5</small></p>
+            </div>
+            <div class="heroActions">
+              <div class="splitAction">
+                <a class="primaryAction" href="#main-content" data-demo="Continuar lectura de The Boxer" aria-label="Continuar lectura: Capítulo 25"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5 11 7-11 7V5Z"></path></svg>Continuar lectura</a>
+                <a class="chapterPickerLink" href="#main-content" data-demo="Elegir capítulo de The Boxer" aria-label="Elegir capítulo de The Boxer" title="Elegir capítulo"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></a>
+              </div>
+              <a class="secondaryAction" href="#recent-library-title"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7Z"></path></svg>Ver biblioteca</a>
+              <a class="secondaryAction" href="#main-content" data-demo="Explorar la ficha de The Boxer"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 19 5M8 5h11v11M5 7v14h14"></path></svg>Explorar historia</a>
+            </div>
+          </div>
+          <a class="heroPoster" href="#main-content" data-demo="Explorar la ficha de The Boxer" aria-label="Abrir ficha destacada de The Boxer">
+            <span aria-hidden="true"><img class="progressCover" src="assets/boxer.webp" alt="" width="210" height="315"></span>
+          </a>
+        </section>
+
+        <div class="recentSections">
+          <!-- 4. LECTURAS RECIENTES: cada artículo se puede editar o duplicar. -->
+          <section class="recentSection" aria-labelledby="recent-progress-title">
+            <header class="sectionHeader">
+              <div><h2 id="recent-progress-title">Continuar leyendo</h2><p class="sectionDescription">Tu último punto guardado en cada manga.</p></div>
+              <div class="progressFilters" role="group" aria-label="Filtrar lecturas">
+                <button type="button" data-filter="all" aria-pressed="true">Todo</button>
+                <button type="button" data-filter="live" aria-pressed="false">En curso</button>
+                <button type="button" data-filter="end" aria-pressed="false">Terminados</button>
+              </div>
+            </header>
+
+            <ul class="continueList" id="demo-readings">
+              <li class="recentItem" data-status="live" data-title="The Boxer">
+                <article class="progressItem" id="demo-boxer">
+                  <a class="progressChapterLink" href="#main-content" data-demo="Abrir The Boxer" aria-label="Abrir The Boxer"><img class="progressCover" src="assets/boxer.webp" alt="Portada de The Boxer" width="86" height="129"></a>
+                  <span class="cardRing" aria-hidden="true" style="--progress:36%"><i>36</i></span>
+                  <div class="progressInfo">
+                    <a class="progressSeriesLink" href="#main-content" data-demo="Ver la ficha de The Boxer">The Boxer</a>
+                    <p class="progressPosition">Capítulo 25 · Página 5 · 36.36 %</p>
+                    <progress class="readingBar" max="100" value="36.36" aria-label="Progreso de Capítulo 25 de The Boxer"></progress>
+                    <time class="savedAt" datetime="2026-10-21T00:42:00-05:00">Guardado 21 oct 2026, 0:42</time>
+                    <div class="progressActions">
+                      <a class="readAction" href="#main-content" data-demo="Leer The Boxer"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5 11 7-11 7V5Z"></path></svg>Leer</a>
+                      <a class="chapterAction" href="#main-content" data-demo="Ver capítulos de The Boxer"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h13M8 12h13M8 19h13M3 5h1M3 12h1M3 19h1"></path></svg>Capítulos</a>
+                    </div>
+                  </div>
+                </article>
+              </li>
+
+              <li class="recentItem" data-status="end" data-title="Death Note (2003)">
+                <article class="progressItem" id="demo-deathnote">
+                  <a class="progressChapterLink" href="#main-content" data-demo="Abrir Death Note" aria-label="Abrir Death Note"><img class="progressCover" src="assets/deathnote.webp" alt="Portada de Death Note" width="86" height="129"></a>
+                  <span class="cardRing" aria-hidden="true" style="--progress:100%"><i>100</i></span>
+                  <div class="progressInfo">
+                    <a class="progressSeriesLink" href="#main-content" data-demo="Ver la ficha de Death Note">Death Note (2003)</a>
+                    <p class="progressPosition">Capítulo 1 · Página 60 · 100.00 %</p>
+                    <progress class="readingBar" max="100" value="100" aria-label="Progreso de Capítulo 1 de Death Note"></progress>
+                    <time class="savedAt" datetime="2026-10-12T00:51:00-05:00">Capítulo terminado · 12 oct 2026, 0:51</time>
+                    <div class="progressActions">
+                      <a class="readAction" href="#main-content" data-demo="Ver capítulos de Death Note"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h13M8 12h13M8 19h13M3 5h1M3 12h1M3 19h1"></path></svg>Capítulos</a>
+                      <a class="chapterAction" href="#main-content" data-demo="Abrir el capítulo de Death Note"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 2M5 16a8 8 0 0 0 13 2"></path></svg>Abrir</a>
+                    </div>
+                  </div>
+                </article>
+              </li>
+
+              <li class="recentItem" data-status="live" data-title="Mato Seihei no Slave">
+                <article class="progressItem" id="demo-mato">
+                  <a class="progressChapterLink" href="#main-content" data-demo="Abrir Mato Seihei no Slave" aria-label="Abrir Mato Seihei no Slave"><img class="progressCover" src="assets/mato.webp" alt="Portada de Mato Seihei no Slave" width="86" height="129"></a>
+                  <span class="cardRing" aria-hidden="true" style="--progress:45%"><i>45</i></span>
+                  <div class="progressInfo">
+                    <a class="progressSeriesLink" href="#main-content" data-demo="Ver la ficha de Mato Seihei no Slave">Mato Seihei no Slave</a>
+                    <p class="progressPosition">Capítulo 001 · Página 30 · 45.31 %</p>
+                    <progress class="readingBar" max="100" value="45.31" aria-label="Progreso de Capítulo 001 de Mato Seihei no Slave"></progress>
+                    <time class="savedAt" datetime="2026-10-11T18:20:00-05:00">Guardado 11 oct 2026, 18:20</time>
+                    <div class="progressActions">
+                      <a class="readAction" href="#main-content" data-demo="Leer Mato Seihei no Slave"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5 11 7-11 7V5Z"></path></svg>Leer</a>
+                      <a class="chapterAction" href="#main-content" data-demo="Ver capítulos de Mato Seihei no Slave"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h13M8 12h13M8 19h13M3 5h1M3 12h1M3 19h1"></path></svg>Capítulos</a>
+                    </div>
+                  </div>
+                </article>
+              </li>
+
+              <li class="recentItem" data-status="live" data-title="Dragon Ball">
+                <article class="progressItem" id="demo-dragonball">
+                  <a class="progressChapterLink" href="#main-content" data-demo="Abrir Dragon Ball" aria-label="Abrir Dragon Ball"><img class="progressCover" src="assets/dragonball.webp" alt="Portada de Dragon Ball" width="86" height="129"></a>
+                  <span class="cardRing" aria-hidden="true" style="--progress:90%"><i>90</i></span>
+                  <div class="progressInfo">
+                    <a class="progressSeriesLink" href="#main-content" data-demo="Ver la ficha de Dragon Ball">Dragon Ball</a>
+                    <p class="progressPosition">Capítulo 519 · Página 19 · 90.00 %</p>
+                    <progress class="readingBar" max="100" value="90" aria-label="Progreso de Capítulo 519 de Dragon Ball"></progress>
+                    <time class="savedAt" datetime="2026-10-11T18:20:00-05:00">Guardado 11 oct 2026, 18:20</time>
+                    <div class="progressActions">
+                      <a class="readAction" href="#main-content" data-demo="Leer Dragon Ball"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5 11 7-11 7V5Z"></path></svg>Leer</a>
+                      <a class="chapterAction" href="#main-content" data-demo="Ver capítulos de Dragon Ball"><svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h13M8 12h13M8 19h13M3 5h1M3 12h1M3 19h1"></path></svg>Capítulos</a>
+                    </div>
+                  </div>
+                </article>
+              </li>
+            </ul>
+            <p class="filterEmpty" id="demo-empty" role="status" hidden>No hay lecturas que coincidan con estos filtros.</p>
+          </section>
+
+          <!-- 5. BIBLIOTECA RECIENTE: cambia o añade portadas y sus nombres. -->
+          <section class="recentSection" aria-labelledby="recent-library-title">
+            <header class="sectionHeader">
+              <div><h2 id="recent-library-title">Añadidos recientemente</h2><p class="sectionDescription">Tus últimas obras añadidas.</p></div>
+              <a class="libraryLink" href="#recent-library-title" data-demo="Ver toda la biblioteca">Ver todos <span aria-hidden="true">›</span></a>
+            </header>
+            <ul class="recentList">
+              <li class="recentItem"><a class="seriesLink" href="#main-content" data-demo="Ver The Boxer"><img class="recentCover" src="assets/boxer.webp" alt="Portada de The Boxer" width="150" height="225"><span class="seriesCopy"><span class="itemTitle">The Boxer</span><span class="itemMetadata">Jeong Ji-Hoon · Deporte</span></span></a></li>
+              <li class="recentItem"><a class="seriesLink" href="#main-content" data-demo="Ver Dragon Ball"><img class="recentCover" src="assets/dragonball.webp" alt="Portada de Dragon Ball" width="150" height="225"><span class="seriesCopy"><span class="itemTitle">Dragon Ball</span><span class="itemMetadata">Akira Toriyama · Acción</span></span></a></li>
+              <li class="recentItem"><a class="seriesLink" href="#main-content" data-demo="Ver Mato Seihei no Slave"><img class="recentCover" src="assets/mato.webp" alt="Portada de Mato Seihei no Slave" width="150" height="225"><span class="seriesCopy"><span class="itemTitle">Mato Seihei no Slave</span><span class="itemMetadata">Fantasía · Acción</span></span></a></li>
+              <li class="recentItem"><a class="seriesLink" href="#main-content" data-demo="Ver Chainsaw Man"><img class="recentCover" src="assets/chainsaw.webp" alt="Portada de Chainsaw Man" width="150" height="225"><span class="seriesCopy"><span class="itemTitle">Chainsaw Man</span><span class="itemMetadata">Tatsuki Fujimoto · Acción</span></span></a></li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- 6. INTERACCIONES DE DEMOSTRACIÓN: no requieren Yomira, internet ni servidor. -->
+<script>
+  const searchInput = document.getElementById('demo-search');
+  const statusMessage = document.getElementById('demo-status');
+  const menuButton = document.getElementById('demo-menu');
+  const menu = document.getElementById('more-navigation');
+  const cards = [...document.querySelectorAll('#demo-readings > li')];
+  let selectedFilter = 'all';
+  let submittedQuery = '';
+
+  function notify(message) {
+    statusMessage.hidden = false;
+    statusMessage.textContent = message;
+  }
+
+  function normalize(value) {
+    return value.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('es');
+  }
+
+  function updateCards() {
+    cards.forEach(card => {
+      const matchesState = selectedFilter === 'all' || card.dataset.status === selectedFilter;
+      card.hidden = !matchesState || !normalize(card.dataset.title).includes(normalize(submittedQuery));
+    });
+    document.getElementById('demo-empty').hidden = cards.some(card => !card.hidden);
+  }
+
+  function closeMenu() {
+    menu.hidden = true;
+    menuButton.setAttribute('aria-expanded', 'false');
+    menuButton.setAttribute('aria-label', 'Abrir navegación');
+  }
+
+  menuButton.addEventListener('click', () => {
+    const shouldOpen = menu.hidden;
+    menu.hidden = !shouldOpen;
+    menuButton.setAttribute('aria-expanded', String(shouldOpen));
+    menuButton.setAttribute('aria-label', shouldOpen ? 'Cerrar navegación' : 'Abrir navegación');
+  });
+
+  document.querySelectorAll('[data-filter]').forEach(button => {
+    button.addEventListener('click', () => {
+      selectedFilter = button.dataset.filter;
+      document.querySelectorAll('[data-filter]').forEach(item => {
+        item.setAttribute('aria-pressed', String(item === button));
+      });
+      updateCards();
+    });
+  });
+
+  document.getElementById('demo-search-form').addEventListener('submit', event => {
+    event.preventDefault();
+    submittedQuery = searchInput.value.trim();
+    updateCards();
+    notify(submittedQuery ? `Búsqueda de ejemplo: ${submittedQuery}.` : 'Se ha restablecido la búsqueda de ejemplo.');
+  });
+
+  document.getElementById('demo-surprise').addEventListener('click', () => {
+    const visibleCards = cards.filter(card => !card.hidden);
+    if (!visibleCards.length) {
+      notify('No hay tarjetas visibles. Prueba otro filtro o borra la búsqueda.');
+      return;
+    }
+    const chosen = visibleCards[Math.floor(Math.random() * visibleCards.length)];
+    cards.forEach(card => card.querySelector('article').style.removeProperty('border-color'));
+    chosen.querySelector('article').style.borderColor = 'var(--accent)';
+    chosen.scrollIntoView({block: 'center'});
+    notify(`Sugerencia de ejemplo: ${chosen.dataset.title}.`);
+  });
+
+  document.querySelectorAll('[data-nav]').forEach(link => {
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      document.querySelectorAll('[data-nav]').forEach(item => {
+        item.classList.toggle('navigationLinkActive', item === link);
+        if (item === link) item.setAttribute('aria-current', 'page');
+        else item.removeAttribute('aria-current');
+      });
+      closeMenu();
+      notify(`Vista de diseño: ${link.dataset.nav}. Esta maqueta contiene la pantalla de inicio.`);
+      if (link.dataset.nav === 'Buscar') searchInput.focus();
+      else if (link.dataset.nav === 'Biblioteca') document.getElementById('recent-library-title').scrollIntoView({block: 'start'});
+      else document.getElementById('main-content').scrollIntoView({block: 'start'});
+    });
+  });
+
+  document.querySelectorAll('[data-demo]').forEach(link => {
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      const wasInMenu = menu.contains(link);
+      closeMenu();
+      notify(`Vista de diseño: ${link.dataset.demo}. No se modifica ningún dato de Yomira.`);
+      if (wasInMenu) menuButton.focus();
+    });
+  });
+
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !menu.hidden) {
+      event.preventDefault();
+      closeMenu();
+      menuButton.focus();
+    }
+    if (event.key !== '/' || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+    event.preventDefault();
+    searchInput.focus();
+  });
+</script>
+
+</body>
+</html>

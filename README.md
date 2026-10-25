@@ -1,26 +1,26 @@
-# Yomira 0.1.13 — lector híbrido local
+# Yomira 0.1.16 — lector híbrido local
 
 Yomira es una aplicación local para Windows que organiza, descarga y permite leer mangas desde una interfaz web. Los archivos y la biblioteca se guardan en el equipo del usuario.
 
-La versión local 0.1.13 reúne lectura online con imágenes en RAM, navegación entre capítulos de la fuente, descargas explícitas desde el lector y reapertura desde «Reintentar página» conservando la posición. La recuperación del motor se comprueba en Windows con una fuente ficticia y un cierre inesperado del proceso de prueba. Se entrega localmente; no se ha publicado una nueva Release. Los enlaces siguientes corresponden a la versión publicada anterior.
+La versión 0.1.16 reúne el nuevo inicio y las opciones del lector, la reapertura online con progreso guardado, las recomendaciones públicas y 21 fuentes integradas. Incluye actualización de la aplicación desde GitHub Releases y refresco automático de los catálogos de Inventario Oculto y Ragnarok. Consulta las [notas de esta versión](docs/releases/0.1.16.md) para conocer las mejoras y sus límites.
 
-## Descargar y probar la versión publicada 0.1.11
+## Descargar Yomira 0.1.16
 
 **Para usar Yomira en Windows 10/11 de 64 bits:**
 
-1. [Descarga Yomira-Setup-0.1.11.exe](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.11/Yomira-Setup-0.1.11.exe).
+1. [Descarga Yomira-Setup-0.1.16.exe](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.16/Yomira-Setup-0.1.16.exe).
 2. Abre el archivo y pulsa **Instalar**. El instalador está en español y no necesita permisos de administrador.
 3. Pulsa **Finalizar** con **Abrir Yomira** marcado. La página se abre sola en tu navegador.
 
 Después, abre el acceso directo **Yomira** del escritorio o del menú Inicio. **No necesitas comandos, pip, Python, Node.js ni instalar FMD por separado.** Cada persona instala Yomira en su propio PC y tiene su propia biblioteca.
 
-También hay una [versión portátil](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.11/Yomira-Windows-x64-0.1.11.zip): extrae todo el ZIP y abre **Yomira.exe**. No ejecutes el programa dentro del ZIP.
+También hay una [versión portátil](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.16/Yomira-Windows-x64-0.1.16.zip): extrae todo el ZIP y abre **Yomira.exe**. No ejecutes el programa dentro del ZIP.
 
 El navegador se abre cuando el servidor está listo. Puedes minimizar la ventana de Yomira; vuelve a ella y pulsa **Ctrl+C** para cerrar la aplicación. Cerrar la pestaña del navegador deja las descargas en marcha. Si el navegador no se abre, entra en http://127.0.0.1:8000/library.
 
 La descarga incluye FMD adaptado en segundo plano, catálogos públicos de títulos y licencias. La misma Release ofrece el código fuente correspondiente a FMD y las sumas SHA-256. Consulta [las instrucciones sencillas](installer/LEEME.txt).
 
-Para actualizar, cierra Yomira e instala la nueva versión. Los mangas, datos y progreso se guardan fuera de la carpeta del programa. Si usabas una versión portátil, cierra la anterior antes de abrir la instalada.
+Si vienes de la versión 0.1.11 o de otra copia sin actualizador, cierra Yomira e instala esta versión manualmente una vez. Después, la versión instalada buscará y descargará las próximas actualizaciones; pulsa **Reiniciar y actualizar** cuando aparezca el aviso. Los mangas, datos y progreso se guardan fuera de la carpeta del programa. Las copias portátiles se actualizan manualmente.
 
 Esta versión es una prueba local para Windows x64 y no está firmada digitalmente. No se ha certificado en un segundo ordenador. No incluyas mangas, bases de datos, tokens ni cookies cuando comuniques un error; indica la acción, la fuente, la obra y el capítulo afectados.
 
@@ -32,6 +32,9 @@ Esta versión es una prueba local para Windows x64 y no está firmada digitalmen
 - Fuentes mediante el motor FMD2 adaptado; MangaDex aporta búsquedas y metadatos.
 - Exportación de un manga o un intervalo en un solo CBR a Books de un lector conectado mediante MTP, además de destinos USB con letra de unidad.
 - Historial de envíos, verificación de archivos y reintentos.
+- Recomendaciones del ranking público de MangaDex, con búsqueda de títulos alternativos en las fuentes.
+- Lectura online con navegación entre capítulos, progreso persistente y descargas opcionales desde el lector.
+- Actualizaciones verificadas de la aplicación y refresco en segundo plano de dos catálogos públicos.
 
 La aplicación sigue en desarrollo. Las fuentes externas pueden cambiar o dejar de responder. La lectura en un B6 Color se comprobó con Vinland Saga; eso no certifica todos los dispositivos o archivos.
 
@@ -86,3 +89,9 @@ Subir el repositorio a GitHub no aloja el servidor ni hace accesibles los mangas
 El repositorio y la descarga de prueba son públicos. La licencia abierta del código propio de Yomira sigue pendiente de decisión; publicar el código no cambia las licencias de los componentes externos. FMD2 y sus cambios conservan la licencia GPL v2 de su origen; se incluyen las atribuciones y el parche en third_party/fmd2. Consulta [las notas de licencias](THIRD_PARTY_NOTICES.md).
 
 
+
+## Actualizaciones de la aplicación
+
+La versión instalada comprueba GitHub Releases diez segundos después de iniciar y cada seis horas. Descarga automáticamente el instalador de una versión estable superior y comprueba su tamaño y SHA-256 antes de ofrecer **Reiniciar y actualizar**. Puedes consultar el estado o reintentar desde Ajustes. El aviso no interrumpe el lector. La biblioteca y el progreso permanecen fuera de la instalación.
+
+Las copias portátiles y de desarrollo muestran el enlace a Releases y no reemplazan sus archivos. Quienes usan una versión anterior al actualizador necesitan instalar esta versión manualmente una vez. El actualizador solo acepta `Yomira-Setup-X.Y.Z.exe` de este repositorio, con `digest` SHA-256 publicado por GitHub; no instala borradores ni versiones preliminares.

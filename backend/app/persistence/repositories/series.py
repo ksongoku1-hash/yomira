@@ -1,13 +1,15 @@
 from uuid import UUID
 
-from sqlalchemy import and_, exists, func, select, text
+from sqlalchemy import and_, case, exists, func, or_, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.domain.library_reading_status import LibraryReadingStatus
+from app.domain.library_sort import LibrarySort
 from app.domain.series import Series
 from app.persistence.mappers.series import series_from_row, series_to_row
 from app.persistence.models.chapter import ChapterRow
+from app.persistence.models.metadata_override import MetadataOverrideRow
 from app.persistence.models.reader_progress import ReaderProgressRow
 from app.persistence.models.series import SeriesRow
 
@@ -46,15 +48,57 @@ class SeriesRepository:
         limit: int,
         offset: int,
         reading_status: LibraryReadingStatus | None = None,
+        query: str = "",
+        sort: LibrarySort | None = None,
     ) -> tuple[tuple[Series, ...], int]:
         reading_clause = _reading_status_clause(reading_status)
-        rows_query = select(SeriesRow).order_by(
-            SeriesRow.canonical_title.asc(), SeriesRow.series_id.asc()
-        )
+        rows_query = select(SeriesRow)
         total_query = select(func.count()).select_from(SeriesRow)
         if reading_clause is not None:
             rows_query = rows_query.where(reading_clause)
             total_query = total_query.where(reading_clause)
+
+        if query or sort is not None:
+            override = (
+                select(MetadataOverrideRow.value_json)
+                .where(
+                    MetadataOverrideRow.series_id == SeriesRow.series_id,
+                    MetadataOverrideRow.field_name == "title",
+                )
+                .scalar_subquery()
+            )
+            # Match the displayed title, including explicit null/empty user overrides.
+            title = case(
+                (
+                    override.is_not(None),
+                    func.coalesce(
+                        func.nullif(func.json_extract(override, "$"), ""), SeriesRow.canonical_title
+                    ),
+                ),
+                else_=SeriesRow.display_title,
+            )
+            if query:
+                search_clause = or_(
+                    func.yomira_casefold(title).contains(query.casefold(), autoescape=True),
+                    func.yomira_casefold(SeriesRow.canonical_title).contains(
+                        query.casefold(), autoescape=True
+                    ),
+                )
+                rows_query = rows_query.where(search_clause)
+                total_query = total_query.where(search_clause)
+            if sort is not None:
+                primary = (
+                    SeriesRow.created_at_us.desc()
+                    if sort is LibrarySort.RECENT
+                    else SeriesRow.updated_at_us.desc()
+                    if sort is LibrarySort.UPDATED
+                    else func.yomira_casefold(title).asc()
+                )
+                rows_query = rows_query.order_by(
+                    primary, func.yomira_casefold(title), SeriesRow.series_id
+                )
+        if sort is None:
+            rows_query = rows_query.order_by(SeriesRow.canonical_title, SeriesRow.series_id)
 
         rows = session.scalars(rows_query.limit(limit).offset(offset)).all()
         total = session.execute(total_query).scalar_one()

@@ -282,8 +282,14 @@ def test_availability_requires_verified_reader_asset_and_exact_series_link(tmp_p
     ],
 )
 def test_download_selection_reuses_only_unique_verified_local_chapters(
-    tmp_path, local_label, remote_label, duplicate, language, indexed, expected_created
-):
+    tmp_path: Path,
+    local_label: str,
+    remote_label: str,
+    duplicate: bool,
+    language: str,
+    indexed: bool,
+    expected_created: bool,
+) -> None:
     import asyncio
     from uuid import uuid4
 
@@ -299,10 +305,11 @@ def test_download_selection_reuses_only_unique_verified_local_chapters(
     source = Source.new_local("yomira.mock", "1", "Mock", True, SourceHealthStatus.HEALTHY)
     try:
         with fixture.database.write_session() as session:
-            session.get(
-                SourceRow, str(fixture.source.source_id)
-            ).connector_id = "yomira.local.import"
+            source_row = session.get(SourceRow, str(fixture.source.source_id))
+            assert source_row is not None
+            source_row.connector_id = "yomira.local.import"
             chapter = session.get(ChapterRow, str(fixture.chapter.chapter_id))
+            assert chapter is not None
             chapter.display_label = local_label
             chapter.language = language
             session.add(source_to_row(source))
@@ -324,9 +331,12 @@ def test_download_selection_reuses_only_unique_verified_local_chapters(
             )
         else:
             with fixture.database.write_session() as session:
-                session.get(DownloadJobRow, str(fixture.job.job_id)).status = "COMPLETED"
+                job_row = session.get(DownloadJobRow, str(fixture.job.job_id))
+                assert job_row is not None
+                job_row.status = "COMPLETED"
         template = asyncio.run(connector.get_chapters("mock-series-1"))[0]
         remote = replace(template, display_label=remote_label)
+        assert remote.remote_id is not None
         chapters = (
             (remote, replace(remote, remote_id="second-translation")) if duplicate else (remote,)
         )

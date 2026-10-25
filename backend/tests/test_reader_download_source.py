@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import json
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -9,6 +11,7 @@ from sqlalchemy import func, select
 from test_online_reader import _memory_harness  # pyright: ignore[reportPrivateUsage]
 
 from app.connectors.builtins import create_connector_registry
+from app.fmd2_bridge import FMD2_METADATA
 from app.persistence.models.chapter_source import ChapterSourceRow
 from app.persistence.models.download_job import DownloadJobRow
 from app.persistence.models.series_source import SeriesSourceRow
@@ -17,6 +20,65 @@ from app.runtime import RuntimeState
 from app.secrets.vault import WindowsDpapiSecretVault
 from app.services.jobs import DownloadJobService
 from app.settings import Settings
+
+
+@pytest.mark.parametrize("reference_state", ["matching", "missing", "malformed"])
+def test_fmd2_reader_source_uses_the_chapters_exact_series_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference_state: str
+) -> None:
+    async def exercise() -> None:
+        h, online, _runtime, _closed = await _memory_harness(tmp_path, monkeypatch)
+        website = "424747b0135c4240a902eb9cfcb11db9"
+        manga_path = "/novel/The-Boxer.html"
+        manga_ref = "fmd2:v1:" + (website + "\n" + manga_path).encode().hex()
+        token = (
+            base64.urlsafe_b64encode(
+                json.dumps([website, manga_path, "/chapter/16"], separators=(",", ":")).encode()
+            )
+            .decode()
+            .rstrip("=")
+        )
+        remote_id = "yomira-fmd2:v3:" + token
+        try:
+            with h.database.write_session() as session:
+                chapter_source = session.scalar(select(ChapterSourceRow))
+                association = session.scalar(select(SeriesSourceRow))
+                assert chapter_source is not None and association is not None
+                source = session.get(SourceRow, chapter_source.source_id)
+                assert source is not None
+                source.connector_id = FMD2_METADATA.connector_id
+                source.connector_version = FMD2_METADATA.connector_version
+                chapter_source.remote_id = (
+                    remote_id if reference_state != "malformed" else "broken-reference"
+                )
+                association.remote_id = "unrelated-edition-1"
+                for reference in [
+                    "unrelated-edition-2",
+                    manga_ref if reference_state != "missing" else "unrelated-edition-3",
+                ]:
+                    session.add(
+                        SeriesSourceRow(
+                            series_source_id=str(uuid4()),
+                            series_id=association.series_id,
+                            source_id=source.source_id,
+                            remote_id=reference,
+                        )
+                    )
+            resolved = DownloadJobService(h.database).reader_download_source(h.chapter_id)
+            if reference_state == "matching":
+                assert resolved is not None
+                assert resolved.connector_id == FMD2_METADATA.connector_id
+                assert resolved.remote_series_id == manga_ref
+                assert resolved.chapter_remote_id == remote_id
+            else:
+                assert resolved is None
+            with h.database.read_session() as session:
+                assert session.scalar(select(func.count()).select_from(DownloadJobRow)) == 0
+        finally:
+            await online.close()
+            await h.close()
+
+    asyncio.run(exercise())
 
 
 def test_reader_source_queues_the_same_chapter_without_losing_online_progress(
@@ -39,9 +101,12 @@ def test_reader_source_queues_the_same_chapter_without_losing_online_progress(
                 source = await client.get(path + "/download-source")
                 assert source.status_code == progress.status_code == 200
                 refs = source.json()["data"]
-                assert refs == {"chapter_id": str(h.chapter_id), "connector_id": "yomira.mock",
-                                "remote_series_id": "mock-series-1",
-                                "chapter_remote_id": "mock-chapter-1"}
+                assert refs == {
+                    "chapter_id": str(h.chapter_id),
+                    "connector_id": "yomira.mock",
+                    "remote_series_id": "mock-series-1",
+                    "chapter_remote_id": "mock-chapter-1",
+                }
                 with h.database.read_session() as session:
                     assert session.scalar(select(func.count()).select_from(DownloadJobRow)) == 0
                 endpoint = "/api/v1/connectors/yomira.mock/series/mock-series-1/download-jobs"
@@ -57,12 +122,14 @@ def test_reader_source_queues_the_same_chapter_without_losing_online_progress(
         finally:
             await online.close()
             await h.close()
+
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("unavailable", [
-    "chapter", "source", "version", "ambiguous", "missing", "unregistered", "reference"
-])
+@pytest.mark.parametrize(
+    "unavailable",
+    ["chapter", "source", "version", "ambiguous", "missing", "unregistered", "reference"],
+)
 def test_reader_download_source_never_guesses_an_unavailable_or_ambiguous_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unavailable: str
 ) -> None:
@@ -92,9 +159,14 @@ def test_reader_download_source_never_guesses_an_unavailable_or_ambiguous_source
                 elif unavailable == "ambiguous":
                     association = session.scalar(select(SeriesSourceRow))
                     assert association is not None
-                    session.add(SeriesSourceRow(series_source_id=str(uuid4()),
-                        series_id=association.series_id, source_id=association.source_id,
-                        remote_id="another-edition"))
+                    session.add(
+                        SeriesSourceRow(
+                            series_source_id=str(uuid4()),
+                            series_id=association.series_id,
+                            source_id=association.source_id,
+                            remote_id="another-edition",
+                        )
+                    )
             chapter_id = uuid4() if unavailable == "missing" else h.chapter_id
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=h.app), base_url="http://testserver"
@@ -108,4 +180,5 @@ def test_reader_download_source_never_guesses_an_unavailable_or_ambiguous_source
         finally:
             await online.close()
             await h.close()
+
     asyncio.run(exercise())

@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.connectors.chapter import ConnectorChapter
 from app.connectors.errors import SourceConnectorError
+from app.connectors.mangadex import MANGADEX_METADATA
 from app.connectors.metadata import ConnectorCapability
 from app.connectors.registry import (
     ConnectorRegistryError,
@@ -27,6 +28,7 @@ from app.connectors.search import (
 from app.connectors.series_metadata import ConnectorSeriesMetadata
 from app.domain.download_job import DownloadJobStatus, DownloadPriority
 from app.errors import ApiErrorEnvelope, ErrorCode
+from app.fmd2_bridge import FMD2_METADATA, FMD2_PUBLIC_SOURCES
 from app.runtime import RuntimeState
 from app.services.jobs import (
     MAX_SELECTED_CHAPTERS,
@@ -72,6 +74,16 @@ class ConnectorDescriptor(BaseModel):
 
 class ConnectorListEnvelope(BaseModel):
     data: list[ConnectorDescriptor]
+
+
+class PublicSourceItem(BaseModel):
+    source_id: str
+    name: str
+    language: str
+
+
+class PublicSourceEnvelope(BaseModel):
+    data: list[PublicSourceItem]
 
 
 class ConnectorChapterItem(BaseModel):
@@ -231,6 +243,20 @@ async def list_connectors(request: Request) -> ConnectorListEnvelope:
     )
 
 
+@router.get("/public-sources", response_model=PublicSourceEnvelope)
+async def list_public_sources(request: Request) -> PublicSourceEnvelope:
+    registry = _connector_registry(request)
+    identifiers = set(registry.connector_ids)
+    sources = [
+        PublicSourceItem(source_id=source_id, name=name, language=language)
+        for source_id, (name, _origin, language) in FMD2_PUBLIC_SOURCES.items()
+        if FMD2_METADATA.connector_id in identifiers
+    ]
+    if MANGADEX_METADATA.connector_id in identifiers:
+        sources.append(PublicSourceItem(source_id="mangadex", name="MangaDex", language="es"))
+    return PublicSourceEnvelope(data=sources)
+
+
 @router.get(
     "/{connector_id}/search",
     response_model=ConnectorSearchEnvelope,
@@ -335,9 +361,10 @@ async def list_connector_chapters(
         ConnectorCapability.CHAPTER_LIST,
     )
     if refresh:
+        from app.connectors.mangadex import MangaDexConnector
         from app.fmd2_bridge import Fmd2Connector
 
-        if isinstance(connector, Fmd2Connector):
+        if isinstance(connector, (Fmd2Connector, MangaDexConnector)):
             await connector.invalidate_catalog(remote_series_id)
     chapters = await connector.get_chapters(remote_series_id)
     return ConnectorChapterEnvelope(

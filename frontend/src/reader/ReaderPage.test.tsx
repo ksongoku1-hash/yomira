@@ -129,7 +129,14 @@ function renderReaderPage(
 }
 
 function viewButton(name: string) {
-  if (!screen.queryByRole("button", { name })) fireEvent.click(screen.getByRole("button", { name: "Opciones de lectura" }));
+  if (!screen.queryByRole("button", { name })) {
+    const options = screen.getByRole("button", { name: "Opciones de lectura" });
+    if (options.getAttribute("aria-expanded") !== "true") fireEvent.click(options);
+  }
+  if (name === "Perfil e-reader") {
+    const summary = screen.getByText("Más opciones", { selector: "summary" });
+    if (!summary.closest("details")!.open) fireEvent.click(summary);
+  }
   return screen.getByRole("button", { name });
 }
 
@@ -166,7 +173,7 @@ describe("ReaderPage", () => {
     });
     renderReaderPage(fetchMock);
 
-    expect(await screen.findByRole("link", { name: "← Volver a la serie" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "Volver a la serie" })).toHaveAttribute(
       "href",
       `/series/${SERIES_ID}`,
     );
@@ -182,7 +189,7 @@ describe("ReaderPage", () => {
     renderReaderPage(fetchMock, DEFAULT_READER_SETTINGS, { originatingSeriesId: SERIES_ID });
 
     expect(screen.getByRole("status")).toHaveTextContent("Cargando información del capítulo");
-    expect(screen.getByRole("link", { name: "← Volver a la serie" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Volver a la serie" })).toHaveAttribute(
       "href",
       `/series/${SERIES_ID}`,
     );
@@ -731,6 +738,10 @@ describe("ReaderPage", () => {
     expect(screen.getByText("125 %")).toBeInTheDocument();
     expect(image).toHaveStyle({ width: "500px" });
 
+    fireEvent.change(screen.getByRole("slider", { name: "Zoom de lectura" }), { target: { value: "175" } });
+    expect(image).toHaveStyle({ width: "700px" });
+    expect(screen.getByRole("slider", { name: "Zoom de lectura" })).toHaveValue("175");
+
     fireEvent.click(viewButton("Ajustar al ancho"));
     expect(viewButton("Ajustar al ancho"))
       .toHaveAttribute("aria-pressed", "true");
@@ -977,7 +988,7 @@ describe("ReaderPage", () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === READER_SETTINGS_PATH) {
-        return Promise.resolve(jsonResponse({ data: DEFAULT_READER_SETTINGS, meta: {} }));
+        return Promise.resolve(jsonResponse({ data: { ...DEFAULT_READER_SETTINGS, preload_ahead: 0 }, meta: {} }));
       }
       if (url === `/api/v1/reader/${CHAPTER_ID}`) {
         return Promise.resolve(chapterResponse(200, 2, CHAPTER_ID));
@@ -1158,11 +1169,11 @@ describe("ReaderPage", () => {
       .toBeInTheDocument();
     expect(screen.getByText("El capítulo no está disponible para lectura.")).toBeInTheDocument();
     expect(screen.getByText(/trace-reader-chapter-404/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "← Volver a descargas" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Volver a descargas" })).toHaveAttribute(
       "href",
       "/downloads",
     );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("reports a page 404 and offers an explicit retry", async () => {

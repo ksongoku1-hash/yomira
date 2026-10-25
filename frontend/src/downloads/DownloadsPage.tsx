@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import {
   ApiError,
@@ -16,6 +16,7 @@ import {
   type DownloadJobsPage,
 } from "../api/client";
 import styles from "./DownloadsPage.module.css";
+import { ActionIcon } from "../app/ActionIcon";
 
 const PAGE_SIZE = 50;
 const cancellableStatuses = new Set<DownloadJobStatus>([
@@ -29,6 +30,15 @@ const cancellableStatuses = new Set<DownloadJobStatus>([
   "INDEXING",
 ]);
 const terminalStatuses = new Set<DownloadJobStatus>(["COMPLETED", "FAILED", "CANCELLED"]);
+const DOWNLOAD_FILTERS: {value: string; label: string; statuses: DownloadJobStatus[]}[] = [
+  {value: "all", label: "Todas", statuses: []},
+  {value: "active", label: "En curso", statuses: [...cancellableStatuses].filter((status) => status !== "QUEUED")},
+  {value: "queued", label: "Pendientes", statuses: ["QUEUED"]},
+  {value: "completed", label: "Terminadas", statuses: ["COMPLETED"]},
+  {value: "failed", label: "Fallidas", statuses: ["FAILED"]},
+  {value: "interrupted", label: "Interrumpidas", statuses: ["INTERRUPTED"]},
+  {value: "cancelled", label: "Canceladas", statuses: ["CANCELLED"]},
+];
 
 const statusLabels: Record<DownloadJobStatus, string> = {
   QUEUED: "En cola",
@@ -107,6 +117,7 @@ function DownloadJobCard({
   onJobRetried,
   onQueueChanged,
   progress,
+  returnTo,
 }: {
   job: DownloadJobSummary;
   archivedView: boolean;
@@ -114,6 +125,7 @@ function DownloadJobCard({
   onJobRetried: () => void;
   onQueueChanged: () => void;
   progress: {knownPages: number; validatedPages: number} | undefined;
+  returnTo: string;
 }) {
   const cancelMutation = useMutation({
     mutationFn: cancelDownloadJob,
@@ -148,7 +160,7 @@ function DownloadJobCard({
     <li className={styles.jobItem}>
       <article className={styles.jobCard} data-status={job.status}>
         <div className={styles.jobDetails}>
-          <h3><Link className={styles.readerLink} to={`/series/${job.seriesId}`} state={{ from: "/downloads" }}>{job.seriesTitle}</Link></h3>
+          <h3><Link className={styles.readerLink} to={`/series/${job.seriesId}`} state={{ from: returnTo }}>{job.seriesTitle}</Link></h3>
           <p className={styles.chapterLabel}>{job.chapterLabel}</p>
           <details className={styles.reference}>
             <summary>Detalles del trabajo</summary>
@@ -266,7 +278,7 @@ function DownloadJobCard({
   );
 }
 
-function DownloadGroups() {
+function DownloadGroups({returnTo}: {returnTo: string}) {
   const [offset, setOffset] = useState(0);
   const queryClient = useQueryClient();
   const groupsQuery = useQuery({
@@ -297,7 +309,7 @@ function DownloadGroups() {
         <ul className={styles.groupList} aria-label="Grupos de descargas">
           {groupsQuery.data.data.map((group) => (
             <li className={styles.groupCard} key={group.seriesId}>
-              <div><h3><Link className={styles.readerLink} to={`/series/${group.seriesId}`} state={{ from: "/downloads" }}>{group.seriesTitle}</Link></h3>
+              <div><h3><Link className={styles.readerLink} to={`/series/${group.seriesId}`} state={{ from: returnTo }}>{group.seriesTitle}</Link></h3>
                 <p>{group.queued} pendientes · {group.active} en curso</p>
                 <p role="status">{group.paused ? group.active > 0
                   ? "Pausa solicitada; termina el capítulo en curso." : "En pausa" : "Activa"}</p>
@@ -328,15 +340,32 @@ function DownloadGroups() {
 }
 
 export function DownloadsPage() {
-  const [offset, setOffset] = useState(0);
-  const [archivedView, setArchivedView] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const selectedFilter = DOWNLOAD_FILTERS.find((filter) => filter.value === params.get("status")) ?? DOWNLOAD_FILTERS[0]!;
+  const requestedOffset = Number(params.get("offset") ?? "0");
+  const offset = Number.isSafeInteger(requestedOffset) && requestedOffset >= 0 && requestedOffset <= 10_000_000
+    ? requestedOffset : 0;
+  const archivedView = params.get("archived") === "true";
+  const returnTo = `/downloads${params.size ? `?${params.toString()}` : ""}`;
+  function changeView(values: Record<string, string>) {
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      for (const [key, value] of Object.entries(values)) {
+        if (value) next.set(key, value);
+        else next.delete(key);
+      }
+      return next;
+    }, {replace: true});
+  }
+  const jobsKey = ["download-jobs", PAGE_SIZE, offset, archivedView, selectedFilter.value];
   const queryClient = useQueryClient();
   const jobsQuery = useQuery({
-    queryKey: ["download-jobs", PAGE_SIZE, offset, archivedView],
-    queryFn: () => getDownloadJobsPage({ limit: PAGE_SIZE, offset, archived: archivedView }),
+    queryKey: jobsKey,
+    queryFn: () => getDownloadJobsPage({ limit: PAGE_SIZE, offset, archived: archivedView, statuses: selectedFilter.statuses }),
   });
   const manualRefresh = useMutation({ mutationFn: () => jobsQuery.refetch() });
-  const total = jobsQuery.data?.meta.total ?? 0;
+  const total = jobsQuery.data?.meta.filteredTotal ?? jobsQuery.data?.meta.total ?? 0;
+  const queueTotal = jobsQuery.data?.meta.total ?? 0;
   const states = jobsQuery.data?.meta.states;
   const queued = states?.QUEUED ?? 0;
   const active = [...cancellableStatuses].filter((status) => status !== "QUEUED")
@@ -345,7 +374,7 @@ export function DownloadsPage() {
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const updateJob = (updatedJob: DownloadJobSummary) => {
     queryClient.setQueryData<DownloadJobsPage>(
-      ["download-jobs", PAGE_SIZE, offset, archivedView],
+      jobsKey,
       (currentPage) =>
         currentPage === undefined
           ? currentPage
@@ -356,13 +385,14 @@ export function DownloadsPage() {
               ),
             },
     );
+    if (selectedFilter.value !== "all") void queryClient.invalidateQueries({queryKey: ["download-jobs"]});
   };
   const refreshRetriedJobs = () => {
-    setOffset(0);
+    changeView({offset: ""});
     void queryClient.invalidateQueries({ queryKey: ["download-jobs"] });
   };
   const refreshQueueAfterVisibilityChange = () => {
-    setOffset(0);
+    changeView({offset: ""});
     void queryClient.invalidateQueries({ queryKey: ["download-jobs"] });
   };
 
@@ -376,7 +406,7 @@ export function DownloadsPage() {
             {jobsQuery.data ? (
               <span aria-live="polite" className={styles.queueCount} role="status">
                 {states && !archivedView ? `${queued} pendientes · ${active} en curso`
-                  : `${total} ${total === 1 ? "trabajo" : "trabajos"} ${archivedView ? (total === 1 ? "retirado" : "retirados") : (total === 1 ? "guardado" : "guardados")}`}
+                  : `${queueTotal} ${queueTotal === 1 ? "trabajo" : "trabajos"} ${archivedView ? (queueTotal === 1 ? "retirado" : "retirados") : (queueTotal === 1 ? "guardado" : "guardados")}`}
               </span>
             ) : null}
           </div>
@@ -389,8 +419,7 @@ export function DownloadsPage() {
             className={styles.secondaryButton}
             disabled={jobsQuery.isPending}
             onClick={() => {
-              setOffset(0);
-              setArchivedView((current) => !current);
+              changeView({offset: "", archived: archivedView ? "" : "true"});
             }}
             type="button"
           >
@@ -402,10 +431,21 @@ export function DownloadsPage() {
             onClick={() => manualRefresh.mutate()}
             type="button"
           >
-            {manualRefresh.isPending ? "Actualizando…" : "Actualizar"}
+            <ActionIcon name="refresh" /> {manualRefresh.isPending ? "Actualizando…" : "Actualizar"}
           </button>
         </div>
       </header>
+      <div className={styles.filters} role="group" aria-label="Filtrar descargas por estado">
+        {DOWNLOAD_FILTERS.map((filter) => {
+          const count = states ? filter.value === "all" ? queueTotal
+            : filter.statuses.reduce((sum, status) => sum + (states[status] ?? 0), 0) : undefined;
+          return <button key={filter.value} type="button" className={styles.filterButton}
+            aria-pressed={filter.value === selectedFilter.value}
+            onClick={() => changeView({status: filter.value === "all" ? "" : filter.value, offset: ""})}>
+            {filter.label}<span className={styles.filterCount}>{count ?? "—"}</span>
+          </button>;
+        })}
+      </div>
       {!archivedView && jobsQuery.data?.meta.recoveringJobId ? (
         <p className={styles.phaseMessage} role="status">
           Un capítulo falló. Yomira está buscando el mismo capítulo en otras fuentes,
@@ -418,17 +458,8 @@ export function DownloadsPage() {
         Puedes reintentar el capítulo fallido cuando vuelva a estar disponible.
       </p> : null}
 
-      {!archivedView && jobsQuery.isSuccess ? <DownloadGroups /> : null}
-
-      {states ? (
-        <dl aria-label="Resumen de todas las descargas" className={styles.queueSummary}>
-          {[["Pendientes", queued], ["En curso", active], ["Terminadas", states.COMPLETED ?? 0],
-            ["Fallidas", states.FAILED ?? 0], ["Canceladas", states.CANCELLED ?? 0],
-            ["Interrumpidas", states.INTERRUPTED ?? 0]].map(([label, count]) => (
-            <div key={label}><dt>{label}</dt><dd>{count}</dd></div>
-          ))}
-        </dl>
-      ) : null}
+      {!archivedView && jobsQuery.isSuccess && ["all", "queued"].includes(selectedFilter.value)
+        ? <DownloadGroups returnTo={returnTo} /> : null}
 
       <details className={styles.queueInfo}>
         <summary>Cómo se muestra el progreso y el historial</summary>
@@ -466,6 +497,18 @@ export function DownloadsPage() {
           error={jobsQuery.error}
           onRetry={() => void jobsQuery.refetch()}
         />
+      ) : jobsQuery.data.data.length === 0 && (selectedFilter.value !== "all" || offset > 0) ? (
+        <div className={styles.emptyState}>
+          <h2>{total > 0 ? "Esta página ya no tiene trabajos" : selectedFilter.value === "all"
+            ? archivedView ? "No hay trabajos retirados" : "La cola está vacía"
+            : `No hay descargas ${selectedFilter.label.toLowerCase()}`}</h2>
+          <p className={styles.statusMessage}>{total > 0 ? "Vuelve a la primera página para ver la lista actualizada."
+            : `El filtro se aplica a ${archivedView ? "los trabajos retirados" : "toda la cola"}.`}</p>
+          <button className={styles.secondaryButton} type="button"
+            onClick={() => changeView(total > 0 ? {offset: ""} : {status: "", offset: ""})}>
+            {total > 0 ? "Volver a la primera página" : "Mostrar todas"}
+          </button>
+        </div>
       ) : jobsQuery.data.data.length === 0 ? (
         <div className={styles.emptyState}>
           <span aria-hidden="true" className={styles.emptyIcon}>⇩</span>
@@ -485,6 +528,7 @@ export function DownloadsPage() {
             <h2>{archivedView ? "Trabajos retirados" : "Trabajos guardados"}</h2>
             <p className={styles.statusMessage} role="status">
               {total} {total === 1 ? "trabajo" : "trabajos"}
+              {selectedFilter.value !== "all" ? ` · ${selectedFilter.label} · ${jobsQuery.data.meta.total} en total` : ""}
             </p>
           </div>
           <ol aria-label="Trabajos de descarga guardados" className={styles.jobList}>
@@ -497,6 +541,7 @@ export function DownloadsPage() {
                 onJobRetried={refreshRetriedJobs}
                 onQueueChanged={refreshQueueAfterVisibilityChange}
                 progress={jobsQuery.data.meta.pageProgress?.find((item) => item.jobId === job.jobId)}
+                returnTo={returnTo}
               />
             ))}
           </ol>
@@ -505,7 +550,7 @@ export function DownloadsPage() {
               <button
                 className={styles.secondaryButton}
                 disabled={offset === 0 || jobsQuery.isPending}
-                onClick={() => setOffset((current) => Math.max(0, current - PAGE_SIZE))}
+                onClick={() => changeView({offset: String(Math.max(0, offset - PAGE_SIZE))})}
                 type="button"
               >
                 Anterior
@@ -516,7 +561,7 @@ export function DownloadsPage() {
               <button
                 className={styles.secondaryButton}
                 disabled={offset + PAGE_SIZE >= total || jobsQuery.isPending}
-                onClick={() => setOffset((current) => current + PAGE_SIZE)}
+                onClick={() => changeView({offset: String(offset + PAGE_SIZE)})}
                 type="button"
               >
                 Siguiente

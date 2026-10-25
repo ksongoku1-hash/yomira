@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.domain.library_reading_status import LibraryReadingStatus
+from app.domain.library_sort import LibrarySort
 from app.domain.series import Series
 from app.persistence.database import SQLiteDatabase
 from app.persistence.models.series_source import SeriesSourceRow
@@ -75,11 +76,17 @@ class LibraryService:
         limit: int = DEFAULT_LIBRARY_PAGE_SIZE,
         offset: int = 0,
         reading_status: LibraryReadingStatus | str | None = None,
+        query: str = "",
+        sort: LibrarySort | str | None = None,
     ) -> SeriesPage:
         if not 1 <= limit <= MAX_LIBRARY_PAGE_SIZE:
             raise ValueError("limit must be between 1 and 500")
         if offset < 0:
             raise ValueError("offset must not be negative")
+        if len(query) > 200:
+            raise ValueError("query must be a string of at most 200 characters")
+        if sort is not None:
+            sort = LibrarySort(sort)
         if reading_status is not None:
             try:
                 reading_status = LibraryReadingStatus(reading_status)
@@ -92,6 +99,8 @@ class LibraryService:
                 limit=limit,
                 offset=offset,
                 reading_status=reading_status,
+                query=query.strip(),
+                sort=sort,
             )
         return SeriesPage(items=items, total=total, limit=limit, offset=offset)
 

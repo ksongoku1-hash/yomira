@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { anchorAt, fittedPageWidth, readVerticalAnchor, saveVerticalAnchor, verticalLayout } from "./readerPresentation";
+import { anchorAt, fittedPageWidth, readReaderAnchor, saveReaderAnchor, verticalLayout } from "./readerPresentation";
 
 afterEach(() => localStorage.clear());
 
@@ -12,6 +12,19 @@ describe("pages fitted to the reading surface", () => {
     expect(fittedPageWidth(2, 400, 600, "height", 1)).toBe(1200);
     expect(fittedPageWidth(undefined, 1000, 600, null, 1)).toBeUndefined();
     expect(fittedPageWidth(1, 0, 0, null, 1)).toBeUndefined();
+  });
+});
+
+describe("automatic framing of long pages", () => {
+  it("uses the available width for strips without shrinking strips when height fitting was saved", () => {
+    expect(fittedPageWidth(700 / 19589, 1200, 570, null, 1)).toBe(1200);
+    expect(fittedPageWidth(0.4, 390, 600, null, 1)).toBe(390);
+    expect(fittedPageWidth(0.4, 390, 600, null, 1.5)).toBe(585);
+    expect(fittedPageWidth(0.5, 1000, 600, null, 1)).toBe(300);
+    expect(fittedPageWidth(0.1, 1200, 570, "height", 1)).toBe(1200);
+    expect(fittedPageWidth(0.1, 599, 570, "height", 1)).toBe(599);
+    expect(fittedPageWidth(2 / 3, 1200, 570, "height", 1)).toBe(380);
+    expect(fittedPageWidth(0.1, 1200, 570, "width", 1)).toBe(1200);
   });
 });
 
@@ -38,19 +51,43 @@ describe("vertical reading positions", () => {
   });
 
   it("uses the browser position only when it matches the server page and rejects corrupt data", () => {
-    saveVerticalAnchor("chapter", { page: 3, fraction: 0.65 });
-    expect(readVerticalAnchor("chapter", 3)).toEqual({ page: 3, fraction: 0.65 });
-    expect(readVerticalAnchor("chapter", 2)).toBeNull();
+    saveReaderAnchor("chapter", { page: 3, fraction: 0.65 });
+    expect(readReaderAnchor("chapter", 3)).toEqual({ page: 3, fraction: 0.65 });
+    expect(readReaderAnchor("chapter", 2)).toBeNull();
     localStorage.setItem("yomira.reader.vertical-positions.v1", '{"chapter":{"page":3,"fraction":2}}');
-    expect(readVerticalAnchor("chapter", 3)).toBeNull();
+    expect(readReaderAnchor("chapter", 3)).toBeNull();
     localStorage.setItem("yomira.reader.vertical-positions.v1", "broken");
-    expect(readVerticalAnchor("chapter", 3)).toBeNull();
+    expect(readReaderAnchor("chapter", 3)).toBeNull();
   });
 
   it("bounds stored positions to the fifty most recently saved chapters", () => {
-    for (let index = 0; index < 100; index++) saveVerticalAnchor(String(index), { page: 1, fraction: 0.5 });
+    for (let index = 0; index < 100; index++) saveReaderAnchor(String(index), { page: 1, fraction: 0.5 });
     expect(Object.keys(JSON.parse(localStorage.getItem("yomira.reader.vertical-positions.v1")!))).toHaveLength(50);
-    expect(readVerticalAnchor("0", 1)).toBeNull();
-    expect(readVerticalAnchor("99", 1)?.fraction).toBe(0.5);
+    expect(readReaderAnchor("0", 1)).toBeNull();
+    expect(readReaderAnchor("99", 1)?.fraction).toBe(0.5);
+  });
+});
+
+
+describe("positions in paginated reading", () => {
+  it("keeps each mode independent and reads existing vertical positions unchanged", () => {
+    saveReaderAnchor("chapter", { page:3, fraction:0.25 });
+    saveReaderAnchor("chapter", { page:3, fraction:0.5, horizontal:0.2 }, "single");
+    saveReaderAnchor("chapter", { page:3, fraction:0.75, horizontal:-0.1 }, "double");
+    expect(readReaderAnchor("chapter",3)).toEqual({page:3,fraction:0.25});
+    expect(readReaderAnchor("chapter",3,"single")).toEqual({page:3,fraction:0.5,horizontal:0.2});
+    expect(readReaderAnchor("chapter",3,"double")).toEqual({page:3,fraction:0.75,horizontal:-0.1});
+    expect(readReaderAnchor("chapter",4,"single")).toBeNull();
+  });
+
+  it("rejects invalid positions and defaults a missing horizontal position to zero", () => {
+    localStorage.setItem("yomira.reader.vertical-positions.v1", JSON.stringify({
+      "chapter:single":{page:3,fraction:0.5,horizontal:2},
+      "chapter:double":{page:3,fraction:0.5},
+    }));
+    expect(readReaderAnchor("chapter",3,"single")).toBeNull();
+    expect(readReaderAnchor("chapter",3,"double")).toEqual({page:3,fraction:0.5,horizontal:0});
+    saveReaderAnchor("chapter",{page:3,fraction:1},"single");
+    expect(readReaderAnchor("chapter",3,"single")).toBeNull();
   });
 });

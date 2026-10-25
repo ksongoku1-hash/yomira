@@ -7,8 +7,10 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 from pydantic import UUID4, BaseModel, ConfigDict, field_validator, model_validator
 
+from app.connectors.mangadex import MANGADEX_METADATA
 from app.connectors.metadata import ConnectorCapability
 from app.connectors.registry import ConnectorRegistryError
+from app.domain.library_sort import LibrarySort
 from app.domain.metadata import (
     MetadataAuthority,
     MetadataField,
@@ -281,11 +283,15 @@ async def list_library(
     limit: int = Query(default=DEFAULT_LIBRARY_PAGE_SIZE, ge=1, le=MAX_LIBRARY_PAGE_SIZE),
     offset: int = Query(default=0, ge=0),
     reading_status: LibraryReadingStatus | None = None,
+    q: str = Query(default="", max_length=200),
+    sort: LibrarySort | None = None,
 ) -> LibraryResponseEnvelope:
     page = _library_service(request).list_series(
         limit=limit,
         offset=offset,
         reading_status=reading_status,
+        query=q,
+        sort=sort,
     )
     return LibraryResponseEnvelope(
         data=await asyncio.to_thread(_summaries, request, page.items),
@@ -418,6 +424,8 @@ async def get_series(
             if source_metadata is None:
                 continue
             display_name = link.display_name
+            if link.connector_id == MANGADEX_METADATA.connector_id:
+                display_name = "MangaDex"
             if link.connector_id == FMD2_METADATA.connector_id:
                 display_name = fmd2_source_display_name(link.remote_series_id) or display_name
             reading_sources.append(

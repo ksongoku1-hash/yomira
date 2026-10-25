@@ -42,17 +42,23 @@ from app.services.download_transport import (
 )
 from app.services.download_worker import DownloadWorker
 from app.services.export_jobs import UsbExportJobService
+from app.services.fmd2_catalog_refresh import (
+    FMD2_CATALOG_ORIGINS,
+    Fmd2CatalogRefreshService,
+)
 from app.services.image_validation import ImageValidationPolicy
 from app.services.job_recovery import RecoveryCoordinator
 from app.services.jobs import DownloadJobService
 from app.services.library import LibraryService
 from app.services.local_import import LocalImportService
 from app.services.metadata import MetadataService
+from app.services.online_image_cache import OnlineImageCache
 from app.services.online_reader import OnlineReaderSessionService
 from app.services.reader_asset import ReaderAssetError, ReaderAssetLimits, ReaderAssetService
 from app.services.reader_progress import ReaderProgressService
 from app.services.reader_session import HybridReaderChapterLookup, ReaderSessionService
 from app.services.reader_settings import ReaderSettingsService
+from app.services.recommendations import RecommendationsService
 from app.services.resource_monitor import ResourceMonitorService
 from app.services.source_pages import SourcePageService
 from app.services.startup_self_test import run_startup_self_tests
@@ -364,6 +370,24 @@ async def initialize_runtime(app: FastAPI) -> None:
                     "retryable": True,
                 },
             )
+        else:
+            try:
+                runtime.fmd2_catalog_refresh_service = Fmd2CatalogRefreshService(
+                    runtime.connector_http_session.scoped_client(FMD2_CATALOG_ORIGINS),
+                    settings.fmd2_executable.parent / "data",
+                    data_root / "cache" / "fmd2-catalog-refresh-v1.json",
+                )
+                await runtime.fmd2_catalog_refresh_service.start()
+            except (OSError, RuntimeError) as error:
+                logger.warning(
+                    "fmd2.catalog_refresh_unavailable",
+                    extra={
+                        "component": "fmd2",
+                        "stage": "catalog_refresh_start",
+                        "cause_type": type(error).__name__,
+                        "retryable": True,
+                    },
+                )
     elif settings.app_env != "test":
         logger.warning(
             "fmd2.source_unavailable",
@@ -381,6 +405,9 @@ async def initialize_runtime(app: FastAPI) -> None:
         fmd2_connector=runtime.fmd2_connector,
     )
     runtime.job_pause_controller = JobPauseController()
+    runtime.recommendations_service = RecommendationsService(
+        data_root_identity.canonical_path / "cache" / "recommendations-v1.json"
+    )
     runtime.backpressure_manager = BackpressureManager(runtime.job_pause_controller)
     runtime.reader_asset_service = ReaderAssetService(
         database,
@@ -479,6 +506,7 @@ async def initialize_runtime(app: FastAPI) -> None:
         source_pages=SourcePageService(runtime.connector_registry),
         transport=runtime.download_transport,
         image_policy=reader_image_policy,
+        disk_cache=OnlineImageCache(database, disk_budget_manager),
     )
     hybrid_lookup = HybridReaderChapterLookup(
         runtime.reader_asset_service, runtime.reader_session_service
@@ -608,6 +636,22 @@ async def shutdown_runtime(app: FastAPI) -> None:
         await dispatcher.stop()
         runtime.download_dispatcher = None
     fmd2_close_failed = False
+    if runtime.fmd2_catalog_refresh_service is not None:
+        try:
+            await runtime.fmd2_catalog_refresh_service.close()
+        except Exception as error:
+            fmd2_close_failed = True
+            logger.error(
+                "fmd2.catalog_refresh_close_failed",
+                extra={
+                    "error_code": ErrorCode.SYS_INTERNAL_ERROR.value,
+                    "retryable": False,
+                    "stage": "catalog_refresh_close",
+                    "cause_type": type(error).__name__,
+                },
+            )
+        else:
+            runtime.fmd2_catalog_refresh_service = None
     if runtime.fmd2_connector is not None:
         try:
             await runtime.fmd2_connector.close()
@@ -736,6 +780,7 @@ async def application_lifespan(app: FastAPI) -> AsyncGenerator[None]:
             raise
 
         logger.info("system.startup_complete")
+        app.state.updater.start()
     finally:
         if startup_trace_token is not None:
             reset_trace_id(startup_trace_token)
@@ -744,6 +789,7 @@ async def application_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         yield
     finally:
         runtime.ready = False
+        await app.state.updater.close()
         shutdown_trace_token = None
         if current_trace_id() is None:
             shutdown_trace_token = activate_trace_id(create_trace_id())

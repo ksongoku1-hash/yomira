@@ -26,9 +26,7 @@ def _seed_library(connection: Connection, series_count: int) -> None:
     for batch_start in range(0, series_count, INSERT_BATCH_SERIES):
         batch_end = min(batch_start + INSERT_BATCH_SERIES, series_count)
         series_rows: list[tuple[str, str, str, None, None, str, None, None, None, int, int]] = []
-        chapter_rows: list[
-            tuple[str, str, str, int, None, None, None, str, None, str, str]
-        ] = []
+        chapter_rows: list[tuple[str, str, str, int, None, None, None, str, None, str, str]] = []
         progress_rows: list[tuple[str, str, int, int, int]] = []
 
         for series_index in range(batch_start, batch_end):
@@ -84,9 +82,7 @@ def _seed_library(connection: Connection, series_count: int) -> None:
                         percentage = 5_000
                     else:
                         percentage = 0
-                    progress_rows.append(
-                        (series_id, chapter_id, 0, percentage, NOW_US)
-                    )
+                    progress_rows.append((series_id, chapter_id, 0, percentage, NOW_US))
 
         connection.exec_driver_sql(
             "INSERT INTO series (series_id, canonical_title, display_title, description, "
@@ -174,6 +170,12 @@ def test_library_gate_scales_pages_filters_search_and_detail(
         assert len(matches) == 1
         assert matches[0].canonical_title == f"synthetic-series-{series_count - 1:05d}"
 
+        global_matches, global_search_ms = _measure(
+            lambda: service.list_series(query=search_term, sort="title", limit=1)
+        )
+        assert global_matches.total == 1
+        assert global_matches.items[0].canonical_title == f"synthetic-series-{series_count - 1:05d}"
+
         last_series = last_page.items[-1]
         opened_series, detail_ms = _measure(lambda: service.get_series(last_series.series_id))
         assert opened_series == last_series
@@ -189,7 +191,8 @@ def test_library_gate_scales_pages_filters_search_and_detail(
             f"series={series_count} chapters={series_count * CHAPTERS_PER_SERIES} "
             f"seed_ms={seed_ms:.2f} first_page_ms={first_page_ms:.2f} "
             f"page_offset_ms=[{pages_text}] filters_ms=[{filters_text}] "
-            f"page_search_ms={search_ms:.2f} detail_ms={detail_ms:.2f}"
+            f"page_search_ms={search_ms:.2f} global_search_ms={global_search_ms:.2f} "
+            f"detail_ms={detail_ms:.2f}"
         )
     finally:
         database.close()

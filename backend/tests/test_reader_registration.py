@@ -17,7 +17,10 @@ from support.cbz import index_test_job
 from support.sqlite import open_test_database, reopen_test_database
 
 from app.connectors.errors import SourceConnectorOperation
+from app.connectors.metadata import ConnectorCapability
 from app.connectors.mock import MockConnector
+from app.connectors.registry import ConnectorRegistration, ConnectorRegistry
+from app.connectors.sandbox import ConnectorHostContext
 from app.connectors.series_metadata import ConnectorSeriesMetadata
 from app.factory import create_app
 from app.fmd2_bridge import (
@@ -345,11 +348,28 @@ def test_registration_never_acquires_pages(tmp_path: Path, monkeypatch: pytest.M
         database.close()
 
 
-@pytest.mark.parametrize("connector_id,code", [("missing", 404), ("yomira.metadata.mangadex", 501)])
+@pytest.mark.parametrize("connector_id,code", [("missing", 404), ("fixture.metadata", 501)])
 def test_reader_registration_requires_registered_page_capability(
     tmp_path: Path, connector_id: str, code: int
 ) -> None:
     app, database = _app(tmp_path)
+
+    class MetadataOnly(MockConnector):
+        @property
+        def metadata(self):
+            return replace(
+                super().metadata,
+                connector_id="fixture.metadata",
+                capabilities=frozenset({ConnectorCapability.METADATA}),
+            )
+
+    runtime = app.state.runtime
+    runtime.connector_registry = ConnectorRegistry(
+        context=ConnectorHostContext(secret_vault=runtime.secret_vault),
+        registrations=(
+            ConnectorRegistration(MetadataOnly().metadata, lambda _ctx: MetadataOnly()),
+        ),
+    )
     try:
         response = asyncio.run(
             _post(
@@ -434,5 +454,62 @@ def test_ready_number_match_does_not_bypass_series_lineage(tmp_path: Path) -> No
         with database.read_session() as session:
             assert session.scalar(select(func.count()).select_from(SeriesSourceRow)) == 2
             assert session.scalar(select(func.count()).select_from(ChapterSourceRow)) == 2
+    finally:
+        database.close()
+
+
+@pytest.mark.parametrize("case", ("unique", "language", "manga", "ambiguous"))
+def test_novelcool_fresh_reference_preserves_only_an_exact_unique_legacy_identity(
+    tmp_path: Path, case: str
+) -> None:
+    _unused, database = _app(tmp_path)
+    service = DownloadJobService(database)
+    source = "424747b0135c4240a902eb9cfcb11db9"
+    manga = _pack_reference("/manga/fixture.html", source)
+    other = _pack_reference("/manga/other.html", source)
+    operation = SourceConnectorOperation.GET_CHAPTERS
+    old = _pack_chapter(manga, _pack_reference("/go/rds/?data=expired", source), 16, operation)
+    fresh = _pack_chapter(
+        other if case == "manga" else manga, _pack_reference("/2199440239", source), 16, operation
+    )
+    template = asyncio.run(MockConnector().get_chapters("mock-series-1"))[0]
+    old_chapter = replace(template, remote_id=old, display_label="Capítulo 16", language="es")
+    current = replace(old_chapter, remote_id=fresh, language="en" if case == "language" else "es")
+    metadata = ConnectorSeriesMetadata(title="Example", language="es")
+    try:
+        first = service.register_reader_chapter(
+            connector=FMD2_METADATA,
+            remote_series_id=manga,
+            series_metadata=metadata,
+            chapters=(old_chapter,),
+            selected_remote_id=old,
+        )
+        catalog = (
+            (
+                current,
+                replace(
+                    current,
+                    remote_id=_pack_chapter(
+                        manga, _pack_reference("/different", source), 16, operation
+                    ),
+                ),
+            )
+            if case == "ambiguous"
+            else (current,)
+        )
+        repeated = service.register_reader_chapter(
+            connector=FMD2_METADATA,
+            remote_series_id=other if case == "manga" else manga,
+            series_metadata=metadata,
+            chapters=catalog,
+            selected_remote_id=fresh,
+        )
+        assert (repeated.chapter_id == first.chapter_id) is (case == "unique")
+        with database.read_session() as session:
+            assert session.scalar(select(func.count()).select_from(DownloadJobRow)) == 0
+            original = session.scalar(
+                select(ChapterSourceRow).where(ChapterSourceRow.remote_id == old)
+            )
+            assert original is not None and original.chapter_id == str(first.chapter_id)
     finally:
         database.close()

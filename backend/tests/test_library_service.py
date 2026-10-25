@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -8,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from support.sqlite import open_test_database
 
 from app.domain.chapter import Chapter
+from app.domain.metadata import MetadataField
 from app.domain.reader_progress import ReaderProgress
 from app.domain.series import Series
 from app.persistence.database import SQLiteDatabase
@@ -15,8 +17,71 @@ from app.persistence.mappers.chapter import chapter_to_row
 from app.persistence.mappers.reader_progress import reader_progress_to_row
 from app.persistence.migrations.runner import MigrationRunner
 from app.services.library import LibraryReadingStatus, LibraryService
+from app.services.metadata import MetadataService
 
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
+
+
+def test_global_search_counts_matches_before_pagination(tmp_path: Path) -> None:
+    database, service = _library(tmp_path)
+    try:
+        for index in range(205):
+            service.add_series(Series.new_local(f"Manga {index:03}", f"Manga {index:03}", now=NOW))
+        page = service.list_series(query="Manga 20", sort="title", limit=2, offset=2)
+        assert [item.display_title for item in page.items] == ["Manga 202", "Manga 203"]
+        assert (page.total, page.offset, page.limit) == (5, 2, 2)
+        assert service.list_series(query="Manga 20", reading_status="completed").total == 0
+    finally:
+        database.close()
+
+
+def test_search_uses_unicode_and_visible_user_titles_and_literal_wildcards(tmp_path: Path) -> None:
+    database, service = _library(tmp_path)
+    metadata = MetadataService(database)
+    original = Series.new_local("Canonical", "Original", now=NOW)
+    special = Series.new_local("100%_story", "100%_story", now=NOW)
+    try:
+        service.add_series(original)
+        service.add_series(special)
+        metadata.set_user_override(original.series_id, MetadataField.TITLE, "ÉL MANGA")
+        assert service.list_series(query="él manga").items == (original,)
+        assert service.list_series(query="canonical").items == (original,)
+        assert service.list_series(query="original").total == 0
+        assert service.list_series(query="%_").items == (special,)
+        assert service.list_series(query="' OR 1=1 --").total == 0
+        metadata.set_user_override(original.series_id, MetadataField.TITLE, None)
+        assert service.list_series(query="canonical").items == (original,)
+        metadata.set_user_override(original.series_id, MetadataField.TITLE, "")
+        assert service.list_series(query="original").total == 0
+    finally:
+        database.close()
+
+
+def test_global_sort_uses_user_titles_and_dates_before_pagination(tmp_path: Path) -> None:
+    database, service = _library(tmp_path)
+    first = Series.new_local("First", "Zulu", now=NOW)
+    second = Series.new_local("Second", "Bravo", now=NOW + timedelta(days=1))
+    second = replace(second, updated_at=NOW + timedelta(days=2))
+    try:
+        service.add_series(first)
+        service.add_series(second)
+        MetadataService(database).set_user_override(first.series_id, MetadataField.TITLE, "Alfa")
+        assert service.list_series(sort="title", limit=1).items == (first,)
+        assert service.list_series(sort="title", limit=1, offset=1).items == (second,)
+        assert service.list_series(sort="recent", limit=1).items == (second,)
+        assert service.list_series(sort="updated", limit=1).items == (second,)
+    finally:
+        database.close()
+
+
+@pytest.mark.parametrize(("query", "sort"), [("x" * 201, "title"), ("", "arbitrary")])
+def test_global_search_rejects_invalid_options(tmp_path: Path, query: str, sort: str) -> None:
+    database, service = _library(tmp_path)
+    try:
+        with pytest.raises(ValueError):
+            service.list_series(query=query, sort=sort)
+    finally:
+        database.close()
 
 
 def _library(tmp_path: Path) -> tuple[SQLiteDatabase, LibraryService]:

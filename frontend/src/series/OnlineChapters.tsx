@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ApiError, getChapterAvailability, getConnectorChapters, queueConnectorChapters, registerOnlineReaderChapter } from "../api/client";
+import { ApiError, getChapterAvailability, getConnectorChapters, queueConnectorChapters } from "../api/client";
 import type { LibraryReadingSource } from "../api/client";
+import { prepareOnlineChapter, warmOnlineChapter } from "../reader/prepareOnlineChapter";
 import { publicationStatus } from "../library/publicationStatus";
 import styles from "./SeriesDetailPage.module.css";
+import { ActionIcon } from "../app/ActionIcon";
 
 export function OnlineChapters({seriesId, sources, source, onSourceChange, downloadOpen}: {
   seriesId: string;
@@ -21,6 +23,17 @@ export function OnlineChapters({seriesId, sources, source, onSourceChange, downl
   const [selected, setSelected] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState("all");
   const mounted = useRef(true);
+  const warmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopWarmup = () => { if (warmTimer.current !== null) clearTimeout(warmTimer.current); };
+  useEffect(() => () => { if (warmTimer.current !== null) clearTimeout(warmTimer.current); }, []);
+  const prepare = (remoteId: string | null) => {
+    stopWarmup();
+    if (remoteId === null || source.connectorId !== "yomira.metadata.mangadex") return;
+    warmTimer.current = setTimeout(() => {
+      void warmOnlineChapter(client, {seriesId, connectorId: source.connectorId,
+        remoteSeriesId: source.remoteSeriesId, remoteId}).catch(() => {});
+    }, 300);
+  };
   const refreshRequested = useRef(false);
   useEffect(() => {
     if (downloadOpen) document.getElementById("series-download-selection")?.scrollIntoView?.({block: "nearest"});
@@ -45,11 +58,16 @@ export function OnlineChapters({seriesId, sources, source, onSourceChange, downl
   const busy = new Set(availability.data?.busyRemoteIds ?? []);
   const pendingIds = [...new Set((query.data?.data ?? []).flatMap((chapter) =>
     chapter.remoteId !== null && !ready.has(chapter.remoteId) && !busy.has(chapter.remoteId) ? [chapter.remoteId] : []))];
-  const selectedIds = pendingIds.filter((id) => selected.includes(id));
+  const pendingSet = new Set(pendingIds);
+  const selectedSet = new Set(selected);
+  const selectedIds = pendingIds.filter((id) => selectedSet.has(id));
   const download = useMutation({
     mutationFn: (ids: string[]) => queueConnectorChapters(source.connectorId, source.remoteSeriesId, ids),
     retry: false,
-    onSuccess: () => setSelected([]),
+    onSuccess: (_count, ids) => {
+      const queued = new Set(ids);
+      setSelected((current) => current.filter((id) => !queued.has(id)));
+    },
     onSettled: async () => {
       await Promise.all([
         client.invalidateQueries({queryKey: ["chapter-availability", source.connectorId, source.remoteSeriesId]}),
@@ -60,7 +78,7 @@ export function OnlineChapters({seriesId, sources, source, onSourceChange, downl
     },
   });
   const read = useMutation({
-    mutationFn: (remoteId: string) => registerOnlineReaderChapter(source.connectorId, source.remoteSeriesId, remoteId),
+    mutationFn: (remoteId: string) => prepareOnlineChapter(client, {seriesId, connectorId: source.connectorId, remoteSeriesId: source.remoteSeriesId, remoteId}),
     retry: false,
     onSuccess: (chapter) => {
       if (!mounted.current) return;
@@ -74,6 +92,10 @@ export function OnlineChapters({seriesId, sources, source, onSourceChange, downl
       : statusFilter === "busy" ? busy.has(item.remoteId) : !ready.has(item.remoteId) && !busy.has(item.remoteId)))));
   if (descending) chapters.reverse();
   const visible = chapters.slice(offset, offset + 100);
+  const visibleIds = new Set(visible.flatMap((chapter) => chapter.remoteId === null ? [] : [chapter.remoteId]));
+  const visiblePendingIds = [...visibleIds].filter((id) => pendingSet.has(id));
+  const allVisibleSelected = visiblePendingIds.length > 0 && visiblePendingIds.every((id) => selectedSet.has(id));
+  const hiddenSelectionCount = selectedIds.filter((id) => !visibleIds.has(id)).length;
   const error = query.error ?? read.error;
   return <section aria-labelledby="online-chapters-title" className={styles.chapters}>
     <header className={styles.chaptersHeader}><div>
@@ -97,7 +119,7 @@ export function OnlineChapters({seriesId, sources, source, onSourceChange, downl
     {query.data ? <>
       <div className={styles.onlineTools}>
         {query.data.data.find((chapter) => chapter.remoteId !== null) ? <button type="button" className={styles.primaryButton} disabled={read.isPending}
-          onClick={() => read.mutate(query.data.data.find((chapter) => chapter.remoteId !== null)!.remoteId!)}>Empezar a leer online</button> : null}
+          onClick={() => read.mutate(query.data.data.find((chapter) => chapter.remoteId !== null)!.remoteId!)}><ActionIcon name="play" />Empezar a leer online</button> : null}
       </div>
       <div className={styles.onlineTools}>
         <label className={styles.onlineControl}>Buscar capítulo
@@ -107,17 +129,23 @@ export function OnlineChapters({seriesId, sources, source, onSourceChange, downl
           <option value="all">Todos</option><option value="saved">Guardados</option><option value="busy">Pendientes en cola</option><option value="online">Disponibles online</option>
         </select></label>
         <button type="button" className={styles.secondaryButton} onClick={() => {setDescending(!descending); setOffset(0);}}>Orden: {descending ? "descendente" : "ascendente"}</button>
-        <button type="button" aria-label="Actualizar capítulos" className={styles.secondaryButton} disabled={query.isFetching} onClick={() => {setOffset(0); refreshRequested.current = true; void query.refetch();}}>Actualizar</button>
+        <button type="button" aria-label="Actualizar capítulos" className={styles.secondaryButton} disabled={query.isFetching} onClick={() => {setOffset(0); refreshRequested.current = true; void query.refetch();}}><ActionIcon name="refresh" />{query.isFetching ? "Actualizando…" : "Actualizar"}</button>
       </div>
       <p role="status" className={styles.statusMessage}>{chapters.length} capítulos disponibles. Las páginas se cargan al abrir el capítulo.</p>
       {downloadOpen ? <div id="series-download-selection" className={styles.selectionBar}>
-        <button type="button" className={styles.secondaryButton} disabled={!availability.isSuccess || download.isPending} onClick={() => setSelected((current) => [...new Set([...current, ...visible.flatMap((chapter) => chapter.remoteId !== null && pendingIds.includes(chapter.remoteId) ? [chapter.remoteId] : [])])])}>Seleccionar pendientes visibles</button>
-        <button type="button" className={styles.secondaryButton} disabled={!availability.isSuccess || pendingIds.length === 0 || download.isPending} onClick={() => download.mutate(pendingIds)}>Descargar pendientes del manga</button>
+        <p role="status" className={styles.selectionSummary}>{selectedIds.length} {selectedIds.length === 1 ? "seleccionado" : "seleccionados"}{hiddenSelectionCount > 0 ? ` · ${hiddenSelectionCount} fuera de esta página` : ""}</p>
+        <button type="button" className={styles.secondaryButton} disabled={!availability.isSuccess || visiblePendingIds.length === 0 || download.isPending}
+          onClick={() => setSelected((current) => allVisibleSelected ? current.filter((id) => !visibleIds.has(id))
+            : [...new Set([...current, ...visiblePendingIds])])}>{allVisibleSelected ? "Desmarcar visibles" : "Seleccionar pendientes visibles"}</button>
         {selectedIds.length > 0 ? <>
-          <strong>{selectedIds.length} seleccionados</strong>
           <button type="button" className={styles.primaryButton} disabled={!availability.isSuccess || download.isPending} onClick={() => download.mutate(selectedIds)}>Descargar selección ({selectedIds.length})</button>
-          <button type="button" className={styles.secondaryButton} onClick={() => setSelected([])}>Limpiar selección</button>
+          <button type="button" className={styles.secondaryButton} disabled={download.isPending} onClick={() => setSelected([])}>Limpiar selección</button>
         </> : null}
+        <details className={styles.cbrSelectionPanel}><summary>Descargar todos los pendientes</summary>
+          <p className={styles.statusMessage}>Incluye los pendientes de todas las páginas, aunque haya una búsqueda activa. Se conservan los capítulos guardados y los que ya están en cola.</p>
+          <button type="button" className={styles.secondaryButton} disabled={!availability.isSuccess || pendingIds.length === 0 || download.isPending}
+            onClick={() => download.mutate(pendingIds)}>Descargar pendientes del manga ({pendingIds.length})</button>
+        </details>
         {availability.isPending ? <p role="status">Comprobando capítulos guardados y en cola…</p> : null}
         {availability.isError ? <p role="alert">No se pudo comprobar el estado. <button type="button" className={styles.secondaryButton} onClick={() => void availability.refetch()}>Reintentar estados</button></p> : null}
       </div> : null}
@@ -128,7 +156,7 @@ export function OnlineChapters({seriesId, sources, source, onSourceChange, downl
         {visible.map((chapter, index) => <li key={chapter.remoteId ?? index} className={styles.chapterItem}>
           <div className={styles.chapterSelect}>
             {downloadOpen ? <input aria-label={`Seleccionar ${chapter.displayLabel}`} type="checkbox" disabled={!availability.isSuccess || chapter.remoteId === null || ready.has(chapter.remoteId) || busy.has(chapter.remoteId) || download.isPending}
-              checked={chapter.remoteId !== null && selected.includes(chapter.remoteId)} onChange={(event) => {
+              checked={chapter.remoteId !== null && pendingSet.has(chapter.remoteId) && selectedSet.has(chapter.remoteId)} onChange={(event) => {
                 const id = chapter.remoteId;
                 if (id !== null) setSelected((current) => event.target.checked ? [...new Set([...current, id])] : current.filter((value) => value !== id));
               }} /> : null}
@@ -136,8 +164,10 @@ export function OnlineChapters({seriesId, sources, source, onSourceChange, downl
               <small className={styles.chapterState}> · {chapter.remoteId === null ? "Sin acceso de lectura" : ready.has(chapter.remoteId) ? "Guardado" : busy.has(chapter.remoteId) ? "En cola" : availability.isSuccess ? "Online" : "Estado sin comprobar"}</small></span>
           </div>
           <button type="button" className={styles.secondaryButton} disabled={chapter.remoteId === null || read.isPending}
+            onPointerEnter={() => prepare(chapter.remoteId)} onPointerLeave={stopWarmup}
+            onFocus={() => prepare(chapter.remoteId)} onBlur={stopWarmup}
             aria-label={`Leer online ${chapter.displayLabel}`} onClick={() => {if (chapter.remoteId) read.mutate(chapter.remoteId);}}>
-            {read.isPending && read.variables === chapter.remoteId ? "Abriendo…" : "Leer online"}
+            <ActionIcon name="play" />{read.isPending && read.variables === chapter.remoteId ? "Abriendo…" : "Leer online"}
           </button>
         </li>)}
       </ul>

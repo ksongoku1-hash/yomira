@@ -7,3 +7,11 @@ export function compareConnectorChapters(left: ConnectorChapter, right: Connecto
   }
   return left.displayLabel.localeCompare(right.displayLabel, "es", { numeric: true });
 }
+
+export function currentConnectorChapter(catalog: readonly ConnectorChapter[], remoteId: string | undefined,
+  displayLabel: string | undefined): ConnectorChapter | undefined {
+  const exact = catalog.find((chapter) => chapter.remoteId === remoteId);
+  if (exact !== undefined) return exact;
+  const matches = catalog.filter((chapter) => chapter.remoteId !== null && chapter.displayLabel === displayLabel);
+  return matches.length === 1 ? matches[0] : undefined;
+}

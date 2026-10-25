@@ -17,6 +17,7 @@ from app.services.download_dispatcher import DownloadDispatcher
 from app.services.download_transport import DownloadTransport
 from app.services.download_worker import DownloadWorker
 from app.services.export_jobs import UsbExportJobService
+from app.services.fmd2_catalog_refresh import Fmd2CatalogRefreshService
 from app.services.job_recovery import RecoveryCoordinator
 from app.services.jobs import DownloadJobService
 from app.services.library import LibraryService
@@ -27,6 +28,7 @@ from app.services.reader_asset import ReaderAssetService
 from app.services.reader_progress import ReaderProgressService
 from app.services.reader_session import ReaderSessionService
 from app.services.reader_settings import ReaderSettingsService
+from app.services.recommendations import RecommendationsService
 from app.services.resource_monitor import ResourceMonitorService
 
 
@@ -47,6 +49,7 @@ class RuntimeState:
     connector_http_session: ConnectorHttpSession | None = None
     connector_registry: ConnectorRegistry | None = None
     fmd2_connector: Fmd2Connector | None = None
+    fmd2_catalog_refresh_service: Fmd2CatalogRefreshService | None = None
     download_http_client: httpx.AsyncClient | None = None
     download_transport: DownloadTransport | None = None
     download_worker: DownloadWorker | None = None
@@ -58,5 +61,6 @@ class RuntimeState:
     cbr_export_service: CbrExportService | None = None
     reader_progress_service: ReaderProgressService | None = None
     reader_settings_service: ReaderSettingsService | None = None
+    recommendations_service: RecommendationsService | None = None
     reader_session_service: ReaderSessionService | OnlineReaderSessionService | None = None
     usb_export_job_service: UsbExportJobService | None = None

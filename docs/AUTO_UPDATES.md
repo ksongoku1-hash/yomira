@@ -1,0 +1,11 @@
+# Actualizador de Windows
+
+El actualizador usa `GET https://api.github.com/repos/ksongoku1-hash/yomira/releases/latest` sin token. Solo habilita la sustitución de archivos si el ejecutable congelado coincide con `InstallLocation` del AppId de Inno Setup en HKCU (vista de 64 bits). Las copias portátiles o del código fuente no se actualizan automáticamente.
+
+Para distribuir una actualización, aumenta `backend/app/version.py`, `frontend/package.json` y `frontend/package-lock.json`, ejecuta el empaquetado habitual y publica una Release estable con etiqueta `vX.Y.Z` e instalador `Yomira-Setup-X.Y.Z.exe`. GitHub debe devolver el `digest` SHA-256 del asset. Si falta, el cliente rechaza la actualización. Publicar código o una etiqueta sin Release no distribuye el instalador.
+
+El cliente comprueba al iniciar (con diez segundos de margen) y cada seis horas. En errores de red, límites de GitHub, poco espacio, metadatos incompletos o hash distinto, permite seguir usando la versión actual. Los reintentos manuales están limitados a uno por minuto. Descarga a `<data_root>/updates/*.part` y renombra solo después de verificar. Conserva un instalador listo; elimina únicamente instaladores antiguos de ese directorio.
+
+Al pulsar Reiniciar y actualizar vuelve a comprobar el archivo y la instalación, inicia un auxiliar PowerShell oculto fuera de la instalación y solicita el cierre ordenado de Uvicorn. El auxiliar espera hasta 120 segundos a que termine el proceso, sin forzarlo, vuelve a verificar SHA-256, ejecuta Inno Setup con /SILENT /NORESTART y /DIR apuntando a la instalación existente. Al terminar abre Yomira de nuevo, también si el instalador devuelve un error. El navegador espera la versión nueva y recarga. El resultado y el log del instalador quedan en el directorio de updates; el siguiente inicio avisa si hubo un error. Cerrar una pestaña no equivale a cerrar la aplicación.
+
+El instalador conserva el AppId, los accesos directos y las raíces externas de datos y biblioteca. No se ejecutan migraciones destructivas nuevas. Se necesita una instalación manual inicial para versiones antiguas sin actualizador. La confianza de distribución corresponde al repositorio de GitHub y HTTPS; la comparación SHA-256 detecta archivos incompletos o distintos, no sustituye una firma de editor de Windows.

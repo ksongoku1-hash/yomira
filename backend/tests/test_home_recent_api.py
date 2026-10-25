@@ -22,6 +22,7 @@ from app.persistence.mappers.chapter import chapter_to_row
 from app.persistence.mappers.reader_progress import reader_progress_to_row
 from app.persistence.mappers.series import series_to_row
 from app.persistence.migrations.runner import MigrationRunner
+from app.persistence.models.reader_progress import ReaderProgressRow
 from app.runtime import RuntimeState
 from app.services.library import LibraryService
 from app.services.reader_asset import ReaderChapter
@@ -186,9 +187,47 @@ def test_recent_saved_progress_joins_display_fields_and_keeps_multiple_chapters(
     assert body["data"][0]["series_id"] == body["data"][1]["series_id"]
 
 
+def test_recent_progress_can_return_one_latest_chapter_per_series_before_limiting(
+    recent_api: tuple[FastAPI, SQLiteDatabase, Client],
+) -> None:
+    _target_app, database, client = recent_api
+    chapter_c = Chapter.new_local(SERIES_C, "1", "C capítulo 1", chapter_sort_key=(1,))
+    with database.write_session() as session:
+        session.add(chapter_to_row(chapter_c))
+        session.add(
+            reader_progress_to_row(
+                ReaderProgress.new_local(
+                    SERIES_C, chapter_c.chapter_id, 0, Decimal("0.00"), updated_at=BASE_TIME
+                )
+            )
+        )
+    response = client.get("/api/v1/reader/progress/recent?limit=4&per_series=true")
+    assert response.status_code == 200
+    assert [item["chapter_id"] for item in response.json()["data"]] == [
+        str(CHAPTER_A1),
+        str(CHAPTER_B1),
+        str(chapter_c.chapter_id),
+    ]
+    with database.write_session() as session:
+        row = session.get(ReaderProgressRow, (str(SERIES_A), str(CHAPTER_A2)))
+        assert row is not None
+        row.updated_at_us += 86_400_000_000
+        row.percentage_basis_points = 10_000
+    latest = client.get("/api/v1/reader/progress/recent?limit=1&per_series=true")
+    assert latest.status_code == 200
+    assert len(latest.json()["data"]) == 1
+    assert latest.json()["data"][0]["chapter_id"] == str(CHAPTER_A2)
+    assert latest.json()["data"][0]["percentage"] == "100.00"
+    assert client.get("/api/v1/reader/progress/recent?per_series=invalid").status_code == 422
+
+
 @pytest.mark.parametrize(
     "path",
-    ["/api/v1/library/recent", "/api/v1/reader/progress/recent"],
+    [
+        "/api/v1/library/recent",
+        "/api/v1/reader/progress/recent",
+        "/api/v1/reader/progress/recent?per_series=true",
+    ],
 )
 @pytest.mark.parametrize(("limit", "status_code"), [(1, 200), (20, 200), (0, 422), (21, 422)])
 def test_recent_endpoints_enforce_independent_bounded_limit(
@@ -199,7 +238,7 @@ def test_recent_endpoints_enforce_independent_bounded_limit(
 ) -> None:
     _target_app, _database, client = recent_api
 
-    response = client.get(f"{path}?limit={limit}")
+    response = client.get(f"{path}{'&' if '?' in path else '?'}limit={limit}")
 
     assert response.status_code == status_code
     if status_code == 200:
@@ -208,7 +247,11 @@ def test_recent_endpoints_enforce_independent_bounded_limit(
 
 @pytest.mark.parametrize(
     "path",
-    ["/api/v1/library/recent", "/api/v1/reader/progress/recent"],
+    [
+        "/api/v1/library/recent",
+        "/api/v1/reader/progress/recent",
+        "/api/v1/reader/progress/recent?per_series=true",
+    ],
 )
 def test_recent_endpoint_uses_one_limited_select_without_count_or_offset(
     recent_api: tuple[FastAPI, SQLiteDatabase, Client],

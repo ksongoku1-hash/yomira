@@ -20,6 +20,20 @@ from app.services.usb_export import ExportFailure, ExportTarget
 from app.services.wpd_worker import IsolatedWpdClient, run_worker
 
 
+class _WorkerProtocolClient(IsolatedWpdClient):
+    def request_progress(self) -> dict[str, object]:
+        return self._request(
+            {"asset": {"size_bytes": 3}},
+            timeout=5,
+            trace_id="progress-test",
+            failure_code=ErrorCode.EXP_COPY_FAILED,
+            failure_retryable=False,
+        )
+
+    def command(self) -> tuple[str, ...]:
+        return self._command()
+
+
 @pytest.mark.parametrize("processed", [2, -1, 4, True])
 def test_streamed_progress_is_visible_then_cleared(tmp_path: Path, processed: object) -> None:
     script = tmp_path / "progress.py"
@@ -32,20 +46,12 @@ def test_streamed_progress_is_visible_then_cleared(tmp_path: Path, processed: ob
         "print(json.dumps({'ok': True, 'status': 'EXPORTED'}), flush=True)\n",
         encoding="utf-8",
     )
-    client = IsolatedWpdClient(worker_command=(sys.executable, str(script)))
+    client = _WorkerProtocolClient(worker_command=(sys.executable, str(script)))
     results: list[object] = []
 
     def invoke() -> None:
         try:
-            results.append(
-                client._request(
-                    {"asset": {"size_bytes": 3}},
-                    timeout=5,
-                    trace_id="progress-test",
-                    failure_code=ErrorCode.EXP_COPY_FAILED,
-                    failure_retryable=False,
-                )
-            )
+            results.append(client.request_progress())
         except ExportFailure as error:
             results.append(error)
 
@@ -106,7 +112,7 @@ def test_default_worker_preserves_runtime_import_paths(
         encoding="utf-8",
     )
     monkeypatch.setattr(sys, "path", [str(tmp_path), *sys.path, *(sys.path * 100)])
-    command = IsolatedWpdClient()._command()
+    command = _WorkerProtocolClient().command()
     assert len(command[-1]) < 32_000
     # -I reproduces an interpreter that ignores cwd and PYTHONPATH.
     result = subprocess.run(

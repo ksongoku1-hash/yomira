@@ -303,7 +303,7 @@ def test_connector_list_reports_registered_metadata_without_resolving_connectors
             {
                 "connector_id": "yomira.metadata.mangadex",
                 "connector_version": "1.0.0",
-                "capabilities": ["METADATA", "SEARCH"],
+                "capabilities": ["CHAPTER_LIST", "METADATA", "PAGE_LIST", "SEARCH"],
             },
             {
                 "connector_id": "yomira.mock",
@@ -329,7 +329,7 @@ def test_connector_list_requires_initialized_registry() -> None:
     assert response.json()["error"]["code"] == "SYS_INTERNAL_ERROR"
 
 
-def test_mangadex_search_finds_titles_and_aliases_without_offering_chapters(
+def test_mangadex_search_finds_titles_and_aliases_and_offers_chapters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     candidate = MangaDexCandidate(
@@ -343,6 +343,11 @@ def test_mangadex_search_finds_titles_and_aliases_without_offering_chapters(
     async def lookup(_self: MangaDexConnector, _query: ConnectorSearchQuery) -> MangaDexLookup:
         return MangaDexLookup(1, (candidate,))
 
+    async def catalog_chapters(_self: MangaDexConnector, reference: str) -> tuple[()]:
+        assert reference == candidate.remote_id
+        return ()
+
+    monkeypatch.setattr(MangaDexConnector, "get_chapters", catalog_chapters)
     monkeypatch.setattr(MangaDexConnector, "lookup", lookup)
     target_app = _app()
     runtime = cast(RuntimeState, target_app.state.runtime)
@@ -369,8 +374,8 @@ def test_mangadex_search_finds_titles_and_aliases_without_offering_chapters(
         target_app,
         f"/api/v1/connectors/yomira.metadata.mangadex/series/{candidate.remote_id}/chapters",
     )
-    assert chapters.status_code == 501
-    assert chapters.json()["error"]["code"] == "SRC_CAPABILITY_UNSUPPORTED"
+    assert chapters.status_code == 200
+    assert chapters.json()["data"] == []
     asyncio.run(http.close())
 
 

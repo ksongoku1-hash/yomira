@@ -56,15 +56,14 @@ def test_history_exposes_live_progress_only_for_active_export(
         asset.asset_id, target_id="test-usb-01", idempotency_key="live-progress"
     )
     service.mark_exporting(job.export_id)
-    monkeypatch.setattr(
-        service,
-        "progress_for_trace",
-        lambda trace: {
+    def live_progress(trace: str) -> dict[str, str | int]:
+        return {
             "stage": "copy",
             "processed_bytes": 4,
             "total_bytes": asset.size_bytes,
-        },
-    )
+        }
+
+    monkeypatch.setattr(service, "progress_for_trace", live_progress)
     app = create_app()
     app.state.runtime.database = database
     app.state.runtime.usb_export_job_service = service

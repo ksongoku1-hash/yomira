@@ -1,18 +1,19 @@
-YOMIRA 0.1.13 — LECTOR HIBRIDO PARA WINDOWS 10/11 X64
+YOMIRA 0.1.16 — LECTOR HIBRIDO PARA WINDOWS 10/11 X64
 
-El codigo fuente de Yomira 0.1.13 esta disponible en GitHub; no se ha publicado una Release instalable.
+Version 0.1.16 distribuida desde GitHub Releases.
 
-INSTALAR: abre Yomira-Setup-0.1.13.exe. Cierra la version anterior antes
+INSTALAR: abre Yomira-Setup-0.1.16.exe. Cierra la version anterior antes
 de actualizar. Conserva una copia de recuperacion de tus datos y progreso.
 El programa y la biblioteca se guardan en carpetas separadas.
 
-VERSION PORTATIL: extrae TODO Yomira-Windows-x64-0.1.13.zip y abre
+VERSION PORTATIL: extrae TODO Yomira-Windows-x64-0.1.16.zip y abre
 Yomira.exe. No lo ejecutes dentro del ZIP. Se incluyen el motor y licencias;
 no necesitas instalar Python, Node.js ni FMD por separado.
 
 LECTURA ONLINE: en Buscar abre Leer online. Las paginas se solicitan
-progresivamente y se mantienen en memoria, sin guardar imagenes en disco.
-Necesitas conexion. La aplicacion conserva configuracion y progreso en disco.
+progresivamente y se reutilizan desde memoria y una cache temporal local en disco,
+sin crear una descarga en la biblioteca. Necesitas conexion para paginas nuevas.
+La aplicacion conserva configuracion y progreso en disco.
 
 DESCARGAS: abre Descargar dentro del lector para guardar el capitulo actual,
 varios capitulos seleccionados o el catalogo completo disponible del manga.
@@ -21,8 +22,8 @@ con ComicInfo.xml. Abrir el CBZ conserva el progreso del capitulo.
 
 DATOS: el perfil predeterminado es %LOCALAPPDATA%\Yomira\YomiraData.
 Los mangas nuevos van a Documentos\Mangas de Yomira, incluida una ubicacion
-redirigida a OneDrive. El acceso directo de esta actualizacion local usa
-la biblioteca elegida durante la preparacion; no mezcla perfiles anteriores.
+redirigida a OneDrive. La instalacion conserva el perfil y la biblioteca existentes; no incluye datos
+personales ni el perfil de desarrollo de E:.
 
 La interfaz se abre en el navegador al iniciar. Cerrar la pestana no detiene
 el programa. Para cerrar la consola de una ejecucion manual, pulsa Ctrl+C.
@@ -42,3 +43,17 @@ La recuperacion tras un cierre inesperado del motor se verifica en Windows
 con una fuente ficticia. Quedan pendientes fuentes externas y una prueba del
 instalador en un Windows limpio. Las fuentes pueden cambiar o dejar de responder;
 utiliza unicamente accesos autorizados y respeta sus limites.
+
+ACTUALIZACIONES: la version instalada busca versiones estables en GitHub y descarga
+el instalador en segundo plano. Pulsa Reiniciar y actualizar cuando este listo.
+La version portatil se actualiza manualmente desde Releases.
+Si vienes de 0.1.11 u otra version sin actualizador, instala esta entrega
+manualmente una vez. Las siguientes actualizaciones apareceran dentro de Yomira.
+
+FUENTES: 21 integraciones, con disponibilidad que depende de cada sitio.
+Inventario Oculto y Ragnarok actualizan sus catalogos en segundo plano.
+Cartel De Manhwas no tiene actualmente un catalogo utilizable.
+
+RECOMENDACIONES: el ranking publico de MangaDex ayuda a descubrir titulos.
+Buscar fuentes comprueba donde esta disponible cada obra; el historial de lectura
+no se envia al proveedor del ranking.

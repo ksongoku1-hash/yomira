@@ -31,7 +31,7 @@ function job(index: number, status = "QUEUED") {
   };
 }
 
-function renderDownloadsPage(withGroups = false) {
+function renderDownloadsPage(withGroups = false, initialEntry = "/downloads") {
   if (!withGroups) {
     const fetchJobs = globalThis.fetch;
     vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
@@ -44,7 +44,7 @@ function renderDownloadsPage(withGroups = false) {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/downloads"]}>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route element={<DownloadsPage />} path="/downloads" />
           <Route element={<p>Ruta del lector</p>} path="/reader/:chapterId" />
@@ -59,6 +59,73 @@ afterEach(() => {
 });
 
 describe("DownloadsPage", () => {
+  it("filters the full queue, resets pagination and keeps global counts visible", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      const failed = url.searchParams.get("status") === "FAILED";
+      const offset = Number(url.searchParams.get("offset"));
+      const data = failed ? [job(51, "FAILED"), job(52, "FAILED")]
+        : [job(1, "COMPLETED"), job(2, "COMPLETED")];
+      return Promise.resolve(mockResponse({data, meta: {limit: 50, offset, total: 52,
+        states: {COMPLETED: 50, FAILED: 2}, ...(failed ? {filtered_total: 2} : {})}}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDownloadsPage(false, "/downloads?offset=50");
+    await screen.findByText("Capítulo 1");
+    fireEvent.click(screen.getByRole("button", {name: /^Fallidas/}));
+    expect(await screen.findByText("Capítulo 51")).toBeInTheDocument();
+    expect(screen.getByText("Capítulo 52")).toBeInTheDocument();
+    expect(screen.queryByText("Capítulo 1")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", {name: /^Terminadas/})).toHaveTextContent("50");
+    expect(screen.getByRole("button", {name: /^Todas/})).toHaveTextContent("52");
+    expect(screen.getByText("2 trabajos · Fallidas · 52 en total")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/download-jobs?limit=50&offset=0&status=FAILED",
+      {headers: {Accept: "application/json"}});
+  });
+
+  it("restores a filtered page from its URL and paginates within that filter", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      const offset = Number(url.searchParams.get("offset"));
+      return Promise.resolve(mockResponse({data: [job(offset + 1, "FAILED")],
+        meta: {limit: 50, offset, total: 61, filtered_total: 51, states: {FAILED: 51, COMPLETED: 10}}}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDownloadsPage(false, "/downloads?status=failed&offset=50");
+    await screen.findByText("Capítulo 51");
+    expect(screen.getByText("Página 2 de 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", {name: /^Fallidas/})).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", {name: "Anterior"}));
+    expect(await screen.findByText("Capítulo 1")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/v1/download-jobs?limit=50&offset=0&status=FAILED",
+      {headers: {Accept: "application/json"}});
+  });
+
+  it("distinguishes an empty filter from an empty queue and clears only the filter", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const filtered = String(input).includes("status=FAILED");
+      return Promise.resolve(mockResponse({data: filtered ? [] : [job(1, "COMPLETED")],
+        meta: {limit: 50, offset: 0, total: 1, states: {COMPLETED: 1}, ...(filtered ? {filtered_total: 0} : {})}}));
+    }));
+    renderDownloadsPage(false, "/downloads?status=failed&archived=true");
+    expect(await screen.findByRole("heading", {name: "No hay descargas fallidas"})).toBeInTheDocument();
+    expect(screen.queryByText("La cola está vacía")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Mostrar todas"}));
+    expect(await screen.findByText("Capítulo 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", {name: "Volver a la cola"})).toBeInTheDocument();
+  });
+
+  it("recovers a stale filtered page while keeping its selected state", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const offset = Number(new URL(String(input), "http://localhost").searchParams.get("offset"));
+      return Promise.resolve(mockResponse({data: offset ? [] : [job(1, "FAILED")],
+        meta: {limit: 50, offset, total: 1, filtered_total: 1, states: {FAILED: 1}}}));
+    }));
+    renderDownloadsPage(false, "/downloads?status=failed&offset=50");
+    fireEvent.click(await screen.findByRole("button", {name: "Volver a la primera página"}));
+    expect(await screen.findByText("Capítulo 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", {name: /^Fallidas/})).toHaveAttribute("aria-pressed", "true");
+  });
   it("pauses and resumes an entire manga group even across job pages", async () => {
     const seriesId = job(1).series_id;
     let paused = false;
@@ -132,7 +199,7 @@ describe("DownloadsPage", () => {
     expect(progress).toHaveAttribute("value", "1");
     expect(progress).toHaveAttribute("max", "3");
     expect(screen.getByText(/Sus capítulos pendientes se conservan/)).toBeInTheDocument();
-    expect(screen.getByText("Terminadas").nextElementSibling).toHaveTextContent("10");
+    expect(screen.getByRole("button", {name: /^Terminadas/})).toHaveTextContent("10");
   });
   it("lets a fully cancelled terminal job leave the visible queue", async () => {
     const cancelled = {

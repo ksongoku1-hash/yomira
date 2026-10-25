@@ -96,17 +96,30 @@ def get_reader_download_source(chapter_id: UUID4, request: Request) -> ReaderDow
         raise HTTPException(status_code=404, detail="Chapter was not found.") from None
     if source is None:
         return ReaderDownloadSourceEnvelope(data=None, meta={})
-    metadata = next((item for item in registry.registered_metadata
-                     if item.connector_id == source.connector_id), None)
-    required = {ConnectorCapability.METADATA, ConnectorCapability.CHAPTER_LIST,
-                ConnectorCapability.PAGE_LIST}
-    if (metadata is None or metadata.connector_version != source.connector_version
-            or not required.issubset(metadata.capabilities)):
+    metadata = next(
+        (item for item in registry.registered_metadata if item.connector_id == source.connector_id),
+        None,
+    )
+    required = {
+        ConnectorCapability.METADATA,
+        ConnectorCapability.CHAPTER_LIST,
+        ConnectorCapability.PAGE_LIST,
+    }
+    if (
+        metadata is None
+        or metadata.connector_version != source.connector_version
+        or not required.issubset(metadata.capabilities)
+    ):
         return ReaderDownloadSourceEnvelope(data=None, meta={})
-    return ReaderDownloadSourceEnvelope(data=ReaderDownloadSourceResponse(
-        chapter_id=UUID(str(chapter_id)), connector_id=source.connector_id,
-        remote_series_id=source.remote_series_id, chapter_remote_id=source.chapter_remote_id,
-    ), meta={})
+    return ReaderDownloadSourceEnvelope(
+        data=ReaderDownloadSourceResponse(
+            chapter_id=UUID(str(chapter_id)),
+            connector_id=source.connector_id,
+            remote_series_id=source.remote_series_id,
+            chapter_remote_id=source.chapter_remote_id,
+        ),
+        meta={},
+    )
 
 
 class ReaderSessionResponse(BaseModel):
@@ -271,6 +284,7 @@ def list_reader_chapters(
     limit: int = Query(default=100, ge=1, le=MAX_READER_PAGE_SIZE),
     offset: int = Query(default=0, ge=0),
     order: Literal["asc", "desc"] = "asc",
+    q: str = Query(default="", max_length=200),
 ) -> ReaderChapterListEnvelope:
     service = _reader_service(request)
     try:
@@ -279,6 +293,7 @@ def list_reader_chapters(
             limit=limit,
             offset=offset,
             order=order,
+            query=q,
         )
     except ReaderAssetError as error:
         raise _translate_reader_error(error) from None
@@ -289,6 +304,50 @@ def list_reader_chapters(
             offset=page.offset,
             total=page.total,
         ),
+    )
+
+
+class ReaderOpenRequest(ReaderSessionRequest):
+    prepare: bool = False
+
+
+class ReaderOpenData(BaseModel):
+    chapter: ReaderChapterResponse
+    progress: ReaderProgressResponse | None
+
+
+class ReaderOpenEnvelope(BaseModel):
+    data: ReaderOpenData
+    meta: dict[str, str]
+
+
+@router.post("/api/v1/reader/{chapter_id}/open", response_model=ReaderOpenEnvelope)
+async def open_reader_with_progress(
+    chapter_id: UUID4, body: ReaderOpenRequest, request: Request
+) -> ReaderOpenEnvelope:
+    service = _session_service(request)
+    identity = UUID(str(chapter_id))
+    try:
+        if isinstance(service, OnlineReaderSessionService):
+            await service.open(identity, restart=body.restart, prepare=body.prepare)
+        elif body.prepare:
+            raise ReaderAssetConflict("This source cannot be prepared in the background.")
+        else:
+            await service.open(identity, restart=body.restart)
+        chapter = service.get_chapter(identity)
+        if chapter is None:
+            raise ReaderAssetNotFound("The online chapter is not ready.")
+        progress = _reader_progress_service(request).get(identity)
+    except ReaderAssetError as error:
+        raise _translate_reader_error(error) from None
+    except ReaderProgressChapterUnavailable:
+        raise HTTPException(status_code=404, detail="The reader chapter is unavailable.") from None
+    return ReaderOpenEnvelope(
+        data=ReaderOpenData(
+            chapter=ReaderChapterResponse.model_validate(chapter),
+            progress=_reader_progress_response(progress) if progress is not None else None,
+        ),
+        meta={},
     )
 
 
@@ -304,8 +363,9 @@ def list_reader_chapters(
 async def list_recent_reader_progress(
     request: Request,
     limit: int = Query(default=DEFAULT_RECENT_LIMIT, ge=1, le=MAX_RECENT_LIMIT),
+    per_series: bool = False,
 ) -> ReaderProgressRecentEnvelope:
-    entries = _reader_progress_service(request).list_recent(limit=limit)
+    entries = _reader_progress_service(request).list_recent(limit=limit, per_series=per_series)
     return ReaderProgressRecentEnvelope(
         data=[
             ReaderProgressRecentItem(

@@ -45,6 +45,47 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe("online chapters from a library series", () => {
+  it("toggles pending chapters in the current view without clearing hidden selections or queuing anything", async () => {
+    vi.mocked(api.getChapterAvailability).mockResolvedValue({linked: true, readyRemoteIds: ["chapter-1"], readyLabels: [], busyRemoteIds: ["chapter-2"]});
+    vi.mocked(api.getConnectorChapters).mockResolvedValue(chapters(105));
+    open();
+    fireEvent.click(await screen.findByRole("button", {name: "Descargar"}));
+    const selectVisible = await screen.findByRole("button", {name: "Seleccionar pendientes visibles"});
+    await waitFor(() => expect(selectVisible).toBeEnabled());
+    fireEvent.click(selectVisible);
+    expect(screen.getByText("98 seleccionados")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", {name: "Seleccionar Capítulo 1"})).not.toBeChecked();
+    expect(screen.getByRole("checkbox", {name: "Seleccionar Capítulo 2"})).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", {name: "Siguiente"}));
+    expect(screen.getByText("98 seleccionados · 98 fuera de esta página")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Seleccionar pendientes visibles"}));
+    expect(screen.getByText("103 seleccionados · 98 fuera de esta página")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Desmarcar visibles"}));
+    expect(screen.getByRole("checkbox", {name: "Seleccionar Capítulo 105"})).not.toBeChecked();
+    expect(screen.getByText("98 seleccionados · 98 fuera de esta página")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", {name: "Buscar capítulo"}), {target: {value: "105"}});
+    fireEvent.click(screen.getByRole("button", {name: "Seleccionar pendientes visibles"}));
+    expect(screen.getByText("99 seleccionados · 98 fuera de esta página")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Limpiar selección"}));
+    expect(screen.getByText("0 seleccionados")).toBeInTheDocument();
+    expect(api.queueConnectorChapters).not.toHaveBeenCalled();
+  });
+  it("discloses the whole-manga download count and excludes saved and busy chapters despite a search", async () => {
+    vi.mocked(api.getChapterAvailability).mockResolvedValue({linked: true, readyRemoteIds: ["chapter-1"], readyLabels: [], busyRemoteIds: ["chapter-2"]});
+    vi.mocked(api.getConnectorChapters).mockResolvedValue(chapters(105));
+    open();
+    fireEvent.click(await screen.findByRole("button", {name: "Descargar"}));
+    fireEvent.change(await screen.findByRole("textbox", {name: "Buscar capítulo"}), {target: {value: "105"}});
+    expect(screen.getByText("Descargar todos los pendientes").closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Descargar todos los pendientes"));
+    expect(screen.getByText(/Incluye los pendientes de todas las páginas/)).toBeInTheDocument();
+    const whole = screen.getByRole("button", {name: "Descargar pendientes del manga (103)"});
+    await waitFor(() => expect(whole).toBeEnabled());
+    expect(api.queueConnectorChapters).not.toHaveBeenCalled();
+    fireEvent.click(whole);
+    await waitFor(() => expect(api.queueConnectorChapters).toHaveBeenCalledExactlyOnceWith("yomira.mock", "source-one",
+      Array.from({length: 103}, (_, index) => `chapter-${index + 3}`)));
+  });
   it("preserves selections across filters and sends only missing chapters through the existing queue", async () => {
     vi.mocked(api.getChapterAvailability).mockResolvedValue({linked: true, readyRemoteIds: ["chapter-1"], readyLabels: [], busyRemoteIds: ["chapter-2"]});
     vi.mocked(api.getConnectorChapters).mockResolvedValue(chapters(105));
@@ -58,7 +99,30 @@ describe("online chapters from a library series", () => {
     fireEvent.click(screen.getByRole("checkbox", {name: "Seleccionar Capítulo 105"}));
     fireEvent.click(screen.getByRole("button", {name: "Descargar selección (2)"}));
     await waitFor(() => expect(api.queueConnectorChapters).toHaveBeenCalledWith("yomira.mock", "source-one", ["chapter-3", "chapter-105"]));
+    await waitFor(() => expect(screen.getByText("0 seleccionados")).toBeInTheDocument());
     expect(api.registerOnlineReaderChapter).not.toHaveBeenCalled();
+  });
+  it("updates selection after a partial failure and retries only the chapters still missing", async () => {
+    vi.mocked(api.getConnectorChapters).mockResolvedValue(chapters(3));
+    open();
+    fireEvent.click(await screen.findByRole("button", {name: "Descargar"}));
+    const selectVisible = await screen.findByRole("button", {name: "Seleccionar pendientes visibles"});
+    await waitFor(() => expect(selectVisible).toBeEnabled());
+    fireEvent.click(selectVisible);
+    vi.mocked(api.queueConnectorChapters).mockRejectedValueOnce(new Error("partial failure"));
+    vi.mocked(api.getChapterAvailability).mockResolvedValue({linked: true, readyRemoteIds: ["chapter-1"], readyLabels: [], busyRemoteIds: ["chapter-2"]});
+    fireEvent.click(screen.getByRole("button", {name: "Descargar selección (3)"}));
+    await screen.findByRole("alert");
+    await screen.findByText("1 seleccionado");
+    expect(screen.getByRole("checkbox", {name: "Seleccionar Capítulo 1"})).not.toBeChecked();
+    expect(screen.getByRole("checkbox", {name: "Seleccionar Capítulo 2"})).toBeDisabled();
+    expect(screen.getByRole("checkbox", {name: "Seleccionar Capítulo 3"})).toBeChecked();
+    expect(api.queueConnectorChapters).toHaveBeenCalledTimes(1);
+    const retry = screen.getByRole("button", {name: "Descargar selección (1)"});
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() => expect(api.queueConnectorChapters).toHaveBeenLastCalledWith("yomira.mock", "source-one", ["chapter-3"]));
+    await screen.findByText("0 seleccionados");
   });
   it("refreshes chapters without downloading and keeps downloads blocked when availability fails", async () => {
     vi.mocked(api.getChapterAvailability).mockRejectedValue(new Error("offline"));
@@ -82,8 +146,14 @@ describe("online chapters from a library series", () => {
     open();
     const list = await screen.findByRole("list", {name: "Capítulos online"});
     expect(within(list).getAllByRole("listitem")).toHaveLength(100);
+    fireEvent.click(screen.getByRole("button", {name: "Descargar"}));
+    const selectVisible = screen.getByRole("button", {name: "Seleccionar pendientes visibles"});
+    await waitFor(() => expect(selectVisible).toBeEnabled());
+    fireEvent.click(selectVisible);
+    expect(screen.getByText("100 seleccionados")).toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", {name: "Buscar capítulo"}), {target: {value: "10000"}});
     expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText("100 seleccionados · 100 fuera de esta página")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", {name: "Leer online Capítulo 10000"}));
     await waitFor(() => expect(api.registerOnlineReaderChapter).toHaveBeenCalledWith("yomira.mock", "source-one", "chapter-10000"));
   });

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -107,15 +107,16 @@ describe("local series covers", () => {
       return Promise.resolve(response({ data: [], meta: { limit: 4 } }));
     }));
     renderPage(<HomePage />);
-    const link = await screen.findByRole("link", { name: "Berserk" });
+    const library = await screen.findByRole("region", {name: "Mi biblioteca"});
+    const link = await within(library).findByRole("link", { name: "Berserk" });
     expect(link).toHaveAttribute("href", `/series/${series.seriesId}`);
-    const image = screen.getByRole("img", { name: "Portada de Berserk" });
+    const image = within(library).getByRole("img", { name: "Portada de Berserk" });
     expect(new URL(image.getAttribute("src") ?? "", "http://127.0.0.1:8000").searchParams.get("variant"))
       .toBe("medium");
     expect(getComputedStyle(image).width).toBe("100%");
     fireEvent.error(image);
-    const fallback = screen.getByRole("img", { name: "Vista previa no disponible: Berserk" });
+    const fallback = within(library).getByRole("img", { name: "Vista previa no disponible: Berserk" });
     expect(getComputedStyle(fallback).width).toBe("100%");
-    expect(screen.getByText("Autor: Kentaro Miura")).toBeInTheDocument();
+    expect(within(library).getByText("Fantasía · Acción")).toBeInTheDocument();
   });
 });

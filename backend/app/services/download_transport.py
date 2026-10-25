@@ -11,6 +11,7 @@ import os
 import re
 import stat
 import threading
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -245,6 +246,7 @@ class DownloadTransport:
         test_transport: httpx.AsyncBaseTransport | None = None,
         secret_header_provider: SecretHeaderProvider | None = None,
         sleep: Sleep = asyncio.sleep,
+        clock: Callable[[], float] = time.monotonic,
         storage_gate: SharedStorageGate | None = None,
         disk_budget_manager: DiskBudgetManager | None = None,
     ) -> None:
@@ -286,6 +288,8 @@ class DownloadTransport:
         self._test_transport = test_transport
         self._secret_header_provider = secret_header_provider
         self._sleep = sleep
+        self._clock = clock
+        self._host_cooldowns: dict[str, float] = {}
         self._timeouts = httpx.Timeout(
             connect=policy.connect_timeout_seconds,
             read=policy.read_timeout_seconds,
@@ -482,6 +486,22 @@ class DownloadTransport:
                         status_code=failure.status_code,
                     )
                 delay = self._retry_delay(failure, retry_index)
+                if (
+                    failure.status_code == 429
+                    and failure.retry_after is not None
+                    and self._parse_retry_after(failure.retry_after) is not None
+                    and delay > self._policy.max_retry_after_seconds
+                ):
+                    self._raise(
+                        code=ErrorCode.SRC_CONNECTOR_FAILED,
+                        stage="source_retry_after",
+                        trace_id=trace_id,
+                        job_id=job_id,
+                        ordinal=ordinal,
+                        attempt=active_attempt,
+                        retryable=False,
+                        status_code=failure.status_code,
+                    )
                 logger.warning(
                     "download_transport.retry",
                     extra={
@@ -579,6 +599,17 @@ class DownloadTransport:
             retry_failure: _RetryableAttemptFailure | None = None
             async with self._semaphore_slot(self._global_semaphore, cancellation_event):
                 async with self._semaphore_slot(host_semaphore, cancellation_event):
+                    if self._host_cooldowns.get(origin.host, 0) > self._clock():
+                        self._raise(
+                            code=ErrorCode.SRC_CONNECTOR_FAILED,
+                            stage="source_cooldown",
+                            trace_id=trace_id,
+                            job_id=job_id,
+                            ordinal=ordinal,
+                            attempt=attempt,
+                            retryable=False,
+                            status_code=429,
+                        )
                     headers = {"Accept-Encoding": "identity"}
                     if request.referer is not None and origin == initial_origin:
                         headers["Referer"] = request.referer
@@ -634,6 +665,11 @@ class DownloadTransport:
                                     if response.status_code == 429
                                     else None,
                                 )
+                                if response.status_code == 429:
+                                    self._host_cooldowns[origin.host] = max(
+                                        self._host_cooldowns.get(origin.host, 0),
+                                        self._clock() + self._retry_delay(retry_failure, 0),
+                                    )
                             elif response.status_code != 200:
                                 self._raise(
                                     code=ErrorCode.SRC_CONNECTOR_FAILED,
@@ -757,15 +793,14 @@ class DownloadTransport:
                                                     if self._disk_budget_manager is None:
                                                         count = target.write(chunk)
                                                     else:
-                                                        count = (
-                                                            self._disk_budget_manager.write_reserved(
+                                                        manager = self._disk_budget_manager
+                                                        count = manager.write_reserved(
                                                             job_id,
                                                             category="pages",
                                                             requested_bytes=len(chunk),
                                                             write=lambda chunk=chunk: target.write(
                                                                 chunk
                                                             ),
-                                                            )
                                                         )
                                                 except OSError as error:
                                                     budget_state.total_bytes = None
@@ -1065,7 +1100,7 @@ class DownloadTransport:
                 or "\\" in url
             ):
                 raise ValueError
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             self._raise(
                 code=ErrorCode.SRC_CONNECTOR_FAILED,
                 stage=f"{stage}_invalid",
@@ -1383,10 +1418,7 @@ class DownloadTransport:
                     if path in observed_directories:
                         if not valid_directory(current):
                             return False
-                    elif (
-                        self._is_reparse_point(current)
-                        or not stat.S_ISREG(current.st_mode)
-                    ):
+                    elif self._is_reparse_point(current) or not stat.S_ISREG(current.st_mode):
                         return False
                 verification_entry_count = 0
                 for directory, expected_names in completed_listings.items():
@@ -1396,16 +1428,13 @@ class DownloadTransport:
                             if type(entry.name) is not str:
                                 return False
                             verification_entry_count += 1
-                            if (
-                                verification_entry_count
-                                > _MAX_TEMPORARY_INVENTORY_ENTRIES
-                            ):
+                            if verification_entry_count > _MAX_TEMPORARY_INVENTORY_ENTRIES:
                                 return False
                             names.append(entry.name)
                     if tuple(sorted(names)) != expected_names:
                         return False
                 return True
-            except (OSError, ValueError, DataRootIdentityError):
+            except OSError, ValueError, DataRootIdentityError:
                 return False
 
         def scan_inventory() -> int:
@@ -1475,8 +1504,7 @@ class DownloadTransport:
     @staticmethod
     def _is_reparse_point(information: os.stat_result) -> bool:
         return stat.S_ISLNK(information.st_mode) or bool(
-            getattr(information, "st_file_attributes", 0)
-            & _REPARSE_POINT_ATTRIBUTE
+            getattr(information, "st_file_attributes", 0) & _REPARSE_POINT_ATTRIBUTE
         )
 
     @staticmethod
@@ -1568,7 +1596,7 @@ class DownloadTransport:
         if failure.status_code == 429 and failure.retry_after is not None:
             parsed = self._parse_retry_after(failure.retry_after)
             if parsed is not None:
-                return min(parsed, float(self._policy.max_retry_after_seconds))
+                return parsed
         return _RETRY_DELAYS_SECONDS[retry_index]
 
     @staticmethod
@@ -1580,7 +1608,7 @@ class DownloadTransport:
             return float(int(stripped))
         try:
             retry_at = parsedate_to_datetime(stripped)
-        except (TypeError, ValueError, OverflowError):
+        except TypeError, ValueError, OverflowError:
             return None
         if retry_at.tzinfo is None:
             retry_at = retry_at.replace(tzinfo=UTC)

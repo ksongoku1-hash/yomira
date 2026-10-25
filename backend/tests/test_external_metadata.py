@@ -1,7 +1,7 @@
 import asyncio
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -18,6 +18,8 @@ from app.connectors.mangadex import (
     MangaDexConnector,
     MangaDexLookup,
 )
+from app.connectors.metadata import ConnectorMetadata
+from app.connectors.mock import MockConnector
 from app.connectors.registry import ConnectorRegistration, ConnectorRegistry
 from app.connectors.sandbox import ConnectorHostContext
 from app.connectors.search import ConnectorSearchQuery, ConnectorSearchResult
@@ -129,7 +131,7 @@ def _fixture(tmp_path: Path, lookup: MangaDexLookup | SourceConnectorError):
     ],
 )
 def test_local_source_metadata_never_guesses_or_rebinds(tmp_path: Path, case: str) -> None:
-    database, series, service, http, _ = _fixture(tmp_path, MangaDexLookup((), 0))
+    database, series, _service, http, _ = _fixture(tmp_path, MangaDexLookup(0, ()))
     remote_id = "fmd2:v1:" + (b"K042a85566244b7e836679491ce67ot0\n/manga/test").hex()
     series = replace(
         series,
@@ -189,10 +191,14 @@ def test_local_source_metadata_never_guesses_or_rebinds(tmp_path: Path, case: st
         description="Source synopsis",
         language="es",
     )
-    calls = []
+    calls: list[str] = []
 
-    class SourceConnector:
-        async def search(self, query):
+    class SourceConnector(MockConnector):
+        @property
+        def metadata(self) -> ConnectorMetadata:
+            return FMD2_METADATA
+
+        async def search(self, query: ConnectorSearchQuery) -> tuple[ConnectorSearchResult, ...]:
             calls.append(query.query)
             if case == "unavailable":
                 raise SourceConnectorError(
@@ -203,27 +209,31 @@ def test_local_source_metadata_never_guesses_or_rebinds(tmp_path: Path, case: st
             ]
             if case == "ambiguous":
                 matches.append(ConnectorSearchResult(remote_id + "00", None, "Naruto"))
-            return matches
+            return tuple(matches)
 
-        async def get_series(self, reference):
-            assert reference == remote_id
-            return metadata
+        async def get_series(self, remote_series_reference: str) -> Mapping[str, object]:
+            assert remote_series_reference == remote_id
+            return {"fixture": metadata}
 
-        def normalize_metadata(self, raw):
+        def normalize_metadata(self, raw_metadata: Mapping[str, object]) -> ConnectorSeriesMetadata:
+            raw = raw_metadata["fixture"]
+            assert isinstance(raw, ConnectorSeriesMetadata)
             return raw
 
-    service._registry = SimpleNamespace(
-        connector_ids=(FMD2_METADATA.connector_id,),
-        resolve=lambda *args, **kwargs: SourceConnector(),
+    registry = ConnectorRegistry(
+        context=ConnectorHostContext(secret_vault=WindowsDpapiSecretVault(tmp_path)),
+        registrations=(ConnectorRegistration(FMD2_METADATA, lambda _ctx: SourceConnector()),),
     )
+    service = ExternalMetadataService(database, registry)
 
-    async def exercise():
+    async def exercise() -> None:
         saved = await service.ensure_source_missing(series.series_id)
         assert saved is (case == "exact")
         sources = MetadataService(database).list_sources(series.series_id)
         if saved:
             assert len(sources) == 1 and sources[0].remote_id == remote_id
             values = MetadataService(database).resolve_series(series.series_id)
+            assert values is not None
             assert (
                 next(v.value for v in values if v.field is MetadataField.DESCRIPTION)
                 == "Source synopsis"

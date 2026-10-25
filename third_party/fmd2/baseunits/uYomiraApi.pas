@@ -12,30 +12,80 @@ implementation
 uses
   Classes, SysUtils, StrUtils, Math, fpjson, jsonparser, fphttpserver, httpdefs, Forms,
   ImgInfos, FileUtil, FMDOptions, uBaseUnit, uData, DBDataProcess, WebsiteModules, uDownloadsManager,
-  BaseThread, FMDVars, MultiLog, DBUpdater, XQueryEngineHTML, xquery, synacode, SyncObjs, uYomiraPageReadiness;
+  BaseThread, FMDVars, MultiLog, DBUpdater, XQueryEngineHTML, xquery, synacode, SyncObjs, uYomiraPageReadiness,
+  sqlite3conn;
 
 const
   API_PORT_DEFAULT = 18873;
   API_BODY_LIMIT = 8192;
   API_FILE_LIMIT = 67108864;
-  API_PUBLIC_SOURCE_COUNT = 9;
+  API_PUBLIC_SOURCE_COUNT = 20;
   API_SOURCE_ID = '18f636ec7fdf47fabe95d940ad0b548f';
   API_SOURCE_NAME = 'WebToons';
   API_REF_PREFIX = 'fmd2:v1:';
   API_SOURCE_IDS: array[0..API_PUBLIC_SOURCE_COUNT - 1] of string = (
-    '18f636ec7fdf47fabe95d940ad0b548f', '97dcd409f781467eb2da4a8634e5a1d9',
-    '9a0a1298ca044dd9886a3446092f285e', 'f31e7a36050c424291c839f0a02d92a4',
-    '7103ae6839ea46ec80cdfc2c4b37c803', '9185eb6c49324a849c7d7925a41ef3a3',
-    '424747b0135c4240a902eb9cfcb11db9', '03ae42ac9141443fa0711bd401c0203d',
-    'K042a85566244b7e836679491ce67ot0');
+    '18f636ec7fdf47fabe95d940ad0b548f',
+    '97dcd409f781467eb2da4a8634e5a1d9',
+    '9a0a1298ca044dd9886a3446092f285e',
+    'f31e7a36050c424291c839f0a02d92a4',
+    '7103ae6839ea46ec80cdfc2c4b37c803',
+    '9185eb6c49324a849c7d7925a41ef3a3',
+    '424747b0135c4240a902eb9cfcb11db9',
+    '03ae42ac9141443fa0711bd401c0203d',
+    'K042a85566244b7e836679491ce67ot0',
+    'c67d163c51b24bc498e777e2b0d810d2',
+    '5aa6794ceeea4192a63de8296344da3c',
+    '0611830535274dfa9f0d879dc1968fdb',
+    '422d5e83e2ae4b3b84742122b00926ef',
+    '36b0f19e144a4642a2839ec9cb728c3a',
+    '5400f8755204497f998fdb1d831e8b50',
+    'f3098381220841f8b13928e682de4d7e',
+    '35d1c04c0de345b1a52ec4ff1e6098b5',
+    'abbde9b6468f45939e5603416d73ac47',
+    '889f027efe74448883db0f3fecf3d279',
+    'a964861afd0f410cb5122df5f50d3e1a');
   API_SOURCE_NAMES: array[0..API_PUBLIC_SOURCE_COUNT - 1] of string = (
-    'WebToons', 'CapibaraTraductor', 'Cartel De Manhwas', 'Apoll Comics',
-    'Asura Scans', 'TuMangaOnline', 'NovelCoolES', 'InManga', 'ManhwaWeb');
+    'WebToons',
+    'CapibaraTraductor',
+    'Cartel De Manhwas',
+    'Apoll Comics',
+    'Asura Scans',
+    'TuMangaOnline',
+    'NovelCoolES',
+    'InManga',
+    'ManhwaWeb',
+    'LeerCapitulo',
+    'MangaOni',
+    'InfraFandub',
+    'Inventario Oculto',
+    'Ragnarok Scanlation',
+    'Uchuujin Scans',
+    'LeeMiau',
+    'TaurusManga',
+    'Weeb Central',
+    'MangaPill',
+    'ManhuaPlus');
   API_SOURCE_ROOTS: array[0..API_PUBLIC_SOURCE_COUNT - 1] of string = (
-    'https://www.webtoons.com', 'https://capibaratraductor.com',
-    'https://carteldemanhwas.net', 'https://apollcomics.es',
-    'https://asurascans.com', 'https://zonatmo.org', 'https://es.novelcool.com',
-    'https://inmanga.com', 'https://www.manhwaweb.com');
+    'https://www.webtoons.com',
+    'https://capibaratraductor.com',
+    'https://carteldemanhwas.net',
+    'https://apollcomics.es',
+    'https://asurascans.com',
+    'https://zonatmo.org',
+    'https://es.novelcool.com',
+    'https://inmanga.com',
+    'https://www.manhwaweb.com',
+    'https://www.leercapitulo.co',
+    'https://manga-oni.com',
+    'https://infrafandub.com',
+    'https://inventariooculto.com',
+    'https://ragnarokscanlation.org',
+    'https://uchuujinmangas.com',
+    'https://leemiau.com',
+    'https://lectortaurus.com',
+    'https://weebcentral.com',
+    'https://mangapill.com',
+    'https://manhuaplus.com');
 
 type
   ESourceCatalogNotReady = class(Exception);
@@ -44,6 +94,19 @@ type
   TLoopbackHTTPServer = class(TFPHTTPServer)
   public
     property Address;
+  end;
+
+  TLiveSearchThread = class(TThread)
+  private
+    FQuery: string;
+    FLimit: Integer;
+    FModule: TModuleContainer;
+    FData: TJSONArray;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AQuery: string; ALimit: Integer;
+      AModule: TModuleContainer; AData: TJSONArray);
   end;
 
   TYomiraApiListener = class(TBaseThread)
@@ -163,6 +226,43 @@ begin
     not SameText(ExcludeTrailingPathDelimiter(Result.RootURL), API_SOURCE_ROOTS[ASourceIndex]) or
     Result.AccountSupport then
     Result := nil;
+end;
+
+function LiveSearchKind(const ASourceID: string): Integer;
+var
+  I: Integer;
+begin
+  I := PublicSourceIndex(ASourceID);
+  if I in [5..9] then Exit(I);
+  if (ASourceID = '5400f8755204497f998fdb1d831e8b50') or
+    (ASourceID = 'f3098381220841f8b13928e682de4d7e') then Exit(10);
+  if ASourceID = '35d1c04c0de345b1a52ec4ff1e6098b5' then Exit(11);
+  if ASourceID = '889f027efe74448883db0f3fecf3d279' then Exit(12);
+  if ASourceID = '0611830535274dfa9f0d879dc1968fdb' then Exit(13);
+  Result := -1;
+end;
+
+function SourceCatalogReady(const ASourceID: string): Boolean;
+var
+  Processor: TDBDataProcess;
+begin
+  Result := False;
+  if not DBDataFileExist(ASourceID) then Exit;
+  Processor := TDBDataProcess.Create;
+  try
+    Processor.Connection.OpenFlags := [sofReadOnly];
+    try
+      if not Processor.Connect(ASourceID) or not Processor.TableExist('masterlist') then Exit;
+      // Readiness must not create an empty catalog or repair the provider's schema.
+      Processor.Table.SQL.Text := 'SELECT link,title FROM masterlist LIMIT 1';
+      Processor.Table.Open;
+      Result := not Processor.Table.IsEmpty;
+    except
+      on E: Exception do Result := False;
+    end;
+  finally
+    Processor.Free;
+  end;
 end;
 
 function IsSafeModuleURL(const AURL, ASourceID: string): Boolean;
@@ -349,7 +449,7 @@ begin
     Item.Add('name', Module.Name);
     Item.Add('base_url', Module.RootURL);
     Item.Add('access', 'public');
-    Item.Add('catalog_ready', DBDataFileExist(Module.ID));
+    Item.Add('catalog_ready', (LiveSearchKind(Module.ID) >= 0) or SourceCatalogReady(Module.ID));
     Capabilities := TJSONArray.Create;
     Capabilities.Add('search');
     Capabilities.Add('manga_info');
@@ -380,7 +480,7 @@ begin
     Info.HTTP.Timeout := 5000;
     Info.HTTP.RetryCount := 0;
     try
-      SourceIndex := PublicSourceIndex(AModule.ID);
+      SourceIndex := LiveSearchKind(AModule.ID);
       case SourceIndex of
         5: begin
           SearchURL := AModule.RootURL + '/biblioteca?title=' +
@@ -407,10 +507,36 @@ begin
           Selector := 'json(*).data()';
           TitleSelector := 'the_real_name';
         end;
+        9: begin
+          SearchURL := AModule.RootURL + '/search/?q=' + EncodeURLElement(AQuery);
+          Selector := 'json(*)()';
+          TitleSelector := 'name';
+        end;
+        10: begin
+          SearchURL := AModule.RootURL + '/?s=' + EncodeURLElement(AQuery);
+          Selector := '//div[@class="bsx"]/a[@title]';
+          TitleSelector := '@title';
+        end;
+        11: begin
+          SearchURL := AModule.RootURL + '/?s=' + EncodeURLElement(AQuery) + '&post_type=wp-manga';
+          Selector := '//div[contains(@class,"post-title")]//*[self::h2 or self::h3]/a';
+          TitleSelector := 'normalize-space(.)';
+        end;
+        12: begin
+          SearchURL := AModule.RootURL + '/search?q=' + EncodeURLElement(AQuery);
+          Selector := '//a[contains(@class,"mb-2")]';
+          TitleSelector := 'div[1]';
+        end;
+        13: begin
+          Selector := '//a[@href]';
+          TitleSelector := 'normalize-space(.)';
+          if not Info.HTTP.POST(AModule.RootURL + '/wp-admin/admin-ajax.php',
+            'action=madara_custom_search&keyword=' + EncodeURLElement(AQuery)) then Exit;
+        end;
         else Exit;
       end;
       // ponytail: first live result page; paginate when more than 50 matches are needed.
-      if (SourceIndex <> 7) and not Info.HTTP.GET(SearchURL) then Exit;
+      if not (SourceIndex in [7, 13]) and not Info.HTTP.GET(SearchURL) then Exit;
       if Info.HTTP.ResultCode <> 200 then Exit;
       Parser := TXQueryEngineHTML.Create(Info.HTTP.Document);
       try
@@ -422,6 +548,7 @@ begin
             if Parser.XPathString('_tipo', Node) = 'novela' then Continue;
             URL := '/manhwa/' + Parser.XPathString('_id', Node);
           end
+          else if SourceIndex = 9 then URL := Parser.XPathString('uri', Node)
           else URL := Node.toNode.getAttribute('href');
           if StartsStr(AModule.RootURL + '/', URL) then
             URL := RemoveHostFromURL(URL);
@@ -429,6 +556,8 @@ begin
           if (SourceIndex = 6) and (Pos('novela', LowerCase(Title)) > 0) then Continue;
           if not IsSafeModuleURL(URL, AModule.ID) or
             ((SourceIndex = 5) and not StartsStr('/library/', URL)) or (Title = '') or
+            ((SourceIndex in [10, 11, 13]) and not StartsStr('/manga/', URL)) or
+            ((SourceIndex = 12) and not StartsStr('/manga/', URL)) or
             (ASeen.IndexOf(URL) >= 0) then Continue;
           Item := TJSONObject.Create;
           Item.Add('manga_ref', PackReference(AModule.ID, URL));
@@ -451,6 +580,29 @@ begin
   end;
 end;
 
+constructor TLiveSearchThread.Create(const AQuery: string; ALimit: Integer;
+  AModule: TModuleContainer; AData: TJSONArray);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FQuery := AQuery;
+  FLimit := ALimit;
+  FModule := AModule;
+  FData := AData;
+end;
+
+procedure TLiveSearchThread.Execute;
+var
+  Seen: TStringList;
+begin
+  Seen := TStringList.Create;
+  try
+    SearchLiveSource(FQuery, FLimit, FModule, FData, Seen);
+  finally
+    Seen.Free;
+  end;
+end;
+
 function TYomiraApiListener.SearchJSON(const ABody: string): TJSONObject;
 var
   Input, Root, Item: TJSONObject;
@@ -462,7 +614,22 @@ var
   Module: TModuleContainer;
   URL, SourceFilter: string;
   Seen: TStringList;
+  Jobs: array[0..3] of TLiveSearchThread;
+  JobCount: Integer;
+
+  procedure FinishSearchBatch;
+  var
+    J: Integer;
+  begin
+    for J := 0 to JobCount - 1 do
+    begin
+      Jobs[J].WaitFor;
+      FreeAndNil(Jobs[J]);
+    end;
+    JobCount := 0;
+  end;
 begin
+  JobCount := 0;
   for SourceIndex := 0 to API_PUBLIC_SOURCE_COUNT - 1 do
     SourceData[SourceIndex] := nil;
   Input := ParseObject(ABody);
@@ -477,21 +644,40 @@ begin
     Limit := Input.Get('limit', 25);
     if (Limit < 1) or (Limit > 50) then
       raise EConvertError.Create('Limit must be between 1 and 50.');
+    if SourceFilter <> '*' then
+    begin
+      Module := PublicModule(PublicSourceIndex(SourceFilter));
+      if (Module = nil) or ((LiveSearchKind(SourceFilter) < 0) and
+        not SourceCatalogReady(SourceFilter)) then
+        raise ESourceCatalogNotReady.Create('The source catalog is not ready.');
+    end;
     Root := TJSONObject.Create;
     Data := TJSONArray.Create;
     IndexedCount := 0;
+    // Bound public live searches to four simultaneous requests, independent of catalog size.
     for SourceIndex := 0 to API_PUBLIC_SOURCE_COUNT - 1 do
     begin
       SourceData[SourceIndex] := TJSONArray.Create;
+      if (SourceFilter <> '*') and not SameText(SourceFilter, API_SOURCE_IDS[SourceIndex]) then Continue;
+      Module := PublicModule(SourceIndex);
+      if (Module = nil) or (LiveSearchKind(Module.ID) < 0) then Continue;
+      Jobs[JobCount] := TLiveSearchThread.Create(Query, Limit, Module, SourceData[SourceIndex]);
+      Jobs[JobCount].Start;
+      Inc(JobCount);
+      if JobCount = Length(Jobs) then FinishSearchBatch;
+    end;
+    FinishSearchBatch;
+    for SourceIndex := 0 to API_PUBLIC_SOURCE_COUNT - 1 do
+    begin
       if (SourceFilter <> '*') and not SameText(SourceFilter, API_SOURCE_IDS[SourceIndex]) then
         Continue;
       Module := PublicModule(SourceIndex);
       if Module = nil then Continue;
       Seen.Clear;
-      if SourceIndex >= 5 then
-        SearchLiveSource(Query, Limit, Module, SourceData[SourceIndex], Seen);
+      for I := 0 to SourceData[SourceIndex].Count - 1 do
+        Seen.Add(RemoveHostFromURL(TJSONObject(SourceData[SourceIndex].Items[I]).Get('remote_url', '')));
       Inc(IndexedCount, SourceData[SourceIndex].Count);
-      if not DBDataFileExist(API_SOURCE_IDS[SourceIndex]) then Continue;
+      if not SourceCatalogReady(API_SOURCE_IDS[SourceIndex]) then Continue;
       Processor := TDBDataProcess.Create;
       try
         if not Processor.Open(API_SOURCE_IDS[SourceIndex]) then Continue;
@@ -536,6 +722,7 @@ begin
     Root.Add('source_id', SourceFilter);
     Exit(Root);
   finally
+    FinishSearchBatch;
     for SourceIndex := 0 to API_PUBLIC_SOURCE_COUNT - 1 do
       SourceData[SourceIndex].Free;
     Input.Free;
@@ -1282,7 +1469,7 @@ begin
     Module := Modules.LocateModule(API_SOURCE_IDS[I]);
     if Module <> nil then Module.AllowBypass := False;
     Module := PublicModule(I);
-    if (Module <> nil) and not DBDataFileExist(API_SOURCE_IDS[I]) then
+    if (Module <> nil) and (LiveSearchKind(Module.ID) < 0) and not DBDataFileExist(API_SOURCE_IDS[I]) then
     begin
       if DBUpdaterThread = nil then
       begin

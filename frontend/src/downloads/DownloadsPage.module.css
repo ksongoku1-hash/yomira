@@ -1,12 +1,8 @@
-.queueSummary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 12px;
-  margin: 0 0 24px;
-}
-.queueSummary > div { padding: 1.25rem; border: 1px solid var(--panel-border); border-radius: var(--radius-panel); background: var(--panel-background); box-shadow: var(--panel-shadow); }
-.queueSummary dt { color: var(--text-muted, #a9b2b8); font-size: 0.85rem; }
-.queueSummary dd { margin: 0.5rem 0 0; color: var(--accent); font-size: 2rem; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.04em; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.filterButton { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; min-height: 2.75rem; padding: 0.5rem 0.7rem; border: 1px solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface-soft); color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 0.85rem; }
+.filterButton:hover { border-color: var(--accent); }
+.filterButton[aria-pressed="true"] { border-color: var(--accent); color: var(--background); background: var(--accent); font-weight: 650; }
+.filterCount { display: inline-grid; min-width: 1.5rem; padding-inline: 0.3rem; place-items: center; border-radius: 999px; background: #0002; font-variant-numeric: tabular-nums; }
 .pageProgress { display: grid; gap: 6px; max-width: 320px; font-size: 0.85rem; }
 .pageProgress progress { width: 100%; accent-color: var(--accent); }
 .pageProgress small, .phaseMessage { color: var(--text-muted, #a9b2b8); font-size: 0.8rem; max-width: 320px; }
@@ -119,6 +115,7 @@
   min-height: 2.75rem;
   align-items: center;
   justify-content: center;
+  gap: 0.45rem;
   padding: 0.6rem 0.9rem;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-control);
@@ -525,3 +522,8 @@
 .groupList { display: grid; gap: 0.75rem; list-style: none; margin: 0; padding: 0; }
 .groupCard { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.85rem; border: 1px solid var(--border-color); border-radius: var(--radius-control); background: var(--surface-soft); }
 .groupCard > div { display: grid; gap: 0.3rem; min-width: 0; overflow-wrap: anywhere; }
+.jobCard { border-left: 3px solid var(--border-strong); }
+.jobCard[data-status="COMPLETED"] { border-left-color: var(--success); }
+.jobCard[data-status="FAILED"] { border-left-color: #ffb4ab; }
+.jobCard[data-status="DOWNLOADING"], .jobCard[data-status="FETCHING_METADATA"] { border-left-color: var(--accent); }
+.jobCard[data-status="QUEUED"], .jobCard[data-status="INTERRUPTED"] { border-left-color: var(--warning); }

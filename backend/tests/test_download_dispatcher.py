@@ -19,8 +19,20 @@ from app.persistence.disk_budget import (
 )
 from app.persistence.migrations.runner import MigrationRunner
 from app.persistence.repositories.download_job import DownloadJobRepository
+from app.services.download_dispatcher import DownloadDispatcher
 from app.services.job_recovery import RecoveryCoordinator, WorkerQuiescenceAck
 from app.services.jobs import DownloadJobService
+
+
+class ManualDispatcher(DownloadDispatcher):
+    """Advance the real scheduler deterministically under the test's clock."""
+
+    async def dispatch_once(self) -> None:
+        await self._dispatch_available()
+
+    async def finish_active(self) -> None:
+        await asyncio.gather(*self._active.values())
+        self._discard_completed_tasks()
 
 
 def test_source_failure_holds_the_remaining_queue_until_connection_recovers(
@@ -28,7 +40,6 @@ def test_source_failure_holds_the_remaining_queue_until_connection_recovers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.errors import ErrorCode
-    from app.services.download_dispatcher import DownloadDispatcher
     from app.services.download_worker import DownloadWorkerResult
 
     clock = [100.0]
@@ -63,7 +74,9 @@ def test_source_failure_holds_the_remaining_queue_until_connection_recovers(
                 with database.write_session() as session:
                     from app.persistence.models.download_job import DownloadJobRow
 
-                    session.get(DownloadJobRow, str(job_id)).status = "FAILED"
+                    row = session.get(DownloadJobRow, str(job_id))
+                    assert row is not None
+                    row.status = "FAILED"
                 return DownloadWorkerResult(
                     replace(summary.job, status=DownloadJobStatus.FAILED),
                     summary.series_id,
@@ -81,28 +94,27 @@ def test_source_failure_holds_the_remaining_queue_until_connection_recovers(
                 return self.available
 
         runner = Runner()
-        dispatcher = DownloadDispatcher(
+        dispatcher = ManualDispatcher(
             database=database,
             worker=runner,
             recovery_coordinator=RecoveryCoordinator(database, database.data_root_identity),
         )
         try:
-            await dispatcher._dispatch_available()
-            await asyncio.gather(*dispatcher._active.values())
-            dispatcher._discard_completed_tasks()
+            await dispatcher.dispatch_once()
+            await dispatcher.finish_active()
             assert len(runner.calls) == 1
             assert dispatcher.source_wait == (1, 30)
-            await dispatcher._dispatch_available()
+            await dispatcher.dispatch_once()
             assert runner.probes == 0 and not dispatcher.active_job_ids
             clock[0] += 31
-            await dispatcher._dispatch_available()
+            await dispatcher.dispatch_once()
             assert runner.probes == 1 and not dispatcher.active_job_ids
             assert DownloadJobService(database).list_jobs().states["QUEUED"] == 1
             runner.available = True
             clock[0] += 31
-            await dispatcher._dispatch_available()
+            await dispatcher.dispatch_once()
             assert runner.probes == 2 and len(dispatcher.active_job_ids) == 1
-            await asyncio.gather(*dispatcher._active.values())
+            await dispatcher.finish_active()
             assert len(runner.calls) == 2
         finally:
             database.close()
@@ -355,7 +367,6 @@ async def _exercise_storage_gate_recovery_checks(data_root: Path) -> None:
 
 
 async def _exercise_dispatcher_drain(data_root: Path) -> None:
-    from app.services.download_dispatcher import DownloadDispatcher
 
     database = open_test_database(data_root)
     MigrationRunner(database, data_root / "backups").upgrade_to_head()
@@ -421,7 +432,7 @@ async def _exercise_dispatcher_drain(data_root: Path) -> None:
             return failed
 
     runner = HoldingRunner()
-    dispatcher = DownloadDispatcher(
+    dispatcher = ManualDispatcher(
         database=database,
         worker=runner,
         recovery_coordinator=RecoveryCoordinator(database, database.data_root_identity),
@@ -435,12 +446,12 @@ async def _exercise_dispatcher_drain(data_root: Path) -> None:
         assert active_job_id in selected_job_ids
         assert snapshots[0].stage is DownloadJobStatus.FETCHING_METADATA
         # A different source must not use a second slot while this chapter is active.
-        await dispatcher._dispatch_available()
+        await dispatcher.dispatch_once()
         assert len(dispatcher.active_job_ids) == 1
         with database.read_session() as session:
-            assert DownloadJobRepository().get(session, other_summary.job.job_id).status is (
-                DownloadJobStatus.QUEUED
-            )
+            other_job = DownloadJobRepository().get(session, other_summary.job.job_id)
+            assert other_job is not None
+            assert other_job.status is DownloadJobStatus.QUEUED
 
         dispatcher.request_stop()
         stop_task = asyncio.create_task(dispatcher.stop())

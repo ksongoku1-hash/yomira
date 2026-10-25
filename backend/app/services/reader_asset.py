@@ -338,6 +338,7 @@ class ReaderAssetService:
         limit: int = DEFAULT_READER_PAGE_SIZE,
         offset: int = 0,
         order: Literal["asc", "desc"] = "asc",
+        query: str = "",
     ) -> ReaderChapterPage:
         self._validate_uuid4(series_id, "series_id")
         if type(limit) is not int or not 1 <= limit <= MAX_READER_PAGE_SIZE:
@@ -346,6 +347,8 @@ class ReaderAssetService:
             raise ValueError("offset must be a non-negative integer")
         if order not in {"asc", "desc"}:
             raise ValueError("order must be asc or desc")
+        if type(query) is not str or len(query) > 200:
+            raise ValueError("query must be a string of at most 200 characters")
         with self._database.read_session() as session:
             records, total = self._repository.list_ready_chapters(
                 session,
@@ -353,6 +356,7 @@ class ReaderAssetService:
                 limit=limit,
                 offset=offset,
                 descending=order == "desc",
+                query=query.strip(),
             )
         return ReaderChapterPage(
             items=tuple(self._public_chapter(record) for record in records),

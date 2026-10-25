@@ -5,11 +5,12 @@ import io
 import os
 from collections.abc import Generator
 from contextlib import contextmanager
+from ctypes import c_int
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -22,7 +23,22 @@ from app.services.usb_export import (
     UsbExportService,
     WindowsRemovableDriveProvider,
 )
-from app.services.wpd_export import PortableDeviceFile, PortableDeviceSession, WpdExportService
+
+# These tests verify the private COM boundary directly, without widening the production API.
+from app.services.wpd_export import (
+    _FOLDER_CONTENT_TYPE,  # pyright: ignore[reportPrivateUsage]
+    _GENERIC_FILE_CONTENT_TYPE,  # pyright: ignore[reportPrivateUsage]
+    _OBJECT_PROPERTIES_GUID,  # pyright: ignore[reportPrivateUsage]
+    PortableDeviceFile,
+    PortableDeviceSession,
+    WpdExportService,
+    _classify_wpd_error,  # pyright: ignore[reportPrivateUsage]
+    _create_values,  # pyright: ignore[reportPrivateUsage]
+    _get_wpd_string_value,  # pyright: ignore[reportPrivateUsage]
+    _load_wpd_modules,  # pyright: ignore[reportPrivateUsage]
+    _property_key,  # pyright: ignore[reportPrivateUsage]
+    _WindowsWpdSession,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows COM calling convention")
@@ -39,7 +55,7 @@ def test_native_delete_marshals_one_id_and_checks_per_file_result(
     from app.services import wpd_export
 
     api = GetModule(("{1F001332-1A57-4934-BE31-AFFC99F4EE0A}", 1, 0))
-    variant_type = api.tag_inner_PROPVARIANT
+    variant_type = cast(type[ctypes.Structure], api.tag_inner_PROPVARIANT)
     observed: list[str] = []
 
     class Collection(comtypes.COMObject):
@@ -76,11 +92,14 @@ def test_native_delete_marshals_one_id_and_checks_per_file_result(
             pointer.AddRef()
             return 0
 
+    def create_collection(*args: object, **kwargs: object) -> object:
+        return pointer
+
     monkeypatch.setattr(
-        wpd_export, "_load_runtime_functions", lambda: (comtypes, lambda *args, **kwargs: pointer)
+        wpd_export, "_load_runtime_functions", lambda: (comtypes, create_collection)
     )
     types = SimpleNamespace(PortableDevicePropVariantCollection=object())
-    session = wpd_export._WindowsWpdSession(comtypes, api, types, Content())
+    session = _WindowsWpdSession(comtypes, api, types, Content())
     if result_code < 0:
         with pytest.raises(OSError, match="HRESULT"):
             session.delete_file("owned-partial")
@@ -243,7 +262,7 @@ def test_books_folder_is_created_or_reused_and_conflicts_fail_closed(
 
     created: list[object] = []
     native = wpd_export.ctypes
-    folder_type = wpd_export._FOLDER_CONTENT_TYPE
+    folder_type = _FOLDER_CONTENT_TYPE
 
     class Values:
         def SetStringValue(self, key: Any, value: str) -> None:
@@ -255,29 +274,43 @@ def test_books_folder_is_created_or_reused_and_conflicts_fail_closed(
         def GetGuidValue(self, key: Any) -> str:
             return folder_type if content_type == "folder" else "file"
 
+    class _Properties:
+        def GetValues(self, *_args: object) -> Values:
+            return Values()
+
     class Content:
-        def Properties(self) -> Any:
-            return SimpleNamespace(GetValues=lambda *_args: Values())
+        def Properties(self) -> _Properties:
+            return _Properties()
 
         def CreateObjectWithPropertiesOnly(self, values: object) -> str:
             created.append(values)
             return "books-id"
 
-    monkeypatch.setattr(wpd_export, "_property_key", lambda *_args: native.c_int())
-    monkeypatch.setattr(wpd_export, "_create_values", lambda *_args: Values())
-    monkeypatch.setattr(wpd_export, "_get_wpd_string_value", lambda *_args: "storage-id")
-    session_type: Any = getattr(wpd_export, "_WindowsWpdSession")  # noqa: B009
-    session = session_type(
-        SimpleNamespace(GUID=lambda value: value),
+    def fake_key(*_args: object) -> c_int:
+        return native.c_int()
+
+    def fake_values(*_args: object) -> Values:
+        return Values()
+
+    def storage_id(*_args: object) -> str:
+        return "storage-id"
+
+    def guid(value: str) -> str:
+        return value
+
+    def files(parent: str) -> tuple[PortableDeviceFile, ...]:
+        return tuple(PortableDeviceFile("books-id", "Books", 0) for _ in range(existing))
+
+    monkeypatch.setattr(wpd_export, "_property_key", fake_key)
+    monkeypatch.setattr(wpd_export, "_create_values", fake_values)
+    monkeypatch.setattr(wpd_export, "_get_wpd_string_value", storage_id)
+    session = _WindowsWpdSession(
+        SimpleNamespace(GUID=guid),
         object(),
         SimpleNamespace(PortableDeviceValues=object()),
         Content(),
     )
-    monkeypatch.setattr(
-        session,
-        "list_files",
-        lambda parent: tuple(PortableDeviceFile("books-id", "Books", 0) for _ in range(existing)),
-    )
+    monkeypatch.setattr(session, "list_files", files)
     if existing > 1 or content_type != "folder":
         with pytest.raises(ValueError):
             session.ensure_folder("storage-id", "Books")
@@ -1055,21 +1088,21 @@ def test_wpd_export_preserves_staging_object_when_readback_hash_fails(tmp_path: 
 def test_wpd_values_accept_the_api_property_keys() -> None:
     from app.services import wpd_export
 
-    runtime, api, types = wpd_export._load_wpd_modules()
+    runtime, api, types = _load_wpd_modules()
     runtime.CoInitialize()
     values = None
     try:
-        values = wpd_export._create_values(runtime, api, types.PortableDeviceValues)
-        name_key = wpd_export._property_key(runtime, api, wpd_export._OBJECT_PROPERTIES_GUID, 4)
-        size_key = wpd_export._property_key(runtime, api, wpd_export._OBJECT_PROPERTIES_GUID, 11)
-        type_key = wpd_export._property_key(runtime, api, wpd_export._OBJECT_PROPERTIES_GUID, 7)
+        values = _create_values(runtime, api, types.PortableDeviceValues)
+        name_key = _property_key(runtime, api, _OBJECT_PROPERTIES_GUID, 4)
+        size_key = _property_key(runtime, api, _OBJECT_PROPERTIES_GUID, 11)
+        type_key = _property_key(runtime, api, _OBJECT_PROPERTIES_GUID, 7)
         values.SetStringValue(wpd_export.ctypes.byref(name_key), "Capítulo de prueba.cbz")
         values.SetUnsignedLargeIntegerValue(wpd_export.ctypes.byref(size_key), 42)
         values.SetGuidValue(
             wpd_export.ctypes.byref(type_key),
-            runtime.GUID(wpd_export._GENERIC_FILE_CONTENT_TYPE),
+            runtime.GUID(_GENERIC_FILE_CONTENT_TYPE),
         )
-        assert wpd_export._get_wpd_string_value(values, name_key) == "Capítulo de prueba.cbz"
+        assert _get_wpd_string_value(values, name_key) == "Capítulo de prueba.cbz"
         assert values.GetUnsignedLargeIntegerValue(wpd_export.ctypes.byref(size_key)) == 42
     finally:
         values = None
@@ -1081,12 +1114,16 @@ def test_wpd_read_stream_passes_an_integer_buffer_size_to_comtypes(
 ) -> None:
     from app.services import wpd_export
 
+    class ReadStream:
+        def RemoteRead(self, size: int) -> tuple[bytes, int]:
+            return b"page", 4
+
     class _Resources:
         def GetStream(self, object_id: str, key: Any, mode: int, buffer_size: int) -> Any:
             assert object_id == "chapter-object"
             assert type(buffer_size) is int
             assert buffer_size == wpd_export.COPY_CHUNK_BYTES
-            return buffer_size, SimpleNamespace(RemoteRead=lambda size: (b"page", 4))
+            return buffer_size, ReadStream()
 
     class _Content:
         def Properties(self) -> None:
@@ -1095,9 +1132,11 @@ def test_wpd_read_stream_passes_an_integer_buffer_size_to_comtypes(
         def Transfer(self) -> _Resources:
             return _Resources()
 
-    monkeypatch.setattr(wpd_export, "_property_key", lambda *_args: wpd_export.ctypes.c_int())
-    session_type: Any = getattr(wpd_export, "_WindowsWpdSession")  # noqa: B009
-    session = session_type(object(), object(), object(), _Content())
+    def fake_key(*_args: object) -> wpd_export.ctypes.c_int:
+        return wpd_export.ctypes.c_int()
+
+    monkeypatch.setattr(wpd_export, "_property_key", fake_key)
+    session = _WindowsWpdSession(object(), object(), object(), _Content())
     with session.open_read("chapter-object") as stream:
         assert stream.read(4) == b"page"
 
@@ -1133,10 +1172,15 @@ def test_wpd_rename_checks_each_property_result(
         def Properties(self) -> _Properties:
             return _Properties()
 
-    monkeypatch.setattr(wpd_export, "_property_key", lambda _r, _a, _g, pid: native.c_int(pid))
-    monkeypatch.setattr(wpd_export, "_create_values", lambda *_args: _Values())
-    session_type: Any = getattr(wpd_export, "_WindowsWpdSession")  # noqa: B009
-    session = session_type(
+    def fake_key(_runtime: object, _api: object, _guid: str, pid: int) -> c_int:
+        return native.c_int(pid)
+
+    def fake_values(*_args: object) -> _Values:
+        return _Values()
+
+    monkeypatch.setattr(wpd_export, "_property_key", fake_key)
+    monkeypatch.setattr(wpd_export, "_create_values", fake_values)
+    session = _WindowsWpdSession(
         object(),
         object(),
         SimpleNamespace(PortableDeviceValues=object()),
@@ -1205,8 +1249,7 @@ def test_wpd_uses_published_name_when_original_import_name_is_stale(
         return _PropertyKey()
 
     monkeypatch.setattr(wpd_export, "_property_key", fake_property_key)
-    session_type: Any = getattr(wpd_export, "_WindowsWpdSession")  # noqa: B009
-    session = session_type(object(), object(), object(), _Content())
+    session = _WindowsWpdSession(object(), object(), object(), _Content())
 
     remote_file = session.get_file("object-1")
 
@@ -1216,14 +1259,12 @@ def test_wpd_uses_published_name_when_original_import_name_is_stale(
 
 @pytest.mark.parametrize("hresult", [0x802A0006, 0x8007001F])
 def test_wpd_unresponsive_device_is_recoverable(hresult: int) -> None:
-    from app.services import wpd_export
-
     class DeviceError(Exception):
         pass
 
     error = DeviceError("Reader stopped responding")
     error.hresult = hresult - 0x100000000  # type: ignore[attr-defined]
-    assert wpd_export._classify_wpd_error(error) == (
+    assert _classify_wpd_error(error) == (
         ErrorCode.EXP_DEVICE_DISCONNECTED,
         True,
     )

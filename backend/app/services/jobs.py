@@ -11,6 +11,7 @@ from sqlalchemy import case, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.connectors.chapter import ConnectorChapter
+from app.connectors.errors import SourceConnectorError
 from app.connectors.metadata import ConnectorMetadata
 from app.connectors.series_metadata import ConnectorSeriesMetadata
 from app.domain.chapter import Chapter, chapter_number
@@ -26,7 +27,7 @@ from app.domain.metadata import MetadataField, resolve_series_metadata
 from app.domain.series import Series
 from app.domain.series_source import SeriesSource
 from app.domain.source import Source, SourceHealthStatus
-from app.fmd2_bridge import FMD2_METADATA, fmd2_stable_chapter_reference
+from app.fmd2_bridge import FMD2_METADATA, fmd2_chapter_location, fmd2_stable_chapter_reference
 from app.persistence.database import SQLiteDatabase
 from app.persistence.mappers.asset import asset_from_row
 from app.persistence.mappers.chapter import chapter_from_row, chapter_to_row
@@ -66,6 +67,7 @@ from app.services.series_matching import matching_library_series
 
 DEFAULT_DOWNLOAD_JOB_PAGE_SIZE = 50
 MAX_DOWNLOAD_JOB_PAGE_SIZE = 100
+MAX_DOWNLOAD_STATUS_FILTERS = len(DownloadJobStatus)
 MAX_DOWNLOAD_JOB_OFFSET = 10_000_000
 MAX_SELECTED_CHAPTERS = 100
 _TERMINAL_RETRYABLE_STATUSES = frozenset({DownloadJobStatus.FAILED, DownloadJobStatus.CANCELLED})
@@ -142,6 +144,7 @@ class DownloadJobPage:
     offset: int
     states: dict[str, int] = field(default_factory=lambda: dict[str, int]())
     page_progress: tuple[dict[str, object], ...] = ()
+    filtered_total: int | None = None
 
 
 class DownloadGroup(TypedDict):
@@ -198,12 +201,19 @@ class DownloadJobService:
             if pair is None:
                 return None
             chapter_source, source = pair
-            series_sources = session.scalars(
-                select(SeriesSourceRow).where(
-                    SeriesSourceRow.series_id == chapter.series_id,
-                    SeriesSourceRow.source_id == source.source_id,
-                ).limit(2)
-            ).all()
+            series_source_query = select(SeriesSourceRow).where(
+                SeriesSourceRow.series_id == chapter.series_id,
+                SeriesSourceRow.source_id == source.source_id,
+            )
+            if source.connector_id == FMD2_METADATA.connector_id:
+                try:
+                    manga_ref, _, _ = fmd2_chapter_location(chapter_source.remote_id or "")
+                except SourceConnectorError:
+                    return None
+                series_source_query = series_source_query.where(
+                    SeriesSourceRow.remote_id == manga_ref
+                )
+            series_sources = session.scalars(series_source_query.limit(2)).all()
             if len(series_sources) != 1:
                 return None
             references = (series_sources[0].remote_id, chapter_source.remote_id)
@@ -576,8 +586,10 @@ class DownloadJobService:
 
         local_ready = self._ready_chapters(session, series.series_id, series_metadata.language)
         saved_chapters: dict[str, ChapterSourceRow] = {}
-        rows = session.scalars(
-            select(ChapterSourceRow)
+        legacy: dict[tuple[str, str, str | None], list[ChapterSourceRow]] = {}
+        catalog_labels = Counter((item.display_label, item.language) for item in chapters)
+        rows = session.execute(
+            select(ChapterSourceRow, ChapterRow)
             .join(ChapterRow, ChapterRow.chapter_id == ChapterSourceRow.chapter_id)
             .where(
                 ChapterSourceRow.source_id == str(source.source_id),
@@ -587,7 +599,7 @@ class DownloadJobService:
                 ),
             )
         )
-        for saved in rows:
+        for saved, saved_chapter in rows:
             if saved.remote_id is not None:
                 key = (
                     fmd2_stable_chapter_reference(saved.remote_id)
@@ -597,6 +609,15 @@ class DownloadJobService:
                 previous = saved_chapters.get(key)
                 if previous is None or self._chapter_available(session, saved.chapter_id):
                     saved_chapters[key] = saved
+                if (
+                    connector.connector_id == FMD2_METADATA.connector_id
+                    and saved_chapter.series_id == str(series.series_id)
+                ):
+                    manga, website, url = fmd2_chapter_location(saved.remote_id)
+                    if website == "424747b0135c4240a902eb9cfcb11db9" and url.startswith("/go/rds/"):
+                        legacy.setdefault(
+                            (manga, saved_chapter.display_label, saved_chapter.language), []
+                        ).append(saved)
         local_by_number = {chapter_number(item.display_label): item for item in local_ready}
         remote_numbers = Counter(chapter_number(item.display_label) for item in chapters)
         for remote_chapter in selected_chapters:
@@ -608,6 +629,12 @@ class DownloadJobService:
                 if connector.connector_id == FMD2_METADATA.connector_id
                 else reference
             )
+            if legacy and key not in saved_chapters:
+                manga, _website, _url = fmd2_chapter_location(reference)
+                label = (remote_chapter.display_label, remote_chapter.language)
+                matches = legacy.get((manga, *label), [])
+                if len(matches) == 1 and catalog_labels[label] == 1:
+                    saved_chapters[key] = matches[0]
             existing = local_by_number.get(number) if key not in saved_chapters else None
             if (
                 existing is not None
@@ -726,6 +753,7 @@ class DownloadJobService:
         limit: int = DEFAULT_DOWNLOAD_JOB_PAGE_SIZE,
         offset: int = 0,
         archived: bool = False,
+        statuses: tuple[DownloadJobStatus, ...] = (),
     ) -> DownloadJobPage:
         if type(limit) is not int or not 1 <= limit <= MAX_DOWNLOAD_JOB_PAGE_SIZE:
             raise ValueError("limit must be between 1 and 100")
@@ -733,6 +761,11 @@ class DownloadJobService:
             raise ValueError("offset must be between 0 and 10000000")
         if type(archived) is not bool:
             raise ValueError("archived must be a boolean")
+        if len(statuses) > MAX_DOWNLOAD_STATUS_FILTERS or any(
+            type(value) is not DownloadJobStatus for value in statuses
+        ):
+            raise ValueError("statuses must contain supported job states")
+        selected_statuses = {value.value for value in statuses}
 
         is_archived = exists().where(DownloadJobArchiveRow.job_id == DownloadJobRow.job_id)
         archive_filter = is_archived if archived else ~is_archived
@@ -786,6 +819,8 @@ class DownloadJobService:
                 case((status_order == 2, DownloadJobRow.created_at_us)).desc(),
                 *DownloadJobRepository.queue_order(UUID(active_series) if active_series else None),
             )
+            if selected_statuses:
+                statement = statement.where(DownloadJobRow.status.in_(selected_statuses))
             rows = session.execute(statement).all()
             states = {status.value: 0 for status in DownloadJobStatus}
             states.update(
@@ -825,6 +860,9 @@ class DownloadJobService:
             limit=limit,
             offset=offset,
             states=states,
+            filtered_total=sum(states[value] for value in selected_statuses)
+            if selected_statuses
+            else None,
             page_progress=tuple(
                 {"job_id": job_id, "known_pages": int(count), "validated_pages": int(validated)}
                 for job_id, count, validated in progress

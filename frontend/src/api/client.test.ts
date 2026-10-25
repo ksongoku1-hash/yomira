@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DownloadJobStatus } from "./client";
 
 import {
   applyExternalSeriesMetadata,
@@ -19,6 +20,7 @@ import {
   getRecentReaderProgress,
   getReaderChapter,
   openOnlineReaderChapter,
+  openOnlineReader,
   registerOnlineReaderChapter,
   getReaderChaptersPage,
   getReaderPageBlob,
@@ -651,6 +653,29 @@ describe("typed local API client", () => {
     });
   });
 
+  it("requests filtered jobs and validates filtered totals without losing whole-queue counts", async () => {
+    const row = {job_id: "123e4567-e89b-42d3-a456-426614174000",
+      chapter_source_id: "123e4567-e89b-42d3-a456-426614174001",
+      series_id: "123e4567-e89b-42d3-a456-426614174050", chapter_id: "123e4567-e89b-42d3-a456-426614174051",
+      status: "DOWNLOADING", priority: "NORMAL", series_title: "Manga", chapter_label: "Capítulo 1",
+      created_at: "2026-09-27T10:00:00Z", updated_at: "2026-09-27T10:00:00Z", cancel_requested_at: null};
+    const meta = {limit: 50, offset: 0, total: 6, states: {COMPLETED: 5, DOWNLOADING: 1}};
+    const request = {limit: 50, offset: 0, statuses: ["DOWNLOADING", "VERIFYING"] as DownloadJobStatus[]};
+    fetchMock.mockResolvedValue(mockResponse({data: [row], meta: {...meta, filtered_total: 1}}));
+    await expect(getDownloadJobsPage(request)).resolves.toMatchObject({meta: {total: 6, filteredTotal: 1}});
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/v1/download-jobs?limit=50&offset=0&status=DOWNLOADING&status=VERIFYING",
+      {headers: {Accept: "application/json"}});
+    for (const invalid of [meta, {...meta, filtered_total: 2}, {...meta, filtered_total: 7}]) {
+      fetchMock.mockResolvedValue(mockResponse({data: [row], meta: invalid}));
+      await expect(getDownloadJobsPage(request)).rejects.toMatchObject({name: "ApiError"});
+    }
+    fetchMock.mockResolvedValue(mockResponse({data: [{...row, status: "COMPLETED"}], meta: {...meta, filtered_total: 1}}));
+    await expect(getDownloadJobsPage(request)).rejects.toMatchObject({name: "ApiError"});
+    const requests = fetchMock.mock.calls.length;
+    await expect(getDownloadJobsPage({...request, statuses: ["unknown" as DownloadJobStatus]})).rejects.toBeInstanceOf(RangeError);
+    expect(fetchMock).toHaveBeenCalledTimes(requests);
+  });
+
   it("requests durable job cancellation and validates the canonical response", async () => {
     const jobId = "123e4567-e89b-42d3-a456-426614174000";
     fetchMock.mockResolvedValue(
@@ -1038,6 +1063,28 @@ describe("typed local API client", () => {
     );
   });
 
+  it("sends bounded chapter searches with the selected order and page", async () => {
+    const seriesId = "123e4567-e89b-42d3-a456-426614174050";
+    fetchMock.mockResolvedValue(mockResponse({data: [], meta: {limit: 100, offset: 100, total: 100}}));
+    await getReaderChaptersPage({seriesId, limit: 100, offset: 100, order: "desc", query: "  EDICIÓN %_  "});
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/v1/reader/series/${seriesId}/chapters?limit=100&offset=100&order=desc&q=EDICI%C3%93N+%25_`,
+      {headers: {Accept: "application/json"}},
+    );
+    fetchMock.mockClear();
+    await expect(getReaderChaptersPage({seriesId, limit: 100, offset: 0, query: "a".repeat(201)})).rejects.toBeInstanceOf(RangeError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts an emptied reader page beyond the updated total but rejects inconsistent nonempty pages", async () => {
+    const seriesId = "123e4567-e89b-42d3-a456-426614174050";
+    fetchMock.mockResolvedValueOnce(mockResponse({data: [], meta: {limit: 100, offset: 100, total: 99}}));
+    await expect(getReaderChaptersPage({seriesId, limit: 100, offset: 100})).resolves.toMatchObject({data: [], meta: {total: 99}});
+    fetchMock.mockResolvedValueOnce(mockResponse({data: [{chapter_id: "123e4567-e89b-42d3-a456-426614174051",
+      series_id: seriesId, display_label: "Capítulo 8", page_count: 2}], meta: {limit: 100, offset: 100, total: 99}}));
+    await expect(getReaderChaptersPage({seriesId, limit: 100, offset: 100})).rejects.toMatchObject({name: "ApiError"});
+  });
+
   it("rejects reader chapter pages with mismatched or duplicate chapters", async () => {
     const seriesId = "123e4567-e89b-42d3-a456-426614174050";
     const chapter = {
@@ -1183,6 +1230,28 @@ describe("typed local API client", () => {
     expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toEqual({ chapter_remote_id: "chapter/ref" });
   });
 
+  it("opens the online reader and receives its saved progress in one request", async () => {
+    const chapterId = "123e4567-e89b-42d3-a456-426614174051";
+    const seriesId = "123e4567-e89b-42d3-a456-426614174050";
+    fetchMock.mockResolvedValue(mockResponse({ data: {
+      chapter: { chapter_id: chapterId, series_id: seriesId, display_label: "Capítulo 1", page_count: 5 },
+      progress: { chapter_id: chapterId, series_id: seriesId, page_index: 2,
+        percentage: "50.00", updated_at: "2026-10-17T12:00:00Z" },
+    }, meta: {} }));
+    await expect(openOnlineReader(chapterId)).resolves.toMatchObject({
+      chapter: {chapterId, pageCount: 5}, progress: {chapterId, pageIndex: 2},
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toBe(`/api/v1/reader/${chapterId}/open`);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toEqual({restart: false});
+  });
+
+  it.each([null, {}, { chapter_id: "wrong" }])("rejects a malformed opening response %j", async (chapter) => {
+    fetchMock.mockResolvedValue(mockResponse({ data: {chapter, progress: null}, meta: {} }));
+    await expect(openOnlineReader("123e4567-e89b-42d3-a456-426614174051")).rejects.toMatchObject({name:"ApiError"});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("opens an empty memory session before loading the online chapter metadata", async () => {
     const chapterId = "123e4567-e89b-42d3-a456-426614174051";
     const seriesId = "123e4567-e89b-42d3-a456-426614174050";
@@ -1198,6 +1267,28 @@ describe("typed local API client", () => {
     ]);
   });
 
+  it.each([false, true])("reuses ready online pages and sends the explicit restart flag %s", async (restart) => {
+    const chapterId = "123e4567-e89b-42d3-a456-426614174051";
+    const seriesId = "123e4567-e89b-42d3-a456-426614174050";
+    fetchMock.mockResolvedValueOnce(mockResponse({ data: {
+      session_id: "123e4567-e89b-42d3-a456-426614174052", chapter_id: chapterId,
+      state: "complete", page_count: 3, ready_pages: [1, 3], error_code: null,
+    }, meta: {} })).mockResolvedValueOnce(mockResponse({ data: {
+      chapter_id: chapterId, series_id: seriesId, display_label: "Capítulo 1", page_count: 3,
+    }, meta: {} }));
+    if (restart) await openOnlineReaderChapter(chapterId, true);
+    else await openOnlineReaderChapter(chapterId);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toEqual({ restart });
+  });
+  it.each([[0], [4], [1, 1], [1.5], ["1"]])("rejects invalid ready pages %j in a reused session", async (...readyPages) => {
+    const chapterId = "123e4567-e89b-42d3-a456-426614174051";
+    fetchMock.mockResolvedValue(mockResponse({ data: {
+      session_id: "123e4567-e89b-42d3-a456-426614174052", chapter_id: chapterId,
+      state: "complete", page_count: 3, ready_pages: readyPages, error_code: null,
+    }, meta: {} }));
+    await expect(openOnlineReaderChapter(chapterId)).rejects.toMatchObject({ name: "ApiError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it("rejects an unexpected online session before requesting images or metadata", async () => {
     fetchMock.mockResolvedValue(mockResponse({ data: { state: "complete", page_count: 0 }, meta: {} }));
     await expect(openOnlineReaderChapter("123e4567-e89b-42d3-a456-426614174051"))
@@ -1435,6 +1526,20 @@ describe("typed local API client", () => {
     await expect(getRecentReaderProgress(4)).rejects.toMatchObject({ name: "ApiError" });
   });
 
+  it("requests one saved position per series without changing chapter history callers", async () => {
+    const row = {series_id: "123e4567-e89b-42d3-a456-426614174000", display_title: "Berserk",
+      chapter_id: "123e4567-e89b-42d3-a456-426614174001", display_label: "Capítulo 3", page_index: 2,
+      percentage: "50.00", updated_at: "2026-09-27T10:00:00Z"};
+    fetchMock.mockResolvedValueOnce(mockResponse({data: [row], meta: {limit: 4}}));
+    await expect(getRecentReaderProgress(4, true)).resolves.toMatchObject({data: [{seriesId: row.series_id}]});
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/v1/reader/progress/recent?limit=4&per_series=true",
+      {headers: {Accept: "application/json"}});
+    fetchMock.mockResolvedValue(mockResponse({data: [row, {...row,
+      chapter_id: "123e4567-e89b-42d3-a456-426614174002"}], meta: {limit: 4}}));
+    await expect(getRecentReaderProgress(4, true)).rejects.toMatchObject({name: "ApiError"});
+    expect((await getRecentReaderProgress(4)).data).toHaveLength(2);
+  });
+
   it("rejects out-of-range recent list limits before sending a request", async () => {
     await expect(getRecentLibrary(0)).rejects.toBeInstanceOf(RangeError);
     await expect(getRecentReaderProgress(21)).rejects.toBeInstanceOf(RangeError);
@@ -1453,6 +1558,16 @@ describe("typed local API client", () => {
       "/api/v1/library?limit=100&offset=0&reading_status=reading",
       { headers: { Accept: "application/json" } },
     );
+  });
+
+  it("encodes global library search and ordering and rejects invalid options before fetching", async () => {
+    fetchMock.mockResolvedValue(mockResponse({data: [], meta: {limit: 100, offset: 0, total: 0}}));
+    await getLibraryPage({limit: 100, offset: 0, query: "  Manga % & _  ", sort: "recent"});
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/library?limit=100&offset=0&q=Manga+%25+%26+_&sort=recent",
+      {headers: {Accept: "application/json"}});
+    await expect(getLibraryPage({limit: 100, offset: 0, query: "a".repeat(201)})).rejects.toBeInstanceOf(RangeError);
+    await expect(getLibraryPage({limit: 100, offset: 0, sort: "unknown" as "title"})).rejects.toBeInstanceOf(RangeError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a malformed library payload instead of rendering partial records", async () => {

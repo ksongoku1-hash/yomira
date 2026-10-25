@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -64,10 +64,10 @@ function response(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } });
 }
 
-function renderDetail(client: QueryClient) {
+function renderDetail(client: QueryClient, from?: string, hash = "") {
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/series/${seriesId}`]}>
+      <MemoryRouter initialEntries={[{pathname: `/series/${seriesId}`, hash, state: {from}}]}>
         <Link to={`/series/${secondSeriesId}`}>Abrir segunda serie</Link>
         <Routes><Route element={<SeriesDetailPage />} path="/series/:seriesId" /><Route element={<ReaderDestination />} path="/reader/:chapterId" /></Routes>
       </MemoryRouter>
@@ -79,6 +79,17 @@ function ReaderDestination() {
   const location = useLocation();
   return <p>{location.pathname}{location.search}</p>;
 }
+
+it.each([
+  ["/downloads?status=failed&offset=50", "/downloads?status=failed&offset=50", "Volver a Descargas"],
+  ["/downloads/../settings", "/library", "Volver a Biblioteca"],
+])("preserves a filtered download destination and rejects other paths (%s)", async (from, href, label) => {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(String(input) === `/api/v1/series/${seriesId}`
+    ? response({data: seriesRecord(), meta: {}}) : response({data: [], meta: {limit: 100, offset: 0, total: 0}}))));
+  const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
+  renderDetail(client, from);
+  expect(await screen.findByRole("link", {name: label})).toHaveAttribute("href", href);
+});
 
 it.each([false, true])("continues from persisted progress and chooses the available copy (local=%s)", async (local) => {
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
@@ -114,6 +125,43 @@ function metadataButton() {
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("scrolls to a requested chapter list after deferred metadata arrives, without moving ordinary visits or refreshes", async () => {
+  let finishMetadata!: (value: Response) => void;
+  let loaded = false;
+  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    if (String(input) === `/api/v1/series/${seriesId}`) {
+      return loaded ? Promise.resolve(response({data: seriesRecord(), meta: {}}))
+        : new Promise<Response>((resolve) => { finishMetadata = resolve; });
+    }
+    return Promise.resolve(response({data: [], meta: {limit: 100, offset: 0, total: 0}}));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const original = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+  const scroll = vi.fn();
+  Object.defineProperty(Element.prototype, "scrollIntoView", {configurable: true, value: scroll});
+  try {
+    const client = new QueryClient({defaultOptions: {queries: {retry: false, gcTime: 0}}});
+    const view = renderDetail(client, undefined, "#chapters");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(document.getElementById("chapters")).toBeNull();
+    expect(scroll).not.toHaveBeenCalled();
+    loaded = true;
+    await act(async () => finishMetadata(response({data: seriesRecord(), meta: {}})));
+    await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1));
+    expect(scroll.mock.contexts[0]).toBe(document.getElementById("chapters"));
+    expect(scroll).toHaveBeenCalledWith({block: "start"});
+    await act(async () => { await client.invalidateQueries({queryKey: ["series", seriesId]}); });
+    expect(scroll).toHaveBeenCalledTimes(1);
+    view.unmount();
+    renderDetail(new QueryClient({defaultOptions: {queries: {retry: false, gcTime: 0}}}));
+    await screen.findByRole("heading", {level: 1, name: "Mi título local"});
+    expect(scroll).toHaveBeenCalledTimes(1);
+  } finally {
+    if (original) Object.defineProperty(Element.prototype, "scrollIntoView", original);
+    else Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+  }
+});
+
 it("shows source metadata, cover and online chapters for a series with no downloaded chapters", async () => {
   const base = seriesRecord();
   const record = {...base, cover_asset_id: null, description: null,
@@ -146,6 +194,94 @@ it("shows source metadata, cover and online chapters for a series with no downlo
 });
 
 describe("series metadata refresh", () => {
+  it("searches the whole manga on submit, resets paging and keeps the reading shortcut unfiltered", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === `/api/v1/series/${seriesId}`) return Promise.resolve(response({data: seriesRecord(), meta: {}}));
+      if (path.includes(`/reader/series/${seriesId}/chapters?`)) {
+        const params = new URL(path, "http://localhost").searchParams;
+        const offset = Number(params.get("offset"));
+        const filtered = params.get("q") === "especial";
+        const number = filtered ? offset === 0 ? 201 : 301 : offset === 0 ? 1 : 101;
+        return Promise.resolve(response({data: [{chapter_id: `123e4567-e89b-42d3-a456-${String(number).padStart(12, "0")}`,
+          series_id: seriesId, display_label: `Capítulo ${number}${filtered ? " especial" : ""}`, page_count: 2}],
+          meta: {limit: 100, offset, total: filtered ? 101 : 301}}));
+      }
+      return Promise.resolve(response({data: [], meta: {limit: 20}}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail(new QueryClient({defaultOptions: {queries: {retry: false, gcTime: 0}}}));
+    await screen.findByRole("link", {name: "Leer Capítulo 1"});
+    fireEvent.click(screen.getByRole("button", {name: "Siguiente"}));
+    await screen.findByRole("link", {name: "Leer Capítulo 101"});
+    expect(screen.getByRole("link", {name: /Leer primer capítulo/})).toHaveAttribute("href", "/reader/123e4567-e89b-42d3-a456-000000000001");
+    fireEvent.change(screen.getByRole("searchbox", {name: "Buscar en capítulos guardados"}), {target: {value: " especial "}});
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("q="))).toBe(false);
+    fireEvent.submit(screen.getByRole("form", {name: "Buscar capítulos guardados"}));
+    await screen.findByRole("link", {name: "Leer Capítulo 201 especial"});
+    expect(screen.getByText("Página 1 de 2")).toBeInTheDocument();
+    expect(screen.getByRole("link", {name: /Leer primer capítulo/})).toHaveAttribute("href", "/reader/123e4567-e89b-42d3-a456-000000000001");
+    fireEvent.click(screen.getByRole("button", {name: "Siguiente"}));
+    await screen.findByRole("link", {name: "Leer Capítulo 301 especial"});
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("offset=100&q=especial"))).toBe(true);
+    fireEvent.click(screen.getByRole("button", {name: "Limpiar búsqueda"}));
+    await screen.findByRole("link", {name: "Leer Capítulo 1"});
+    expect(screen.getByRole("searchbox", {name: "Buscar en capítulos guardados"})).toHaveValue("");
+    expect(screen.getByText("Página 1 de 4")).toBeInTheDocument();
+  });
+
+  it("keeps search controls available when there are no matches or the search fails", async () => {
+    let fail = true;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === `/api/v1/series/${seriesId}`) return Promise.resolve(response({data: seriesRecord(), meta: {}}));
+      if (path.includes("q=missing") && fail) return Promise.resolve(response({error: {code: "SYS_INTERNAL_ERROR", message: "No se pudo buscar", retryable: true, trace_id: "search-test"}}, 503));
+      if (path.includes(`/reader/series/${seriesId}/chapters?`)) return Promise.resolve(response({
+        data: path.includes("q=missing") ? [] : [{chapter_id: cbrChapterId, series_id: seriesId, display_label: "Capítulo 8", page_count: 2}],
+        meta: {limit: 100, offset: 0, total: path.includes("q=missing") ? 0 : 1},
+      }));
+      return Promise.resolve(response({data: [], meta: {limit: 20}}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail(new QueryClient({defaultOptions: {queries: {retry: false, gcTime: 0}}}));
+    await screen.findByRole("link", {name: "Leer Capítulo 8"});
+    fireEvent.change(screen.getByRole("searchbox", {name: "Buscar en capítulos guardados"}), {target: {value: "missing"}});
+    fireEvent.submit(screen.getByRole("form", {name: "Buscar capítulos guardados"}));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("No se pudo buscar");
+    fail = false;
+    fireEvent.click(within(alert).getByRole("button", {name: "Reintentar"}));
+    await screen.findByText("No hay capítulos guardados que coincidan con «missing».");
+    expect(screen.queryByText(/todavía no tiene capítulos descargados/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Limpiar búsqueda"}));
+    await screen.findByRole("link", {name: "Leer Capítulo 8"});
+  });
+
+  it("returns from an emptied page without losing the chapter search", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === `/api/v1/series/${seriesId}`) return Promise.resolve(response({data: seriesRecord(), meta: {}}));
+      if (path.includes(`/reader/series/${seriesId}/chapters?`)) {
+        const offset = Number(new URL(path, "http://localhost").searchParams.get("offset"));
+        return Promise.resolve(response({data: offset ? [] : [{chapter_id: cbrChapterId, series_id: seriesId, display_label: "Capítulo 8", page_count: 2}],
+          meta: {limit: 100, offset, total: offset ? 99 : 101}}));
+      }
+      return Promise.resolve(response({data: [], meta: {limit: 20}}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail(new QueryClient({defaultOptions: {queries: {retry: false, gcTime: 0}}}));
+    await screen.findByRole("link", {name: "Leer Capítulo 8"});
+    fireEvent.change(screen.getByRole("searchbox", {name: "Buscar en capítulos guardados"}), {target: {value: "8"}});
+    fireEvent.submit(screen.getByRole("form", {name: "Buscar capítulos guardados"}));
+    await screen.findByText(/Resultados de «8»/);
+    await waitFor(() => expect(screen.getByRole("button", {name: "Siguiente"})).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", {name: "Siguiente"}));
+    fireEvent.click(await screen.findByRole("button", {name: "Volver a la primera página"}));
+    await screen.findByRole("link", {name: "Leer Capítulo 8"});
+    expect(screen.getByRole("searchbox", {name: "Buscar en capítulos guardados"})).toHaveValue("8");
+    expect(screen.getByText("Página 1 de 2")).toBeInTheDocument();
+  });
+
   it("loads chapters in descending order and restores ascending order", async () => {
     let finishDescending: (() => void) | undefined;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {

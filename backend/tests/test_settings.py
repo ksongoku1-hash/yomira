@@ -83,8 +83,15 @@ def test_default_library_root_uses_redirected_documents(
     import winreg
 
     documents = tmp_path / "OneDrive" / "Documents"
-    monkeypatch.setattr(winreg, "OpenKey", lambda *_args: nullcontext(object()))
-    monkeypatch.setattr(winreg, "QueryValueEx", lambda *_args: (str(documents), winreg.REG_SZ))
+
+    def open_key(*_args: object) -> nullcontext[object]:
+        return nullcontext(object())
+
+    def query_value(*_args: object) -> tuple[str, int]:
+        return str(documents), winreg.REG_SZ
+
+    monkeypatch.setattr(winreg, "OpenKey", open_key)
+    monkeypatch.setattr(winreg, "QueryValueEx", query_value)
     assert Settings().library_root == documents / "Mangas de Yomira"
 
 

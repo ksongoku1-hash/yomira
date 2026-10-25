@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import re
 import secrets
@@ -54,8 +55,27 @@ FMD2_PUBLIC_SOURCES = {
     "424747b0135c4240a902eb9cfcb11db9": ("NovelCoolES", "https://es.novelcool.com", "es"),
     "03ae42ac9141443fa0711bd401c0203d": ("InManga", "https://inmanga.com", "es"),
     "K042a85566244b7e836679491ce67ot0": ("ManhwaWeb", "https://www.manhwaweb.com", "es"),
+    "c67d163c51b24bc498e777e2b0d810d2": ("LeerCapitulo", "https://www.leercapitulo.co", "es"),
+    "5aa6794ceeea4192a63de8296344da3c": ("MangaOni", "https://manga-oni.com", "es"),
+    "0611830535274dfa9f0d879dc1968fdb": ("InfraFandub", "https://infrafandub.com", "es"),
+    "422d5e83e2ae4b3b84742122b00926ef": ("Inventario Oculto", "https://inventariooculto.com", "es"),
+    "36b0f19e144a4642a2839ec9cb728c3a": (
+        "Ragnarok Scanlation",
+        "https://ragnarokscanlation.org",
+        "es",
+    ),
+    "5400f8755204497f998fdb1d831e8b50": ("Uchuujin Scans", "https://uchuujinmangas.com", "es"),
+    "f3098381220841f8b13928e682de4d7e": ("LeeMiau", "https://leemiau.com", "es"),
+    "35d1c04c0de345b1a52ec4ff1e6098b5": ("TaurusManga", "https://lectortaurus.com", "es"),
+    "abbde9b6468f45939e5603416d73ac47": ("Weeb Central", "https://weebcentral.com", "en"),
+    "889f027efe74448883db0f3fecf3d279": ("MangaPill", "https://mangapill.com", "en"),
+    "a964861afd0f410cb5122df5f50d3e1a": ("ManhuaPlus", "https://manhuaplus.com", "en"),
 }
 FMD2_SOURCE_COVER_ORIGINS: dict[str, frozenset[str]] = {
+    "c67d163c51b24bc498e777e2b0d810d2": frozenset({"https://www.leercapitulo.co"}),
+    "5aa6794ceeea4192a63de8296344da3c": frozenset(
+        {"https://manga-oni.com", "https://oni.ntr-files.online"}
+    ),
     FMD2_SOURCE_ID: frozenset({FMD2_COVER_ORIGIN}),
     "97dcd409f781467eb2da4a8634e5a1d9": frozenset(
         {"https://capibaratraductor.com", "https://r2.capibaratraductor.com"}
@@ -75,6 +95,19 @@ FMD2_SOURCE_COVER_ORIGINS: dict[str, frozenset[str]] = {
     "K042a85566244b7e836679491ce67ot0": frozenset(
         {"https://www.manhwaweb.com", "https://img1mw.xyz", "https://img2mw.xyz"}
     ),
+    "0611830535274dfa9f0d879dc1968fdb": frozenset(["https://infrafandub.com"]),
+    "422d5e83e2ae4b3b84742122b00926ef": frozenset(["https://inventariooculto.com"]),
+    "36b0f19e144a4642a2839ec9cb728c3a": frozenset(["https://ragnarokscanlation.org"]),
+    "5400f8755204497f998fdb1d831e8b50": frozenset(["https://uchuujinmangas.com"]),
+    "f3098381220841f8b13928e682de4d7e": frozenset(["https://leemiau.com"]),
+    "35d1c04c0de345b1a52ec4ff1e6098b5": frozenset(["https://lectortaurus.com"]),
+    "abbde9b6468f45939e5603416d73ac47": frozenset(
+        ["https://weebcentral.com", "https://temp.compsci88.com"]
+    ),
+    "889f027efe74448883db0f3fecf3d279": frozenset(
+        ["https://mangapill.com", "https://cdn.readdetectiveconan.com"]
+    ),
+    "a964861afd0f410cb5122df5f50d3e1a": frozenset(["https://manhuaplus.com"]),
 }
 FMD2_COVER_ONLY_ORIGINS: frozenset[str] = frozenset(
     origin for origins in FMD2_SOURCE_COVER_ORIGINS.values() for origin in origins
@@ -618,7 +651,14 @@ class Fmd2Connector:
                     # WebToons transforms are rejected by Yomira's library cover fetcher;
                     # other sources may need query parameters such as TMO's version marker.
                     cover = parsed_cover._replace(
-                        query="" if source_id == FMD2_SOURCE_ID else parsed_cover.query,
+                        query=""
+                        if source_id
+                        in {
+                            FMD2_SOURCE_ID,
+                            "c67d163c51b24bc498e777e2b0d810d2",
+                            "889f027efe74448883db0f3fecf3d279",
+                        }
+                        else parsed_cover.query,
                         fragment="",
                     ).geturl()
         else:
@@ -724,7 +764,10 @@ class Fmd2Connector:
         operation = SourceConnectorOperation.GET_PAGES
         if type(session_id) is not UUID or session_id.version != 4:
             raise ValueError("session_id must be a UUIDv4")
-        _manga, chapter, _ordinal = _unpack_chapter(remote_chapter_reference, operation)
+        manga, chapter, _ordinal = _unpack_chapter(remote_chapter_reference, operation)
+        if _reference_parts(manga, operation)[0] == "424747b0135c4240a902eb9cfcb11db9":
+            # NovelCool's stable chapter references use the module's in-memory catalog.
+            await self.get_chapters(manga)
         plan = await self._request_json(
             "POST",
             "/v1/reader",
@@ -1142,6 +1185,14 @@ class Fmd2Connector:
             async with client.stream(method, path, json=payload) as response:
                 was_missing = response.status_code == 404 and missing_ok
                 if response.status_code not in expected_statuses and not was_missing:
+                    logging.getLogger("yomira.sources.fmd2").warning(
+                        "source.request.failed",
+                        extra={
+                            "http_status": response.status_code,
+                            "operation": operation,
+                            "method": method,
+                        },
+                    )
                     _raise(
                         ErrorCode.SRC_CONNECTOR_FAILED,
                         operation,

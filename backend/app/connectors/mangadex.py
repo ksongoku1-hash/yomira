@@ -1,13 +1,17 @@
-"""Bounded public MangaDex metadata catalog; it cannot retrieve chapters or pages."""
+"""Bounded public MangaDex catalog, Spanish chapters and reader page plans."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
+import time
 import unicodedata
-from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from collections import OrderedDict
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass, replace
+from types import MappingProxyType
 from typing import NoReturn, cast
 from urllib.parse import urlencode
 from uuid import UUID
@@ -26,12 +30,30 @@ from app.version import APP_VERSION
 _API = "https://api.mangadex.org"
 _UPLOADS = "https://uploads.mangadex.org"
 MANGADEX_NETWORK_ORIGINS = frozenset({_API, _UPLOADS})
-MANGADEX_COVER_ONLY_ORIGINS = frozenset({_UPLOADS})
-MANGADEX_USER_AGENT = f"Yomira/{APP_VERSION} (local manga metadata)"
+MANGADEX_COVER_ONLY_ORIGINS: frozenset[str] = frozenset()
+MANGADEX_USER_AGENT = f"Yomira/{APP_VERSION} (local manga reader)"
 MANGADEX_METADATA = ConnectorMetadata(
     connector_id="yomira.metadata.mangadex",
     connector_version="1.0.0",
-    capabilities=frozenset({ConnectorCapability.SEARCH, ConnectorCapability.METADATA}),
+    capabilities=frozenset(
+        {
+            ConnectorCapability.SEARCH,
+            ConnectorCapability.METADATA,
+            ConnectorCapability.CHAPTER_LIST,
+            ConnectorCapability.PAGE_LIST,
+        }
+    ),
+)
+_LANGUAGES = frozenset({"es", "es-la"})
+_MAX_CHAPTERS = 10_000
+_CATALOG_TTL_SECONDS = 300
+_CATALOG_CACHE_ENTRIES = 16
+_PAGE_PLAN_TTL_SECONDS = 300
+_PAGE_PLAN_CACHE_ENTRIES = 32
+_IMAGE_FILE = re.compile(r"[A-Za-z0-9_-]{1,160}\.(?:jpg|jpeg|png|webp)")
+_PAGE_URL = re.compile(
+    r"https://uploads\.mangadex\.org/(?:data|data-saver)/[0-9a-f]{32}/"
+    r"[A-Za-z0-9_-]{1,160}\.(?:jpg|jpeg|png|webp)"
 )
 _MAX_RESULTS = 100
 # Related editions and spin-offs can exceed 100 links on one public series.
@@ -93,10 +115,20 @@ class MangaDexLookup:
 class MangaDexConnector:
     """Searches public catalog data through the SDK's exact-origin, cookie-free client."""
 
-    def __init__(self, http_client: ConnectorHttpClient) -> None:
+    def __init__(
+        self, http_client: ConnectorHttpClient, *, clock: Callable[[], float] = time.monotonic
+    ) -> None:
         if not callable(getattr(http_client, "get_json", None)):
             raise TypeError("http_client must provide bounded get_json access")
         self._http_client = http_client
+        self._clock = clock
+        self._catalog_lock = asyncio.Lock()
+        self._catalogs: OrderedDict[str, tuple[float, tuple[ConnectorChapter, ...]]] = OrderedDict()
+        self._series: OrderedDict[str, tuple[float, Mapping[str, object]]] = OrderedDict()
+        self._page_plan_lock = asyncio.Lock()
+        self._page_plans: OrderedDict[
+            tuple[str, bool], tuple[float, tuple[ConnectorPageReference, ...]]
+        ] = OrderedDict()
 
     @property
     def metadata(self) -> ConnectorMetadata:
@@ -164,7 +196,77 @@ class MangaDexConnector:
             if _matches_search_title(query.query, item)
         )
 
+    async def popular(self) -> tuple[MangaDexCandidate, ...]:
+        """One bounded public ranking; availability is confirmed when a title is opened."""
+        operation = SourceConnectorOperation.SEARCH
+        params = urlencode(
+            [
+                ("limit", "24"),
+                ("offset", "0"),
+                ("includes[]", "cover_art"),
+                ("order[followedCount]", "desc"),
+                ("contentRating[]", "safe"),
+                ("availableTranslatedLanguage[]", "es"),
+                ("availableTranslatedLanguage[]", "es-la"),
+                ("hasAvailableChapters", "true"),
+            ]
+        )
+        payload = await self._get_json(f"{_API}/manga?{params}", operation)
+        total = payload.get("total")
+        if (
+            payload.get("result") != "ok"
+            or payload.get("response") != "collection"
+            or type(total) is not int
+            or not 0 <= total <= 2**31 - 1
+            or payload.get("limit") != 24
+            or payload.get("offset") != 0
+        ):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        items = _array(payload.get("data"), 24, operation)
+        if len(items) != min(total, 24):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        results: list[MangaDexCandidate] = []
+        for item in items:
+            candidate = _candidate(item, operation)
+            attrs = _object(_object(item, operation).get("attributes"), operation)
+            aliases = [
+                _object(alias, operation)
+                for alias in _array(attrs.get("altTitles", []), _MAX_ALIASES, operation)
+            ]
+            preferred = next(
+                (
+                    title
+                    for lang in ("es", "en")
+                    for alias in aliases
+                    if (title := _text(alias.get(lang), _MAX_TEXT, operation))
+                ),
+                candidate.title,
+            )
+            results.append(
+                replace(
+                    candidate,
+                    title=preferred,
+                    aliases=tuple(dict.fromkeys((candidate.title, *candidate.aliases))),
+                )
+            )
+        if len({item.remote_id for item in results}) != len(results):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        return tuple(results)
+
     async def get_series(self, remote_series_reference: str) -> Mapping[str, object]:
+        async with self._catalog_lock:
+            cached = self._series.get(remote_series_reference)
+            if cached is not None and self._clock() - cached[0] < _CATALOG_TTL_SECONDS:
+                self._series.move_to_end(remote_series_reference)
+                return cached[1]
+            result = MappingProxyType(dict(await self._load_series(remote_series_reference)))
+            self._series[remote_series_reference] = (self._clock(), result)
+            self._series.move_to_end(remote_series_reference)
+            while len(self._series) > _CATALOG_CACHE_ENTRIES:
+                self._series.popitem(last=False)
+            return result
+
+    async def _load_series(self, remote_series_reference: str) -> Mapping[str, object]:
         operation = SourceConnectorOperation.GET_SERIES
         if not _valid_uuid(remote_series_reference):
             _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
@@ -178,16 +280,160 @@ class MangaDexConnector:
         return asdict(candidate.metadata)
 
     async def get_chapters(self, remote_series_reference: str) -> tuple[ConnectorChapter, ...]:
-        _raise(ErrorCode.SRC_CAPABILITY_UNSUPPORTED, SourceConnectorOperation.GET_CHAPTERS)
+        async with self._catalog_lock:
+            cached = self._catalogs.get(remote_series_reference)
+            if cached is not None and self._clock() - cached[0] < _CATALOG_TTL_SECONDS:
+                self._catalogs.move_to_end(remote_series_reference)
+                return cached[1]
+            result = await self._load_chapters(remote_series_reference)
+            self._catalogs[remote_series_reference] = (self._clock(), result)
+            self._catalogs.move_to_end(remote_series_reference)
+            while (
+                len(self._catalogs) > _CATALOG_CACHE_ENTRIES
+                or sum(len(value[1]) for value in self._catalogs.values()) > _MAX_CHAPTERS
+            ):
+                self._catalogs.popitem(last=False)
+            return result
+
+    async def invalidate_catalog(self, remote_series_reference: str) -> None:
+        async with self._catalog_lock:
+            self._catalogs.pop(remote_series_reference, None)
+            self._series.pop(remote_series_reference, None)
+
+    async def _load_chapters(self, remote_series_reference: str) -> tuple[ConnectorChapter, ...]:
+        operation = SourceConnectorOperation.GET_CHAPTERS
+        if not _valid_uuid(remote_series_reference):
+            _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
+        chapters: dict[str, ConnectorChapter] = {}
+        offset = 0
+        while True:
+            params = urlencode(
+                [
+                    ("translatedLanguage[]", "es"),
+                    ("translatedLanguage[]", "es-la"),
+                    ("limit", str(_MAX_RESULTS)),
+                    ("offset", str(offset)),
+                    ("order[chapter]", "asc"),
+                ]
+            )
+            data = await self._get_json(
+                f"{_API}/manga/{remote_series_reference}/feed?{params}", operation
+            )
+            total = data.get("total")
+            if (
+                data.get("result") != "ok"
+                or data.get("response") != "collection"
+                or type(total) is not int
+                or not 0 <= total <= _MAX_CHAPTERS
+                or type(data.get("offset")) is not int
+                or data.get("offset") != offset
+                or type(data.get("limit")) is not int
+                or data.get("limit") != _MAX_RESULTS
+            ):
+                _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+            items = _array(data.get("data"), _MAX_RESULTS, operation)
+            if len(items) != min(_MAX_RESULTS, total - offset):
+                _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+            for item in items:
+                chapter = _chapter(item, operation, manga=remote_series_reference)
+                if chapter is None:
+                    continue
+                assert chapter.remote_id is not None
+                if chapter.remote_id in chapters:
+                    _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+                chapters[chapter.remote_id] = chapter
+            offset += len(items)
+            if offset >= total:
+                return tuple(chapters.values())
 
     async def get_chapter(self, remote_chapter_reference: str) -> ConnectorChapter:
-        _raise(ErrorCode.SRC_CAPABILITY_UNSUPPORTED, SourceConnectorOperation.GET_CHAPTER)
+        operation = SourceConnectorOperation.GET_CHAPTER
+        if not _valid_uuid(remote_chapter_reference):
+            _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
+        data = await self._get_json(f"{_API}/chapter/{remote_chapter_reference}", operation)
+        if data.get("result") != "ok" or data.get("response") != "entity":
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        chapter = _chapter(data.get("data"), operation)
+        if chapter is None or chapter.remote_id != remote_chapter_reference:
+            _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
+        return chapter
 
     async def get_pages(self, remote_chapter_reference: str) -> tuple[ConnectorPageReference, ...]:
-        _raise(ErrorCode.SRC_CAPABILITY_UNSUPPORTED, SourceConnectorOperation.GET_PAGES)
+        return await self._page_plan(remote_chapter_reference, saver=False)
+
+    async def acquire_pages(
+        self, job_id: UUID, remote_chapter_reference: str, chapter_title: str
+    ) -> tuple[ConnectorPageReference, ...]:
+        return await self.get_pages(remote_chapter_reference)
+
+    async def open_online_pages(
+        self, session_id: UUID, remote_chapter_reference: str
+    ) -> tuple[ConnectorPageReference, ...]:
+        return await self._page_plan(remote_chapter_reference, saver=True)
+
+    async def close_online_pages(self, session_id: UUID) -> None:
+        pass
+
+    async def invalidate_page_plan(self, reference: str) -> None:
+        async with self._page_plan_lock:
+            self._page_plans.pop((reference, False), None)
+            self._page_plans.pop((reference, True), None)
+
+    async def _page_plan(
+        self, reference: str, *, saver: bool
+    ) -> tuple[ConnectorPageReference, ...]:
+        if not _valid_uuid(reference):
+            _raise(ErrorCode.SRC_CONNECTOR_FAILED, SourceConnectorOperation.GET_PAGES)
+        key = (reference, saver)
+        async with self._page_plan_lock:
+            cached = self._page_plans.get(key)
+            if cached is not None and self._clock() - cached[0] < _PAGE_PLAN_TTL_SECONDS:
+                self._page_plans.move_to_end(key)
+                return cached[1]
+            result = await self._load_page_plan(reference, saver=saver)
+            self._page_plans[key] = (self._clock(), result)
+            self._page_plans.move_to_end(key)
+            while (
+                len(self._page_plans) > _PAGE_PLAN_CACHE_ENTRIES
+                or sum(len(value[1]) for value in self._page_plans.values()) > _MAX_CHAPTERS
+            ):
+                self._page_plans.popitem(last=False)
+            return result
+
+    async def _load_page_plan(
+        self, reference: str, *, saver: bool
+    ) -> tuple[ConnectorPageReference, ...]:
+        operation = SourceConnectorOperation.GET_PAGES
+        if not _valid_uuid(reference):
+            _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
+        data = await self._get_json(f"{_API}/at-home/server/{reference}", operation)
+        if data.get("result") != "ok":
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        chapter = _object(data.get("chapter"), operation)
+        digest = chapter.get("hash")
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{32}", digest) is None:
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        originals = _array(chapter.get("data"), _MAX_CHAPTERS, operation)
+        files = _array(chapter.get("dataSaver") if saver else originals, _MAX_CHAPTERS, operation)
+        if not files or len(files) != len(originals):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        if any(not isinstance(name, str) or _IMAGE_FILE.fullmatch(name) is None for name in files):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        if len(set(cast(Sequence[str], files))) != len(files):
+            _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+        directory = "data-saver" if saver else "data"
+        # Keep the exact official origin; never trust a provider-supplied CDN hostname.
+        return tuple(
+            ConnectorPageReference(f"{_UPLOADS}/{directory}/{digest}/{name}") for name in files
+        )
 
     def resolve_page(self, page_reference: ConnectorPageReference) -> PageFetchRequest:
-        _raise(ErrorCode.SRC_CAPABILITY_UNSUPPORTED, SourceConnectorOperation.RESOLVE_PAGE)
+        if (
+            type(page_reference) is not ConnectorPageReference
+            or _PAGE_URL.fullmatch(page_reference.remote_reference) is None
+        ):
+            _raise(ErrorCode.SRC_CONNECTOR_FAILED, SourceConnectorOperation.RESOLVE_PAGE)
+        return PageFetchRequest(page_reference.remote_reference)
 
     def normalize_metadata(self, raw_metadata: Mapping[str, object]) -> ConnectorSeriesMetadata:
         operation = SourceConnectorOperation.NORMALIZE_METADATA
@@ -237,9 +483,57 @@ class MangaDexConnector:
                 parse_float=_finite_float,
                 object_pairs_hook=_unique_object,
             )
-        except (UnicodeDecodeError, ValueError, RecursionError):
+        except UnicodeDecodeError, ValueError, RecursionError:
             _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
         return _object(data, operation)
+
+
+def _chapter(
+    value: object, operation: SourceConnectorOperation, *, manga: str | None = None
+) -> ConnectorChapter | None:
+    item = _object(value, operation)
+    remote_id = item.get("id")
+    if not _valid_uuid(remote_id) or item.get("type") != "chapter":
+        _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+    attrs = _object(item.get("attributes"), operation)
+    language = _text(attrs.get("translatedLanguage"), 16, operation)
+    pages = attrs.get("pages")
+    if type(pages) is not int or not 0 <= pages <= _MAX_CHAPTERS:
+        _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+    relationships = _array(item.get("relationships"), _MAX_RELATIONSHIPS, operation)
+    mangas = [
+        relation.get("id")
+        for value in relationships
+        if (relation := _object(value, operation)).get("type") == "manga"
+    ]
+    if len(mangas) != 1 or not _valid_uuid(mangas[0]) or (manga and mangas[0] != manga):
+        _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+    if language not in _LANGUAGES or not pages or attrs.get("externalUrl") is not None:
+        return None
+    number = _text(attrs.get("chapter"), 32, operation)
+    title = _text(attrs.get("title"), _MAX_TEXT, operation)
+    volume = _text(attrs.get("volume"), 16, operation)
+    parts: tuple[int, ...] = ()
+    if number and re.fullmatch(r"\d{1,9}(?:\.\d{1,6})?", number):
+        major, _, fraction = number.partition(".")
+        parts = (int(major), int(fraction.ljust(6, "0")))
+    label = f"Capítulo {number}" if number else "Especial"
+    if title:
+        label += f" · {title}"
+    return ConnectorChapter(
+        remote_id=cast(str, remote_id),
+        remote_url=f"https://mangadex.org/chapter/{remote_id}",
+        remote_label=number,
+        chapter_raw_label=number or title or "Especial",
+        chapter_major=parts[0] if parts else None,
+        chapter_minor=parts[1] if len(parts) > 1 else None,
+        chapter_variant=None,
+        chapter_type=None,
+        chapter_sort_key=parts or (0,),
+        volume_number=int(volume) if volume and re.fullmatch(r"\d{1,9}", volume) else None,
+        language=language,
+        display_label=label,
+    )
 
 
 def _raise(

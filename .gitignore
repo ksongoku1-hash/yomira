@@ -47,6 +47,10 @@ data/
 /backend/build/
 /backend/dist/
 /runtime/
+/user-data/
+/archive/
+# Public, pinned source catalogs are redistribution inputs, not personal databases.
+!third_party/fmd2/catalogs/*.db
 # Local execution reports and screenshots remain on the development machine.
 /docs/reports/
 

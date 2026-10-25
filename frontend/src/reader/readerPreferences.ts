@@ -8,12 +8,15 @@ export interface ReaderPreferences {
   fit: "width" | "height" | null;
   continuous: boolean;
   autoChapter: boolean;
+  background: "dark" | "sepia" | "light";
+  brightness: number;
 }
 
 export const READER_PREFERENCES_KEY = "yomira.reader.presentation.v1";
 const defaults: ReaderPreferences = {
   visibility: "always", immersive: false, progressBar: true, compact: true,
   shortcut: "h", zoom: 1, fit: null, continuous: false, autoChapter: false,
+  background: "dark", brightness: 100,
 };
 
 export function readReaderPreferences(): ReaderPreferences {
@@ -31,6 +34,9 @@ export function readReaderPreferences(): ReaderPreferences {
       fit: saved.fit === "width" || saved.fit === "height" ? saved.fit : null,
       continuous: typeof saved.continuous === "boolean" ? saved.continuous : false,
       autoChapter: typeof saved.autoChapter === "boolean" ? saved.autoChapter : false,
+      background: saved.background === "sepia" || saved.background === "light" ? saved.background : "dark",
+      brightness: typeof saved.brightness === "number" && Number.isFinite(saved.brightness)
+        && saved.brightness >= 50 && saved.brightness <= 100 ? saved.brightness : 100,
     };
   } catch { return { ...defaults }; }
 }

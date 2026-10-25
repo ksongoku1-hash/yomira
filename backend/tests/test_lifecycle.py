@@ -174,11 +174,14 @@ def test_current_database_can_start_below_download_space_margin(
             assert cast(RuntimeState, app.state.runtime).ready
 
     asyncio.run(bootstrap())
-    monkeypatch.setattr(lifecycle, "DiskBudgetManager", lambda database: DiskBudgetManager(
-        database, disk_usage_provider=lambda _path: SimpleNamespace(
-            total=1_000_000_000, used=1_000_000_000 - 64 * 1024 * 1024, free=64 * 1024 * 1024
+    def low_space_budget(database: SQLiteDatabase) -> DiskBudgetManager:
+        return DiskBudgetManager(
+            database, disk_usage_provider=lambda _path: SimpleNamespace(
+                total=1_000_000_000, used=1_000_000_000 - 64 * 1024 * 1024, free=64 * 1024 * 1024
+            )
         )
-    ))
+
+    monkeypatch.setattr(lifecycle, "DiskBudgetManager", low_space_budget)
 
     async def low_space_startup() -> None:
         app = create_app(Settings(app_env="test", data_root=tmp_path))

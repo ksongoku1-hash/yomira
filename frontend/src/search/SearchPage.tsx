@@ -20,6 +20,8 @@ import {
 } from "../api/client";
 import styles from "./SearchPage.module.css";
 import { compareConnectorChapters } from "../api/chapterOrder";
+import { ActionIcon } from "../app/ActionIcon";
+import { AvailableSources } from "./AvailableSources";
 
 const MAX_SEARCH_RESULTS_PER_SOURCE = 100;
 
@@ -323,6 +325,8 @@ function SearchResultSource({
             type="button"
           >
             <span>{sourceLabel}</span>
+            <span className={styles.sourceAction}>{canListChapters ? "Capítulos" : "Ficha"}</span>
+            <ActionIcon name={expanded ? "previous" : "next"} />
           </button>
         ) : (
           <span className={styles.sourceBadge}>{sourceLabel}</span>
@@ -557,11 +561,11 @@ function SearchResultSource({
                               {chapter.language ? <small>{chapter.language}</small> : null}
                             </label>
                             {canImportSeries && chapter.remoteId !== null ? <button
-                              className={styles.secondaryButton} type="button"
+                              className={styles.readButton} type="button"
                               aria-label={`Leer online ${chapter.displayLabel}`}
                               disabled={readOnlineMutation.isPending}
                               onClick={() => readOnlineMutation.mutate(chapter.remoteId!)}
-                            >Leer online</button> : null}
+                            ><ActionIcon name="play" /> Leer online</button> : null}
                           </li>
                         ))}
                       </ul>
@@ -721,6 +725,11 @@ export function SearchResultCard({
         </div>
         <div className={styles.resultDetails}>
           <h2>{group.title}</h2>
+          <p className={styles.sourceSummary}>
+            {group.sources.length} {group.sources.length === 1 ? "fuente" : "fuentes"}
+            {group.sources.some((entry) => entry.connector.capabilities.includes("CHAPTER_LIST"))
+              ? " · Ver capítulos disponibles" : " · Información de la obra"}
+          </p>
         </div>
         <div aria-label={`Fuentes de ${group.title}`} className={styles.sourceRows} role="group">
           {group.sources.map((entry) => {
@@ -860,6 +869,7 @@ export function SearchPage() {
         </div>
       </header>
 
+      <AvailableSources />
       {connectorsQuery.isPending ? (
         <p aria-live="polite" className={styles.statusMessage} role="status">
           Cargando fuentes registradas…
@@ -889,7 +899,7 @@ export function SearchPage() {
             id="connector-search-query"
             name="query"
             onChange={(event) => setInputValue(event.currentTarget.value)}
-            placeholder="Por ejemplo: fixture"
+            placeholder="Busca un manga por su título"
             role="searchbox"
             type="search"
             value={inputValue}

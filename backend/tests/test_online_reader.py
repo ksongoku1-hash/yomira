@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -12,14 +15,78 @@ from sqlalchemy import func, select
 from test_reader_session import _Harness, _harness  # pyright: ignore[reportPrivateUsage]
 
 from app.connectors.pages import ConnectorPageReference
+from app.connectors.registry import RegisteredSourceConnector
+from app.fmd2_bridge import FMD2_METADATA
+from app.persistence.models.chapter import ChapterRow
+from app.persistence.models.chapter_source import ChapterSourceRow
 from app.persistence.models.download_job import DownloadJobRow
 from app.persistence.models.reader_session import ReaderSessionRow
 from app.runtime import RuntimeState
 from app.services.image_validation import ImageValidationPolicy
 from app.services.online_reader import OnlineReaderSessionService
-from app.services.reader_asset import ReaderAssetError
+from app.services.reader_asset import ReaderAssetError, ReaderAssetNotFound
 from app.services.reader_progress import ReaderProgressService
 from app.services.reader_session import HybridReaderChapterLookup
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_novelcool_legacy_resume_uses_an_exact_current_label_without_replacing_the_chapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ambiguous: bool
+) -> None:
+    async def exercise() -> None:
+        h, online, _runtime, _closed = await _memory_harness(tmp_path, monkeypatch)
+        website, manga = "424747b0135c4240a902eb9cfcb11db9", "/novel/The-Boxer.html"
+
+        def reference(path: str) -> str:
+            return "yomira-fmd2:v3:" + base64.urlsafe_b64encode(
+                json.dumps([website, manga, path]).encode()
+            ).decode().rstrip("=")
+
+        legacy, fresh = reference("/go/rds/?data=expired"), reference("/stable16")
+        template = (await h.provider.get_chapters("mock-series-1"))[0]
+        remote = replace(template, remote_id=fresh, display_label="Capítulo 16", language="es")
+        calls: list[str] = []
+
+        async def catalog(_manga: str):
+            return [remote, remote] if ambiguous else [remote]
+
+        async def plan(_sid: UUID, ref: str):
+            calls.append(ref)
+            return (ConnectorPageReference("online:1"),)
+
+        monkeypatch.setattr(type(h.provider), "metadata", property(lambda _self: FMD2_METADATA))
+        def resolve(
+            _connector_id: str, _connector_version: str
+        ) -> RegisteredSourceConnector:
+            return h.provider
+
+        monkeypatch.setattr(h.source_pages, "resolve", resolve)
+        monkeypatch.setattr(h.provider, "get_chapters", catalog)
+        monkeypatch.setattr(h.provider, "open_online_pages", plan)
+        try:
+            with h.database.write_session() as session:
+                chapter = session.get(ChapterRow, str(h.chapter_id))
+                source = session.scalar(select(ChapterSourceRow))
+                assert chapter is not None and source is not None
+                chapter.display_label, chapter.language = "Capítulo 16", "es"
+                source.remote_id = legacy
+            if ambiguous:
+                with pytest.raises(ReaderAssetNotFound):
+                    await online.open(h.chapter_id)
+                assert calls == []
+            else:
+                opened = await online.open(h.chapter_id)
+                assert opened.chapter_id == h.chapter_id and opened.page_count == 1
+                assert calls == [fresh]
+            with h.database.read_session() as session:
+                assert session.scalar(select(func.count()).select_from(DownloadJobRow)) == 0
+                source = session.scalar(select(ChapterSourceRow))
+                assert source is not None and source.remote_id == legacy
+        finally:
+            await online.close()
+            await h.close()
+
+    asyncio.run(exercise())
 
 
 class _FaultStream(httpx.AsyncByteStream):
@@ -36,9 +103,15 @@ class _FaultStream(httpx.AsyncByteStream):
         self.closed = True
 
 
+class InspectableOnlineReader(OnlineReaderSessionService):
+    def cache_snapshot(self) -> tuple[int, tuple[int, ...]]:
+        assert self._current is not None
+        return self._current.cached_bytes, tuple(self._current.cache)
+
+
 async def _memory_harness(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, invalid: bool = False
-) -> tuple[_Harness, OnlineReaderSessionService, RuntimeState, list[UUID]]:
+) -> tuple[_Harness, InspectableOnlineReader, RuntimeState, list[UUID]]:
     harness = await _harness(tmp_path, invalid_image=invalid)
     closed: list[UUID] = []
 
@@ -50,7 +123,7 @@ async def _memory_harness(
 
     monkeypatch.setattr(harness.provider, "open_online_pages", plan, raising=False)
     monkeypatch.setattr(harness.provider, "close_online_pages", release, raising=False)
-    service = OnlineReaderSessionService(
+    service = InspectableOnlineReader(
         harness.database,
         source_pages=harness.source_pages,
         transport=harness.transport,
@@ -262,6 +335,8 @@ def test_online_page_failure_preserves_progress_and_releases_capacity_for_retry(
         failed_streams: list[_FaultStream] = []
         delays: list[float] = []
         failing = True
+        now = [0.0]
+        monkeypatch.setattr(harness.transport, "_clock", lambda: now[0])
 
         async def sleep(delay: float) -> None:
             delays.append(delay)
@@ -302,7 +377,9 @@ def test_online_page_failure_preserves_progress_and_releases_capacity_for_retry(
                     assert (await client.get(route + "/progress")).json()["data"] == saved
                 assert all(stream.closed for stream in failed_streams)
                 if failure == "429":
-                    assert delays == [1.0] * 9
+                    assert delays == [] and len(failed_streams) == 1
+                    assert (await client.get(route + "/pages/1")).content == harness.body
+                    now[0] = 900.0
                 elif failure in {"503", "timeout", "body"}:
                     assert len(delays) == 9
                 else:
@@ -374,5 +451,113 @@ def test_cancelled_online_page_releases_streaming_capacity_without_advancing_pro
                 await asyncio.gather(pending, return_exceptions=True)
             await service.close()
             await harness.close()
+
+    asyncio.run(exercise())
+
+
+def test_reopening_reuses_verified_images_but_explicit_retry_and_pause_refresh_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        h, service, _runtime, _closed = await _memory_harness(tmp_path, monkeypatch)
+        calls: list[str] = []
+        original = h.client.send
+
+        async def send(request: httpx.Request, **kwargs: Any) -> httpx.Response:
+            calls.append(request.url.path)
+            return await original(request, **kwargs)
+
+        monkeypatch.setattr(h.client, "send", send)
+        try:
+            first = await service.open(h.chapter_id)
+            page = await service.open_page(h.chapter_id, 3)
+            assert b"".join(page.iter_chunks()) == h.body
+            reopened = await service.open(h.chapter_id)
+            assert reopened.session_id == first.session_id
+            page = await service.open_page(h.chapter_id, 3)
+            assert b"".join(page.iter_chunks()) == h.body
+            assert calls == ["/3"]
+            refreshed = await service.open(h.chapter_id, restart=True)
+            assert refreshed.session_id != first.session_id and refreshed.ready_pages == ()
+            page = await service.open_page(h.chapter_id, 3)
+            page.close()
+            assert calls == ["/3", "/3"]
+            await service.pause(h.chapter_id)
+            resumed = await service.open(h.chapter_id)
+            assert resumed.state == "complete" and resumed.session_id != refreshed.session_id
+            page = await service.open_page(h.chapter_id, 3)
+            page.close()
+            assert calls == ["/3", "/3", "/3"]
+        finally:
+            await service.close()
+            await h.close()
+
+    asyncio.run(exercise())
+
+
+def test_verified_image_cache_evicts_the_least_recently_used_page_within_its_byte_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        h, service, _runtime, _closed = await _memory_harness(tmp_path, monkeypatch)
+        monkeypatch.setattr("app.services.online_reader.ONLINE_IMAGE_CACHE_BYTES", len(h.body) * 2)
+        calls: list[str] = []
+        original = h.client.send
+
+        async def send(request: httpx.Request, **kwargs: Any) -> httpx.Response:
+            calls.append(request.url.path)
+            return await original(request, **kwargs)
+
+        monkeypatch.setattr(h.client, "send", send)
+        try:
+            await service.open(h.chapter_id)
+            for number in [1, 2, 1, 3, 2]:
+                page = await service.open_page(h.chapter_id, number)
+                page.close()
+            assert calls == ["/1", "/2", "/3", "/2"]
+            cached_bytes, cached_pages = service.cache_snapshot()
+            assert cached_bytes == len(h.body) * 2
+            assert cached_pages == (3, 2)
+        finally:
+            await service.close()
+            await h.close()
+
+    asyncio.run(exercise())
+
+
+def test_cached_current_page_does_not_wait_for_a_slow_neighbour(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        h, service, _runtime, _closed = await _memory_harness(tmp_path, monkeypatch)
+        original = h.client.send
+        waiting, resume = asyncio.Event(), asyncio.Event()
+
+        async def send(request: httpx.Request, **kwargs: Any) -> httpx.Response:
+            if request.url.path == "/2":
+                waiting.set()
+                await resume.wait()
+            return await original(request, **kwargs)
+
+        monkeypatch.setattr(h.client, "send", send)
+        pending = None
+        try:
+            await service.open(h.chapter_id)
+            first = await service.open_page(h.chapter_id, 1)
+            first.close()
+            pending = asyncio.create_task(service.open_page(h.chapter_id, 2))
+            await asyncio.wait_for(waiting.wait(), 2)
+            reopened = await asyncio.wait_for(service.open(h.chapter_id), 1)
+            assert reopened.state == "complete"
+            cached = await asyncio.wait_for(service.open_page(h.chapter_id, 1), 1)
+            assert b"".join(cached.iter_chunks()) == h.body
+            assert not pending.done()
+        finally:
+            resume.set()
+            if pending is not None:
+                page = await pending
+                page.close()
+            await service.close()
+            await h.close()
 
     asyncio.run(exercise())

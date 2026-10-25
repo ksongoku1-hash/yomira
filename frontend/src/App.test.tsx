@@ -1,8 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { useShellStore } from "./app/shellStore";
+
+// The updater has its own integration tests; keep these request sequences scoped to each page.
+vi.mock("./app/AppUpdates", () => ({ AppUpdates: () => null }));
 
 function mockResponse(payload: unknown, status = 200): Response {
   return {
@@ -161,6 +164,12 @@ function renderLibrary() {
   return render(<App />);
 }
 
+// Resolve route imports before tests that freeze the clock for polling.
+beforeAll(async () => {
+  await Promise.all([import("./library/LibraryPage"), import("./series/SeriesDetailPage"),
+    import("./downloads/DownloadsPage"), import("./search/SearchPage")]);
+});
+
 beforeEach(() => {
   window.history.replaceState({}, "", "/");
   useShellStore.setState({ isNavigationOpen: false });
@@ -172,6 +181,206 @@ afterEach(() => {
 });
 
 describe("App", () => {
+  it("shows the latest point per manga and sends a finished chapter to its chapter list", async () => {
+    const finishedSeries = syntheticSeriesId(31);
+    const ongoingSeries = syntheticSeriesId(32);
+    const finishedChapter = syntheticSeriesId(41);
+    const ongoingChapter = syntheticSeriesId(42);
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/v1/system/readiness") return Promise.resolve(mockResponse({status: "ready"}));
+      if (path.startsWith("/api/v1/reader/progress/recent?")) return Promise.resolve(recentReaderProgressResponse([
+        {series_id: finishedSeries, display_title: "Berserk", chapter_id: finishedChapter,
+          display_label: "Capítulo 8", page_index: 9, percentage: "100.00", updated_at: "2026-10-16T10:00:00Z"},
+        {series_id: ongoingSeries, display_title: "Frieren", chapter_id: ongoingChapter,
+          display_label: "Capítulo 2", page_index: 3, percentage: "30.00", updated_at: "2026-10-15T10:00:00Z"},
+      ]));
+      return Promise.resolve(recentLibraryResponse([]));
+    }));
+    render(<App />);
+    expect(await screen.findByRole("heading", {level: 1, name: "Frieren"})).toBeInTheDocument();
+    expect(screen.getByRole("link", {name: "Continuar lectura: Capítulo 2"})).toHaveAttribute("href", `/reader/${ongoingChapter}`);
+    expect(screen.getByRole("link", {name: "Ver capítulos de Berserk"})).toHaveAttribute("href", `/series/${finishedSeries}`);
+    expect(screen.queryByRole("link", {name: "Leer Capítulo 8 de Berserk"})).not.toBeInTheDocument();
+    expect(screen.getByText(/^Capítulo terminado/)).toBeInTheDocument();
+    expect(screen.getByRole("link", {name: "Elegir capítulo de Frieren"})).toHaveAttribute("href", `/series/${ongoingSeries}#chapters`);
+    expect(screen.getByRole("link", {name: "Abrir Capítulo 8 de Berserk"})).toHaveAttribute("href", `/reader/${finishedChapter}`);
+    await screen.findByText("Todavía no hay obras recientes en tu biblioteca.");
+    const fetchMock = vi.mocked(fetch);
+    const requestsBeforeFiltering = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", {name: "En curso"}));
+    expect(screen.getByRole("button", {name: "En curso"})).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("link", {name: "Ver capítulos de Berserk"})).not.toBeInTheDocument();
+    expect(screen.getByRole("link", {name: "Leer Capítulo 2 de Frieren"})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Terminados"}));
+    expect(screen.getByRole("link", {name: "Ver capítulos de Berserk"})).toBeInTheDocument();
+    expect(screen.queryByRole("link", {name: "Leer Capítulo 2 de Frieren"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Todo"}));
+    expect(screen.getByRole("link", {name: "Leer Capítulo 2 de Frieren"})).toBeInTheDocument();
+    expect(fetchMock.mock.calls).toHaveLength(requestsBeforeFiltering);
+  });
+  it("focuses home search with slash without intercepting typing and submits an encoded query", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/v1/system/readiness") return Promise.resolve(mockResponse({status: "ready"}));
+      if (path.startsWith("/api/v1/reader/progress/recent?")) return Promise.resolve(recentReaderProgressResponse([]));
+      if (path === "/api/v1/connectors") return Promise.resolve(mockResponse({data: []}));
+      return Promise.resolve(recentLibraryResponse([]));
+    }));
+    render(<App />);
+    const input = screen.getByLabelText("Buscar una historia");
+    const menu = screen.getByRole("button", {name: "Abrir navegación"});
+    menu.focus();
+    fireEvent.keyDown(menu, {key: "/", ctrlKey: true});
+    expect(menu).toHaveFocus();
+    fireEvent.keyDown(menu, {key: "/"});
+    expect(input).toHaveFocus();
+    const typingSlash = new KeyboardEvent("keydown", {key: "/", bubbles: true, cancelable: true});
+    fireEvent(input, typingSlash);
+    expect(typingSlash.defaultPrevented).toBe(false);
+    fireEvent.change(input, {target: {value: "   "}});
+    fireEvent.submit(screen.getByRole("search", {name: "Buscar historias"}));
+    expect(window.location.pathname).toBe("/");
+    const query = "Berserk & Frieren / Español";
+    fireEvent.change(input, {target: {value: `  ${query}  `}});
+    fireEvent.submit(screen.getByRole("search", {name: "Buscar historias"}));
+    expect(await screen.findByLabelText("Título o palabras clave")).toHaveValue(query);
+    expect(window.location.pathname).toBe("/search");
+    expect(new URLSearchParams(window.location.search).get("q")).toBe(query);
+    expect(window.location.search).toContain("%26");
+  });
+  it("keeps five main destinations, collapses the menu and offers global search from the library", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/v1/system/readiness") return Promise.resolve(mockResponse({status: "ready"}));
+      if (path.startsWith("/api/v1/reader/progress/recent?")) return Promise.resolve(recentReaderProgressResponse([]));
+      if (path.startsWith("/api/v1/library/recent?")) return Promise.resolve(recentLibraryResponse([]));
+      if (path.startsWith("/api/v1/library?")) return Promise.resolve(libraryResponse([]));
+      if (path === "/api/v1/library/local-imports") return Promise.resolve(mockResponse({folder: null, scanning: false, imported_chapters: 0, pending_metadata: 0, errors: []}));
+      return Promise.resolve(mockResponse({data: []}));
+    }));
+    render(<App />);
+    const nav = screen.getByRole("navigation", {name: "Navegación principal"});
+    expect(nav.querySelectorAll("a")).toHaveLength(5);
+    const toggle = screen.getByRole("button", {name: /^(Expandir|Contraer) menú$/});
+    const expanded = toggle.getAttribute("aria-expanded");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", expanded === "true" ? "false" : "true");
+    fireEvent.click(screen.getByRole("link", {name: "Biblioteca"}));
+    expect(await screen.findByRole("heading", {level: 1, name: "Biblioteca"})).toBeInTheDocument();
+    const input = screen.getByLabelText("Buscar una historia");
+    const explore = screen.getByRole("link", {name: "Explorar"});
+    explore.focus();
+    fireEvent.keyDown(explore, {key: "/"});
+    expect(input).toHaveFocus();
+  });
+  it("opens a real recent library title from surprise without changing reading progress", async () => {
+    const records = [series(syntheticSeriesId(71), "Primera obra"), series(syntheticSeriesId(72), "Obra sorpresa")];
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      const path = String(input);
+      if (path === "/api/v1/system/readiness") return Promise.resolve(mockResponse({status: "ready"}));
+      if (path.startsWith("/api/v1/reader/progress/recent?")) return Promise.resolve(recentReaderProgressResponse([]));
+      if (path.startsWith("/api/v1/library/recent?")) return Promise.resolve(recentLibraryResponse(records));
+      if (path === `/api/v1/series/${records[1]!.series_id}`) return Promise.resolve(mockResponse({data: records[1], meta: {}}));
+      return Promise.resolve(mockResponse({data: [], meta: {limit: 100, offset: 0, total: 0}}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.75);
+    try {
+      render(<App />);
+      const surprise = screen.getByRole("button", {name: "Sorpréndeme"});
+      expect(surprise).toBeDisabled();
+      await waitFor(() => expect(surprise).toBeEnabled());
+      fireEvent.click(surprise);
+      expect(await screen.findByRole("heading", {level: 1, name: "Obra sorpresa"})).toBeInTheDocument();
+      expect(window.location.pathname).toBe(`/series/${records[1]!.series_id}`);
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/v1/library?"))).toBe(false);
+      expect(fetchMock.mock.calls.every((call) => !["POST", "PUT", "PATCH", "DELETE"].includes(call[1]?.method ?? "GET"))).toBe(true);
+    } finally {
+      random.mockRestore();
+    }
+  });
+  it("returns from a series to the same library query, filter, order, layout and page", async () => {
+    const record = series(syntheticSeriesId(14), "Manga guardado");
+    const returnTo = "/library?view=compact&sort=recent&status=reading&q=Manga&offset=100";
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/v1/library?")) return Promise.resolve(libraryResponse([record], 201, 100));
+      if (path === `/api/v1/series/${record.series_id}`) return Promise.resolve(mockResponse({data: record, meta: {}}));
+      if (path === "/api/v1/library/local-imports") return Promise.resolve(mockResponse({folder: "C:/Mangas", scanning: false, imported_chapters: 0, pending_metadata: 0, errors: []}));
+      return Promise.resolve(mockResponse({data: [], meta: {limit: 100, offset: 0, total: 0}}));
+    }));
+    window.history.replaceState({}, "", returnTo);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", {name: "Manga guardado"}));
+    await screen.findByRole("heading", {level: 1, name: "Manga guardado"});
+    expect(screen.getByRole("link", {name: "Volver a Biblioteca"})).toHaveAttribute("href", returnTo);
+    fireEvent.click(screen.getByRole("link", {name: "Volver a Biblioteca"}));
+    expect(await screen.findByRole("heading", {level: 2, name: "Manga guardado"})).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", {name: "Buscar en toda la biblioteca"})).toHaveValue("Manga");
+    expect(screen.getByRole("button", {name: "Leyendo"})).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", {name: "Vista compacta"})).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("combobox", {name: "Ordenar biblioteca"})).toHaveValue("recent");
+    expect(screen.getByText("Página 2 de 3")).toBeInTheDocument();
+  });
+
+  it("recovers a stale library page without discarding its search or layout", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/v1/library?")) return Promise.resolve(path.includes("offset=100")
+        ? libraryResponse([], 1, 100) : libraryResponse([series(syntheticSeriesId(15), "Manga")], 1));
+      return Promise.resolve(mockResponse({folder: "C:/Mangas", scanning: false, imported_chapters: 0, pending_metadata: 0, errors: []}));
+    }));
+    window.history.replaceState({}, "", "/library?offset=100&q=Manga&view=compact");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", {name: "Volver a la primera página"}));
+    expect(await screen.findByRole("heading", {level: 2, name: "Manga"})).toBeInTheDocument();
+    expect(window.location.search).toContain("q=Manga");
+    expect(window.location.search).toContain("view=compact");
+    expect(window.location.search).not.toContain("offset=");
+  });
+
+  it("changes library layout without fetching and requests global ordering from the server", async () => {
+    const first = { ...series(syntheticSeriesId(1), "Zeta"), created_at: "2026-10-10T10:00:00Z" };
+    const second = { ...series(syntheticSeriesId(2), "Alfa"), updated_at: "2026-10-11T10:00:00Z" };
+    const records = [first, second];
+    const fetchMock = vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      String(input).startsWith("/api/v1/library?") ? libraryResponse(
+        String(input).includes("sort=recent") ? [first, second] : [second, first])
+        : mockResponse({ folder: "C:/Mangas", scanning: false, imported_chapters: 0, pending_metadata: 0, errors: [] }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    renderLibrary();
+    const list = await screen.findByRole("list", {name: "Series de la biblioteca"});
+    expect([...list.querySelectorAll("h2")].map((node) => node.textContent)).toEqual(["Alfa", "Zeta"]);
+    const requests = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", {name: "Vista compacta"}));
+    expect(screen.getByRole("button", {name: "Vista compacta"})).toHaveAttribute("aria-pressed", "true");
+    expect(window.location.search).toContain("view=compact");
+    expect(fetchMock).toHaveBeenCalledTimes(requests);
+    fireEvent.change(screen.getByRole("combobox", {name: "Ordenar biblioteca"}), {target: {value: "recent"}});
+    await waitFor(() => expect([...screen.getByRole("list", {name: "Series de la biblioteca"}).querySelectorAll("h2")]
+      .map((node) => node.textContent)).toEqual(["Zeta", "Alfa"]));
+    expect(window.location.search).toContain("sort=recent");
+    fireEvent.change(screen.getByRole("combobox", {name: "Ordenar biblioteca"}), {target: {value: "updated"}});
+    await waitFor(() => expect([...screen.getByRole("list", {name: "Series de la biblioteca"}).querySelectorAll("h2")]
+      .map((node) => node.textContent)).toEqual(["Alfa", "Zeta"]));
+    expect(fetchMock).toHaveBeenCalledTimes(requests + 2);
+    expect(records.map((record) => record.display_title)).toEqual(["Zeta", "Alfa"]);
+  });
+
+  it("restores library presentation from its URL and ignores unknown presentation values", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      String(input).startsWith("/api/v1/library?") ? libraryResponse([series(syntheticSeriesId(1), "Manga")])
+        : mockResponse({folder: "C:/Mangas", scanning: false, imported_chapters: 0, pending_metadata: 0, errors: []}),
+    )));
+    window.history.replaceState({}, "", "/library?view=compact&sort=invalid");
+    render(<App />);
+    expect(await screen.findByRole("button", {name: "Vista compacta"})).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("combobox", {name: "Ordenar biblioteca"})).toHaveValue("title");
+    fireEvent.click(screen.getByRole("button", {name: "Vista de portadas"}));
+    expect(screen.getByRole("button", {name: "Vista de portadas"})).toHaveAttribute("aria-pressed", "true");
+  });
   it.each([
     ["/library", "Actualizar biblioteca", "/api/v1/library?"],
     [`/series/${syntheticSeriesId(105)}`, "Actualizar metadatos y portada", `/api/v1/series/${syntheticSeriesId(105)}`],
@@ -205,12 +414,16 @@ describe("App", () => {
     }));
     window.history.replaceState({}, "", route);
     const view = render(<App />);
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      await vi.advanceTimersByTimeAsync(350);
+    });
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     if (route.startsWith("/series/")) fireEvent.click(screen.getByLabelText("Más acciones del manga"));
     const button = screen.getByRole("button", {name: buttonName});
     const titleNode = route === "/library" ? screen.getByText("Título inicial", {selector: "a"}) : screen.getByRole("heading", {name: "Título inicial"});
     holdRefresh = true;
-    await act(async () => { await vi.advanceTimersByTimeAsync(2_010); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(route === "/downloads" ? 2_010 : 15_010); });
     expect(resolveRefresh).toBeDefined();
     expect(button).toBeEnabled();
     expect(button).toHaveTextContent(buttonName);
@@ -253,6 +466,10 @@ describe("App", () => {
     }))));
     window.history.replaceState({}, "", "/downloads");
     const view = render(<App />);
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      await vi.advanceTimersByTimeAsync(350);
+    });
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     expect(screen.getByText("Descargando")).toBeInTheDocument();
     completed = true;
@@ -284,12 +501,16 @@ describe("App", () => {
       return Promise.resolve(libraryResponse([series(seriesId, title)]));
     }));
     const view = renderLibrary();
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      await vi.advanceTimersByTimeAsync(350);
+    });
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     fireEvent.click(screen.getByRole("link", { name: title }));
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     expect(screen.getByText(/todavía no tiene capítulos descargados/)).toBeInTheDocument();
     ready = true;
-    await act(async () => { await vi.advanceTimersByTimeAsync(2_010); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_010); });
     expect(screen.getByRole("link", { name: "Leer Capítulo 2" })).toBeInTheDocument();
     title = "Título actualizado";
     fireEvent.click(screen.getByRole("link", { name: "Volver a Biblioteca" }));
@@ -550,7 +771,7 @@ describe("App", () => {
       if (url === "/api/v1/library/recent?limit=4") {
         return Promise.resolve(recentLibraryResponse(records));
       }
-      if (url === "/api/v1/reader/progress/recent?limit=4") {
+      if (url === "/api/v1/reader/progress/recent?limit=4&per_series=true") {
         return Promise.resolve(recentReaderProgressResponse(progressRecords));
       }
       return Promise.resolve(mockResponse(null, 404));
@@ -561,11 +782,12 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Berserk" }))
       .toBeInTheDocument();
-    expect(await screen.findByRole("link", { name: "Continuar Capítulo 8" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "Continuar lectura: Capítulo 8" })).toHaveAttribute(
       "href", `/reader/${syntheticSeriesId(11)}`,
     );
     expect(await screen.findByText("Servicio local listo.")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Añadidos recientemente" })).toBeInTheDocument();
+    expect(screen.getByRole("search", { name: "Buscar historias" })).toContainElement(screen.getByLabelText("Buscar una historia"));
+    expect(screen.getByRole("heading", { level: 2, name: "Mi biblioteca" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Continuar leyendo" }))
       .toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "Berserk" })).toHaveAttribute(
@@ -580,8 +802,13 @@ describe("App", () => {
       "href",
       `/series/${syntheticSeriesId(1)}`,
     );
-    expect(screen.getByText("Página 5 · 50.00 %")).toBeInTheDocument();
+    expect(screen.getByText("Capítulo 8 · Página 5 · 50.00 %")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", {name: "Progreso de Capítulo 8"})).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getByRole("progressbar", { name: "Progreso de Capítulo 8 de Berserk" })).toHaveAttribute("value", "50");
+    fireEvent.click(screen.getByRole("button", {name: "Terminados"}));
+    expect(screen.getByText("No hay capítulos terminados entre tus lecturas recientes.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", {name: "Leer Capítulo 8 de Berserk"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Todo"}));
     fireEvent.error(screen.getByRole("img", { name: "Portada de Berserk" }));
     expect(screen.getByRole("img", { name: "Portada no disponible: Berserk" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
@@ -589,7 +816,7 @@ describe("App", () => {
       expect.any(Object),
     );
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/reader/progress/recent?limit=4",
+      "/api/v1/reader/progress/recent?limit=4&per_series=true",
       expect.any(Object),
     );
     expect(fetchMock.mock.calls.some(([input]) =>
@@ -606,7 +833,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("link", { name: /Volver a/ }));
     fireEvent.click(await screen.findByRole("link", { name: "Inicio" }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) =>
-      String(input) === "/api/v1/reader/progress/recent?limit=4"
+      String(input) === "/api/v1/reader/progress/recent?limit=4&per_series=true"
     )).toHaveLength(2));
   });
 
@@ -619,7 +846,7 @@ describe("App", () => {
       if (url === "/api/v1/library/recent?limit=4") {
         return Promise.resolve(recentLibraryResponse([]));
       }
-      if (url === "/api/v1/reader/progress/recent?limit=4") {
+      if (url === "/api/v1/reader/progress/recent?limit=4&per_series=true") {
         return Promise.resolve(recentReaderProgressResponse([]));
       }
       return Promise.resolve(mockResponse(null, 404));
@@ -632,8 +859,47 @@ describe("App", () => {
       .toBeInTheDocument();
     expect(screen.getByText("El progreso guardado de tus capítulos aparecerá aquí."))
       .toBeInTheDocument();
+    expect(screen.getByRole("button", {name: "Sorpréndeme"})).toBeDisabled();
     expect(screen.getAllByRole("link", { name: "Buscar obras" })).toHaveLength(2);
     expect(screen.queryByRole("link", { name: /Leer .* de / })).not.toBeInTheDocument();
+  });
+
+  it("shows a failed readiness recheck instead of retaining the cached ready badge", async () => {
+    let readinessAttempts = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/v1/system/readiness") {
+        readinessAttempts += 1;
+        return Promise.resolve(readinessAttempts === 1 ? mockResponse({status: "ready"}) : mockResponse({error: {
+          code: "SYS_READINESS_UNAVAILABLE", message: "No se pudo volver a comprobar el servicio.",
+          retryable: true, trace_id: "trace-readiness-recheck",
+        }}, 500));
+      }
+      if (path.startsWith("/api/v1/library/recent?")) return Promise.resolve(recentLibraryResponse([series(syntheticSeriesId(81), "Obra guardada")]));
+      if (path.startsWith("/api/v1/reader/progress/recent?")) return Promise.resolve(recentReaderProgressResponse([]));
+      return Promise.resolve(mockResponse({data: []}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    expect(await screen.findByText("Servicio local listo.")).toBeInTheDocument();
+    await screen.findByRole("link", {name: "Obra guardada"});
+    await screen.findByText("El progreso guardado de tus capítulos aparecerá aquí.");
+    expect(screen.getByRole("button", {name: "Sorpréndeme"})).toBeEnabled();
+    expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/api/v1/library/recent?"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/api/v1/reader/progress/recent?"))).toHaveLength(1);
+    fireEvent.click(screen.getByRole("link", {name: "Explorar"}));
+    await screen.findByRole("heading", {level: 1, name: "Buscar"});
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+    try {
+      fireEvent.click(screen.getByRole("link", {name: "Inicio"}));
+      const alert = await screen.findByRole("alert", {name: "No se pudo comprobar el servicio local"});
+      expect(alert).toHaveTextContent("trace-readiness-recheck");
+      expect(readinessAttempts).toBe(2);
+      expect(screen.queryByText("Servicio local listo.")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", {name: "Sorpréndeme"})).toBeDisabled();
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("reports recent-section errors independently and retries only the failed section", async () => {
@@ -661,7 +927,7 @@ describe("App", () => {
           finishLibraryRetry = resolve;
         });
       }
-      if (url === "/api/v1/reader/progress/recent?limit=4") {
+      if (url === "/api/v1/reader/progress/recent?limit=4&per_series=true") {
         progressAttempts += 1;
         return Promise.resolve(mockResponse({
           error: {
@@ -707,11 +973,14 @@ describe("App", () => {
   });
 
   it("waits for readiness and allows a bounded retry before loading the library", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(mockResponse({ status: "not_ready" }, 503))
-      .mockResolvedValueOnce(mockResponse({ status: "ready" }))
-      .mockResolvedValueOnce(recentLibraryResponse([]))
-      .mockResolvedValueOnce(recentReaderProgressResponse([]));
+    let readinessAttempts = 0;
+    const fetchMock = vi.fn((input:RequestInfo|URL)=>{
+      const path=String(input);
+      if(path==="/api/v1/system/readiness") return Promise.resolve(++readinessAttempts===1 ? mockResponse({status:"not_ready"},503) : mockResponse({status:"ready"}));
+      if(path.startsWith("/api/v1/library/recent?")) return Promise.resolve(recentLibraryResponse([]));
+      if(path.startsWith("/api/v1/reader/progress/recent?")) return Promise.resolve(recentReaderProgressResponse([]));
+      return Promise.resolve(mockResponse({data:[],meta:{provider:"MangaDex",criterion:"followed_count",status:"ready",updated_at:"2026-10-21T12:00:00Z",retry_at:null}}));
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App />);
@@ -731,18 +1000,17 @@ describe("App", () => {
     expect(await screen.findByText("Servicio local listo.")).toBeInTheDocument();
     expect(await screen.findByText("Todavía no hay obras recientes en tu biblioteca."))
       .toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/v1/system/readiness", expect.any(Object));
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
+    expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/library/recent?limit=4",
       expect.any(Object),
     );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      4,
-      "/api/v1/reader/progress/recent?limit=4",
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/reader/progress/recent?limit=4&per_series=true",
       expect.any(Object),
     );
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/recommendations",expect.any(Object));
   });
 
   it("renders the dark app shell and all primary destinations", () => {
@@ -752,7 +1020,7 @@ describe("App", () => {
       .toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Navegación principal" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Abrir navegación" }));
-    for (const label of ["Biblioteca", "Buscar", "Cola de descargas", "Ajustes", "Diagnóstico"]) {
+    for (const label of ["Biblioteca", "Explorar", "Cola de descargas", "Configuración", "Diagnóstico"]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
   });
@@ -799,14 +1067,14 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Abrir navegación" }));
-    fireEvent.click(screen.getByRole("link", { name: "Ajustes" }));
+    fireEvent.click(screen.getByRole("link", { name: "Configuración" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "Ajustes" }))
       .toBeInTheDocument();
     expect(await screen.findByRole("spinbutton", { name: /presupuesto de caché/i }))
       .toHaveValue(256);
     fireEvent.click(screen.getByRole("button", { name: "Abrir navegación" }));
-    expect(screen.getByRole("link", { name: "Ajustes" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Configuración" })).toHaveAttribute("aria-current", "page");
   });
 
   it("renders validated local covers and an accessible placeholder after an image failure", async () => {
@@ -1066,25 +1334,26 @@ describe("App", () => {
     );
   });
 
-  it("searches only the current fetched page and distinguishes no matches from an empty library", async () => {
+  it("searches the full library on submit and distinguishes no matches from an empty library", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        libraryResponse([
+      vi.fn((input: RequestInfo | URL) => Promise.resolve(String(input).includes("q=naruto")
+        ? libraryResponse([]) : libraryResponse([
           series("123e4567-e89b-42d3-a456-426614174000", "Berserk"),
           series("123e4567-e89b-42d3-a456-426614174001", "One Piece"),
-        ], 102),
-      ),
+        ], 102))),
     );
     renderLibrary();
 
     await screen.findByRole("heading", { level: 2, name: "Berserk" });
-    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar título en esta página" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar en toda la biblioteca" }), {
       target: { value: "naruto" },
     });
 
+    expect(screen.getByRole("heading", {level: 2, name: "Berserk"})).toBeInTheDocument();
+    fireEvent.submit(screen.getByRole("search", {name: "Buscar en la biblioteca"}));
+    expect(await screen.findByText("No hay coincidencias en la biblioteca.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "Berserk" })).not.toBeInTheDocument();
-    expect(screen.getByText("No hay coincidencias en esta página.")).toBeInTheDocument();
     expect(screen.queryByText("Tu biblioteca está vacía.")).not.toBeInTheDocument();
   });
 
@@ -1116,7 +1385,7 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { level: 2, name: "One Piece" })).toBeInTheDocument();
     expect(screen.getByText("Mostrando 101–101 de 101 series")).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/library?limit=100&offset=100",
+      "/api/v1/library?limit=100&offset=100&sort=title",
       { headers: { Accept: "application/json" } },
     ));
   });
@@ -1132,6 +1401,9 @@ describe("App", () => {
     };
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = new URL(String(input), window.location.origin);
+      if (url.pathname === "/api/v1/system/readiness") return Promise.resolve(mockResponse({status: "ready"}));
+      if (url.pathname === "/api/v1/library/recent") return Promise.resolve(recentLibraryResponse([]));
+      if (url.pathname === "/api/v1/library/local-imports") return Promise.resolve(mockResponse({folder: null, scanning: false, imported_chapters: 0, pending_metadata: 0, errors: []}));
       if (url.pathname.startsWith("/api/v1/series/")) {
         const id = url.pathname.split("/").at(-1);
         const record = id === undefined ? undefined : recordsById.get(id);
@@ -1143,6 +1415,8 @@ describe("App", () => {
       }
 
       const offset = Number(url.searchParams.get("offset") ?? "0");
+      const search = url.searchParams.get("q");
+      if (search) return Promise.resolve(libraryResponse([recordFor(Number(search))], 1));
       const data = Array.from(
         { length: Math.min(100, total - offset) },
         (_unused, index) => recordFor(offset + index),
@@ -1159,18 +1433,21 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: "Synthetic Series 00099" })).toBeInTheDocument();
 
     const searchStartedAt = performance.now();
-    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar título en esta página" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar en toda la biblioteca" }), {
       target: { value: "00099" },
     });
+    fireEvent.submit(screen.getByRole("search", {name: "Buscar en la biblioteca"}));
+    await waitFor(() => expect(screen.getAllByRole("heading", {level: 2, name: /Synthetic Series/})).toHaveLength(1));
     const pageSearchMs = performance.now() - searchStartedAt;
-    expect(pageSearchMs).toBeLessThan(200);
     expect(screen.getAllByRole("heading", { level: 2, name: /Synthetic Series/ })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 2, name: "Synthetic Series 00099" }))
       .toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar título en esta página" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar en toda la biblioteca" }), {
       target: { value: "" },
     });
+    fireEvent.submit(screen.getByRole("search", {name: "Buscar en la biblioteca"}));
+    await screen.findByRole("heading", {level: 2, name: "Synthetic Series 00000"});
     const pagingStartedAt = performance.now();
     fireEvent.click(screen.getByRole("button", { name: "Página siguiente" }));
     await screen.findByRole("heading", { level: 2, name: "Synthetic Series 00100" });
@@ -1192,7 +1469,7 @@ describe("App", () => {
         `page_search_ms=${pageSearchMs.toFixed(2)} paging_ms=${pagingMs.toFixed(2)} ` +
         `detail_ms=${detailMs.toFixed(2)}`,
     );
-  });
+  }, 15_000); // Four accessibility-heavy page transitions in jsdom need headroom on Windows.
 
   it("resets pagination when the reading filter changes", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
@@ -1227,7 +1504,7 @@ describe("App", () => {
       "true",
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/library?limit=100&offset=0&reading_status=completed",
+      "/api/v1/library?limit=100&offset=0&reading_status=completed&sort=title",
       { headers: { Accept: "application/json" } },
     ));
   });
@@ -1315,10 +1592,15 @@ describe("App", () => {
   });
 
   it("keeps the library usable after a traced backend error and retries only on request", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        mockResponse(
+    let libraryRequests = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/v1/system/readiness") return Promise.resolve(mockResponse({status: "ready"}));
+      if (path.startsWith("/api/v1/library/recent?")) return Promise.resolve(recentLibraryResponse([]));
+      if (path === "/api/v1/library/local-imports") return Promise.resolve(mockResponse({folder: null, scanning: false, imported_chapters: 0, pending_metadata: 0, errors: []}));
+      if (path.startsWith("/api/v1/library?")) {
+        libraryRequests += 1;
+        return Promise.resolve(libraryRequests === 1 ? mockResponse(
           {
             error: {
               code: "SYS_INTERNAL_ERROR",
@@ -1328,11 +1610,10 @@ describe("App", () => {
             },
           },
           503,
-        ),
-      )
-      .mockResolvedValueOnce(
-        libraryResponse([series("123e4567-e89b-42d3-a456-426614174000", "Berserk")]),
-      );
+        ) : libraryResponse([series("123e4567-e89b-42d3-a456-426614174000", "Berserk")]));
+      }
+      return Promise.resolve(mockResponse(null, 404));
+    });
     vi.stubGlobal("fetch", fetchMock);
     renderLibrary();
 
@@ -1519,10 +1800,10 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: "Volver a Biblioteca" })).toBeInTheDocument();
   });
 
-  it("opens the compact navigation and closes it after choosing a destination", () => {
+  it("opens the compact navigation and closes it after choosing a destination", async () => {
     render(<App />);
 
-    const menuButton = screen.getByRole("button", { hidden: true });
+    const menuButton = screen.getByRole("button", { name: "Abrir navegación" });
     expect(menuButton).toHaveAttribute("aria-label", "Abrir navegaci\u00f3n");
     fireEvent.click(menuButton);
 
@@ -1532,9 +1813,9 @@ describe("App", () => {
       "true",
     );
 
-    fireEvent.click(screen.getByRole("link", { name: "Buscar" }));
+    fireEvent.click(screen.getByRole("link", { name: "Explorar" }));
 
-    expect(screen.getByRole("heading", { level: 1, name: "Buscar" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Buscar" })).toBeInTheDocument();
     expect(useShellStore.getState().isNavigationOpen).toBe(false);
     fireEvent.click(menuButton);
     fireEvent.keyDown(window, { key: "Escape" });

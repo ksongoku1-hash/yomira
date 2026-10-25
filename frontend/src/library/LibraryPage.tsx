@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { Component, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Component, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import {
@@ -14,6 +14,7 @@ import {
 import styles from "./LibraryPage.module.css";
 import { SeriesCover } from "./SeriesCover";
 import { publicationStatus } from "./publicationStatus";
+import { ActionIcon } from "../app/ActionIcon";
 
 const PAGE_SIZE = 100;
 const READING_FILTERS: { label: string; value: "all" | LibraryReadingStatus }[] = [
@@ -65,16 +66,19 @@ function LibraryErrorState({ error, onRetry }: { error: unknown; onRetry: () => 
   );
 }
 
-function SeriesCard({ series }: { series: LibrarySeriesSummary }) {
+function SeriesCard({ series, readingFilter, returnTo }: { series: LibrarySeriesSummary; readingFilter: "all" | LibraryReadingStatus; returnTo: string }) {
   return (
     <li className={styles.seriesItem}>
       <article aria-labelledby={`series-${series.seriesId}`} className={styles.seriesCard}>
-        <Link className={styles.coverLink} aria-label={`Abrir ${series.displayTitle}`} to={`/series/${series.seriesId}`}>
+        <Link className={styles.coverLink} aria-label={`Abrir ${series.displayTitle}`} to={`/series/${series.seriesId}`} state={{from: returnTo}}>
           <SeriesCover series={series} />
         </Link>
         <div className={styles.cardDetails}>
+          {readingFilter !== "all" ? <span className={styles.readingBadge}>
+            {READING_FILTERS.find((filter) => filter.value === readingFilter)?.label}
+          </span> : null}
           <h2 className={styles.seriesTitle} id={`series-${series.seriesId}`}>
-            <Link className={styles.seriesLink} to={`/series/${series.seriesId}`}>
+            <Link className={styles.seriesLink} to={`/series/${series.seriesId}`} state={{from: returnTo}}>
               {series.displayTitle}
             </Link>
           </h2>
@@ -191,28 +195,42 @@ export function LocalImportPanel({ compact = false }: { compact?: boolean }) {
 }
 
 function LibraryPageContent() {
-  const [offset, setOffset] = useState(0);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [readingFilter, setReadingFilter] = useState<"all" | LibraryReadingStatus>("all");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const compact = searchParams.get("view") === "compact";
+  const requestedSort = searchParams.get("sort");
+  const sort = requestedSort === "recent" || requestedSort === "updated" ? requestedSort : "title";
+  const readingFilter = READING_FILTERS.find((filter) => filter.value === searchParams.get("status"))?.value ?? "all";
+  const requestedOffset = Number(searchParams.get("offset") ?? "0");
+  const offset = Number.isSafeInteger(requestedOffset) && requestedOffset >= 0 ? requestedOffset : 0;
+  const searchTerm = searchParams.get("q") ?? "";
+  const [searchDraft, setSearchDraft] = useState(searchTerm);
+  useEffect(() => setSearchDraft(searchTerm), [searchTerm]);
+  const returnTo = `/library${searchParams.size ? `?${searchParams.toString()}` : ""}`;
+  function changeLibrary(values: Record<string, string>) {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      for (const [key, value] of Object.entries(values)) {
+        if (value) next.set(key, value);
+        else next.delete(key);
+      }
+      return next;
+    }, { replace: true });
+  }
   const query = useQuery({
-    queryKey: ["library", readingFilter, offset],
+    queryKey: ["library", readingFilter, offset, searchTerm, sort],
     queryFn: () => getLibraryPage({
       limit: PAGE_SIZE,
       offset,
+      query: searchTerm,
+      sort,
       ...(readingFilter === "all" ? {} : { readingStatus: readingFilter }),
     }),
     placeholderData: (previousData, previousQuery) =>
-      previousQuery?.queryKey[1] === readingFilter ? previousData : undefined,
+      previousQuery?.queryKey[1] === readingFilter && previousQuery.queryKey[3] === searchTerm &&
+        previousQuery.queryKey[4] === sort ? previousData : undefined,
   });
   const page = query.data;
-  const normalizedSearch = searchTerm.trim().toLowerCase();
-  const visibleSeries = page?.data.filter((series) => {
-    if (!normalizedSearch) return true;
-    return (
-      series.displayTitle.toLowerCase().includes(normalizedSearch) ||
-      series.canonicalTitle.toLowerCase().includes(normalizedSearch)
-    );
-  });
+  const normalizedSearch = searchTerm.trim();
   const hasPrevious = page !== undefined && page.meta.offset > 0;
   const hasNext =
     page !== undefined && page.meta.offset + page.data.length < page.meta.total;
@@ -241,7 +259,7 @@ function LibraryPageContent() {
           onClick={refresh}
           type="button"
         >
-          Actualizar biblioteca
+          <ActionIcon name="refresh" /> Actualizar biblioteca
         </button>
       </header>
 
@@ -258,8 +276,7 @@ function LibraryPageContent() {
                 key={filter.value}
                 onClick={() => {
                   if (readingFilter !== filter.value) {
-                    setReadingFilter(filter.value);
-                    setOffset(0);
+                    changeLibrary({status: filter.value === "all" ? "" : filter.value, offset: ""});
                   }
                 }}
                 type="button"
@@ -268,26 +285,39 @@ function LibraryPageContent() {
               </button>
             ))}
           </div>
-          <p className={styles.helpText}>
+          <details className={styles.filterHelp}>
+            <summary>Cómo se calcula el estado</summary>
+            <p className={styles.helpText}>
             Se calcula con los capítulos y el progreso guardados localmente. Completos significa que
             todos los capítulos conocidos están al 100 %.
-          </p>
+            </p>
+          </details>
         </div>
-        <div className={styles.searchField}>
-          <label htmlFor="library-search">Buscar título en esta página</label>
+        <form className={styles.searchField} role="search" aria-label="Buscar en la biblioteca"
+          onSubmit={(event) => {
+            event.preventDefault();
+            changeLibrary({q: searchDraft.trim(), offset: ""});
+          }}>
+          <label htmlFor="library-search">Buscar en toda la biblioteca</label>
+          <div className={styles.searchRow}>
           <input
             aria-describedby="library-search-help"
             autoComplete="off"
             id="library-search"
-            onChange={(event) => setSearchTerm(event.currentTarget.value)}
+            onChange={(event) => setSearchDraft(event.currentTarget.value)}
             placeholder="Escribe un título"
             type="search"
-            value={searchTerm}
+            maxLength={200}
+            value={searchDraft}
           />
+          <button className={styles.secondaryButton} type="submit">Buscar</button>
+          </div>
           <p className={styles.helpText} id="library-search-help">
-            Busca entre los títulos cargados; cambia de página para revisar el resto.
+            Busca por título en tu colección. Pulsa Buscar o Enter.
           </p>
-        </div>
+          {normalizedSearch ? <button className={styles.textButton} type="button"
+            onClick={() => changeLibrary({q: "", offset: ""})}>Limpiar búsqueda</button> : null}
+        </form>
       </div>
 
       {query.isPending && page === undefined ? <LibraryLoading /> : null}
@@ -300,7 +330,15 @@ function LibraryPageContent() {
         </p>
       ) : null}
 
-      {page && page.meta.total === 0 && readingFilter !== "all" ? (
+      {page && page.meta.total === 0 && normalizedSearch ? (
+        <div className={styles.noMatches} aria-live="polite">
+          <h2>No hay coincidencias en la biblioteca.</h2>
+          <p>No se encontraron títulos para «{normalizedSearch}»{readingFilter !== "all" ? " con este estado de lectura" : ""}.</p>
+          <button className={styles.textButton} type="button" onClick={() => changeLibrary({q: "", offset: ""})}>Ver títulos sin esta búsqueda</button>
+        </div>
+      ) : null}
+
+      {page && page.meta.total === 0 && !normalizedSearch && readingFilter !== "all" ? (
         <div className={styles.emptyState}>
           <span aria-hidden="true" className={styles.emptyMark} />
           <h2>No hay series con este filtro.</h2>
@@ -308,8 +346,7 @@ function LibraryPageContent() {
           <button
             className={styles.secondaryButton}
             onClick={() => {
-              setReadingFilter("all");
-              setOffset(0);
+              changeLibrary({status: "", offset: ""});
             }}
             type="button"
           >
@@ -318,7 +355,7 @@ function LibraryPageContent() {
         </div>
       ) : null}
 
-      {page && page.meta.total === 0 && readingFilter === "all" ? (
+      {page && page.meta.total === 0 && !normalizedSearch && readingFilter === "all" ? (
         <div className={styles.emptyState}>
           <span aria-hidden="true" className={styles.emptyMark} />
           <h2>Tu biblioteca está vacía.</h2>
@@ -340,26 +377,41 @@ function LibraryPageContent() {
             <p aria-live="polite" className={styles.rangeText} role="status">
               Mostrando {page.data.length === 0 ? 0 : page.meta.offset + 1}–
               {page.meta.offset + page.data.length} de {page.meta.total} series
-              {normalizedSearch ? ` · ${visibleSeries?.length ?? 0} coincidencias en esta página` : ""}
+              {normalizedSearch ? ` · Búsqueda: ${normalizedSearch}` : ""}
             </p>
+            <div className={styles.presentationControls}>
+              <label className={styles.sortField}>Ordenar biblioteca
+                <select value={sort} onChange={(event) => changeLibrary({sort: event.currentTarget.value, offset: ""})}>
+                  <option value="title">Título A–Z</option>
+                  <option value="recent">Añadidos recientemente</option>
+                  <option value="updated">Actualizados recientemente</option>
+                </select>
+              </label>
+              <div className={styles.viewControls} role="group" aria-label="Vista de biblioteca">
+                <button className={styles.secondaryButton} type="button" aria-label="Vista de portadas"
+                  aria-pressed={!compact} onClick={() => changeLibrary({view: "grid"})}><ActionIcon name="grid" /></button>
+                <button className={styles.secondaryButton} type="button" aria-label="Vista compacta"
+                  aria-pressed={compact} onClick={() => changeLibrary({view: "compact"})}><ActionIcon name="chapters" /></button>
+              </div>
+            </div>
           </div>
 
-          {visibleSeries?.length ? (
-            <ul aria-label="Series de la biblioteca" className={styles.seriesGrid}>
-              {visibleSeries.map((series) => (
-                <SeriesCard key={series.seriesId} series={series} />
+          {page.data.length ? (
+            <ul aria-label="Series de la biblioteca" className={compact ? `${styles.seriesGrid} ${styles.compactList}` : styles.seriesGrid}>
+              {page.data.map((series) => (
+                <SeriesCard key={series.seriesId} series={series} readingFilter={readingFilter} returnTo={returnTo} />
               ))}
             </ul>
           ) : (
             <div aria-live="polite" className={styles.noMatches}>
-              <h2>No hay coincidencias en esta página.</h2>
-              <p>Prueba otro título o cambia de página para revisar más series.</p>
+              <h2>Esta página ya no tiene mangas.</h2>
+              <p>Vuelve a la primera página para consultar la lista actualizada.</p>
               <button
                 className={styles.textButton}
-                onClick={() => setSearchTerm("")}
+                onClick={() => changeLibrary({offset: ""})}
                 type="button"
               >
-                Limpiar búsqueda
+                Volver a la primera página
               </button>
             </div>
           )}
@@ -370,7 +422,7 @@ function LibraryPageContent() {
                 aria-label="Página anterior"
                 className={styles.secondaryButton}
                 disabled={!hasPrevious || loadingPage}
-                onClick={() => setOffset(Math.max(0, page.meta.offset - page.meta.limit))}
+                onClick={() => changeLibrary({offset: String(Math.max(0, page.meta.offset - page.meta.limit))})}
                 type="button"
               >
                 Anterior
@@ -382,7 +434,7 @@ function LibraryPageContent() {
                 aria-label="Página siguiente"
                 className={styles.secondaryButton}
                 disabled={!hasNext || loadingPage}
-                onClick={() => setOffset(page.meta.offset + page.meta.limit)}
+                onClick={() => changeLibrary({offset: String(page.meta.offset + page.meta.limit)})}
                 type="button"
               >
                 Siguiente

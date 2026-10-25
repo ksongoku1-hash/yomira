@@ -177,7 +177,9 @@ def test_manhwa_cover_uses_its_public_site_referer(tmp_path: Path) -> None:
         await http.close()
     try:
         asyncio.run(exercise())
-        assert LibraryService(database).get_series(series.series_id).cover_asset_id is not None
+        saved = LibraryService(database).get_series(series.series_id)
+        assert saved is not None
+        assert saved.cover_asset_id is not None
     finally:
         database.close()
 

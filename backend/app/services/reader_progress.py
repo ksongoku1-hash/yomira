@@ -55,10 +55,11 @@ class ReaderProgressService:
         self,
         *,
         limit: int = DEFAULT_RECENT_LIMIT,
+        per_series: bool = False,
     ) -> tuple[RecentReaderProgressRecord, ...]:
         validate_recent_limit(limit)
         with self.database.read_session() as session:
-            return self.repository.list_recent(session, limit=limit)
+            return self.repository.list_recent(session, limit=limit, per_series=per_series)
 
     def save(self, chapter_id: UUID, page_index: int) -> ReaderProgress:
         chapter = self._get_available_chapter(chapter_id)

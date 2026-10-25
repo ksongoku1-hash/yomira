@@ -6,7 +6,8 @@ describe("reader presentation preferences", () => {
   it("restores every presentation preference", () => {
     const preferences = { ...readReaderPreferences(), visibility: "manual" as const,
       immersive: true, progressBar: false, compact: false, shortcut: "c" as const,
-      zoom: 2, fit: "height" as const, continuous: true, autoChapter: true };
+      zoom: 2, fit: "height" as const, continuous: true, autoChapter: true,
+      background: "sepia" as const, brightness: 70 };
     expect(saveReaderPreferences(preferences)).toBe(true);
     expect(readReaderPreferences()).toEqual(preferences);
   });
@@ -19,5 +20,9 @@ describe("reader presentation preferences", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota"); });
     expect(readReaderPreferences().zoom).toBe(1);
     expect(saveReaderPreferences(readReaderPreferences())).toBe(false);
+  });
+  it.each([NaN, -10, 0, 49, 101, "70"])("ignores invalid brightness: %s", (brightness) => {
+    localStorage.setItem(READER_PREFERENCES_KEY, JSON.stringify({ background: "invalid", brightness }));
+    expect(readReaderPreferences()).toMatchObject({ background: "dark", brightness: 100 });
   });
 });

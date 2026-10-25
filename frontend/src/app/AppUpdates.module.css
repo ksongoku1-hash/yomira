@@ -1,0 +1,13 @@
+.panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.25rem; border: 1px solid var(--panel-border); border-radius: var(--radius-panel); background: var(--surface); }
+.panel > div { min-width: 0; }
+.panel h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+.panel p { margin: 0.35rem 0; color: var(--text-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.panel progress { display: block; width: min(100%, 24rem); margin-top: 0.75rem; accent-color: var(--accent); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.actions button, .actions a { min-height: 2.75rem; padding: 0.65rem 0.9rem; border-radius: var(--radius-control); font: inherit; }
+.actions button { border: 1px solid var(--accent); background: var(--accent); color: var(--background); font-weight: 700; cursor: pointer; }
+.actions button:disabled { opacity: 0.6; cursor: wait; }
+.actions a { color: var(--accent); }
+.actions button:focus-visible, .actions a:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.compact { margin-bottom: 1.5rem; border-color: var(--accent); }
+@media (max-width: 480px) { .actions, .actions button { width: 100%; } }

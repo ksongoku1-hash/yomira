@@ -19,12 +19,15 @@ def test_application_factory_builds_independent_fastapi_instances() -> None:
         "/api/v1/reader/series/{series_id}/chapters",
         "/api/v1/reader/progress/recent",
         "/api/v1/reader/{chapter_id}",
+        "/api/v1/reader/{chapter_id}/open",
         "/api/v1/reader/{chapter_id}/progress",
         "/api/v1/reader/{chapter_id}/session",
         "/api/v1/reader/{chapter_id}/pages/{page}",
         "/api/v1/reader/{chapter_id}/download-source",
+        "/api/v1/recommendations",
         "/api/v1/settings/reader",
         "/api/v1/connectors",
+        "/api/v1/connectors/public-sources",
         "/api/v1/connectors/{connector_id}/search",
         "/api/v1/connectors/{connector_id}/series/{remote_series_id}/cover",
         "/api/v1/connectors/{connector_id}/series/{remote_series_id}/chapters",
@@ -55,6 +58,9 @@ def test_application_factory_builds_independent_fastapi_instances() -> None:
         "/api/v1/system/readiness",
         "/api/v1/system/version",
         "/api/v1/system/diagnostics",
+        "/api/v1/system/updates",
+        "/api/v1/system/updates/check",
+        "/api/v1/system/updates/install",
     }
     assert "503" in first_app.openapi()["paths"]["/api/v1/system/readiness"]["get"]["responses"]
 

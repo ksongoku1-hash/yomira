@@ -68,6 +68,7 @@ class ChapterCbzAssetRepository:
         limit: int,
         offset: int,
         descending: bool = False,
+        query: str = "",
     ) -> tuple[tuple[ReaderChapterRecord, ...], int]:
         predicate = (
             ChapterRow.series_id == str(series_id),
@@ -81,6 +82,12 @@ class ChapterCbzAssetRepository:
                 DownloadManifestStateRow.publication_pending.is_(False),
             ),
         )
+        if query:
+            predicate += (
+                func.yomira_casefold(ChapterRow.display_label).contains(
+                    query.casefold(), autoescape=True
+                ),
+            )
         total = int(
             session.execute(
                 select(func.count())
@@ -276,11 +283,7 @@ class ChapterCbzAssetRepository:
         if row is None:
             return None
         link_row, asset_row, page_row = row
-        if (
-            page_row.size_bytes is None
-            or page_row.sha256 is None
-            or page_row.mime is None
-        ):
+        if page_row.size_bytes is None or page_row.sha256 is None or page_row.mime is None:
             return None
         return ReaderPageRecord(
             link=chapter_cbz_asset_from_row(link_row),
@@ -329,11 +332,7 @@ class ChapterCbzAssetRepository:
         ).all()
         pages: list[ReaderPageRecord] = []
         for link_row, asset_row, page_row in rows:
-            if (
-                page_row.size_bytes is None
-                or page_row.sha256 is None
-                or page_row.mime is None
-            ):
+            if page_row.size_bytes is None or page_row.sha256 is None or page_row.mime is None:
                 return ()
             pages.append(
                 ReaderPageRecord(

@@ -568,7 +568,9 @@ describe("SearchPage", () => {
     expect(screen.getByRole("button", {
       name: /Ver capítulos de Mato Seihei-no Slave en fixture.catalog/,
     })).toBeInTheDocument();
-    expect(screen.queryByText("Capítulos")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Capítulos")).toHaveLength(2);
+    expect(screen.queryByText("Capítulo 1")).not.toBeInTheDocument();
+    expect(screen.getByText("2 fuentes · Ver capítulos disponibles")).toBeInTheDocument();
     expect(screen.getByRole("button", {
       name: /Ver capítulos de Mato Seihei-no Slave en yomira.mock · prueba local/,
     })).toBeInTheDocument();

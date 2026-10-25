@@ -29,11 +29,14 @@ from app.routes.jobs import cancel_router as download_cancellation_router
 from app.routes.jobs import router as jobs_router
 from app.routes.library import router as library_router
 from app.routes.reader import router as reader_router
+from app.routes.recommendations import router as recommendations_router
 from app.routes.settings import router as settings_router
 from app.routes.system import router as system_router
+from app.routes.updates import router as updates_router
 from app.routes.usb_exports import router as usb_exports_router
 from app.runtime import RuntimeState
 from app.secrets.vault import WindowsDpapiSecretVault
+from app.services.app_updates import AppUpdater
 from app.services.cbr_builder import CbrExportFailure
 from app.services.cover_assets import CoverAssetError
 from app.services.jobs import AmbiguousLibrarySeries
@@ -349,6 +352,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=application_lifespan,
     )
     app.state.settings = resolved_settings
+    app.state.updater = AppUpdater(resolved_settings.data_root)
     runtime = RuntimeState()
     runtime.secret_vault = WindowsDpapiSecretVault(resolved_settings.data_root)
     if resolved_settings.app_env == "test" and resolved_settings.fmd2_executable is None:
@@ -399,8 +403,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     app.include_router(system_router)
+    app.include_router(updates_router)
     app.include_router(library_router)
     app.include_router(reader_router)
+    app.include_router(recommendations_router)
     app.include_router(cbr_exports_router)
     app.include_router(settings_router)
     app.include_router(connectors_router)

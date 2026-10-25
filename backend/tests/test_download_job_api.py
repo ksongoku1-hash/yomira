@@ -3,10 +3,12 @@ import hashlib
 import json
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID
 
 import pytest
@@ -16,6 +18,7 @@ from sqlalchemy import func, select
 from support.cbz import index_test_job
 from support.sqlite import sqlite_test_context
 
+from app.connectors.chapter import ConnectorChapter
 from app.connectors.mock import MockConnector
 from app.domain.download_job import DownloadJobStatus, DownloadPriority
 from app.domain.job_pause import JobPauseController, JobPauseState
@@ -49,6 +52,72 @@ def _ready_app(data_root: Path) -> tuple[FastAPI, SQLiteDatabase]:
     runtime.database = database
     runtime.download_job_service = DownloadJobService(database)
     return app, database
+
+
+def _remote_ids(chapters: Sequence[ConnectorChapter]) -> tuple[str, ...]:
+    ids: list[str] = []
+    for chapter in chapters:
+        assert chapter.remote_id is not None
+        ids.append(chapter.remote_id)
+    return tuple(ids)
+
+
+def test_download_filters_apply_before_paging_and_preserve_whole_queue_counts(
+    tmp_path: Path,
+) -> None:
+    app, database = _ready_app(tmp_path)
+    connector = MockConnector()
+    template = asyncio.run(connector.get_chapters("mock-series-1"))[0]
+    chapters = tuple(
+        replace(template, remote_id=f"filter-{index}", chapter_sort_key=(index,))
+        for index in range(58)
+    )
+    service = DownloadJobService(database)
+    try:
+        created = service.create_selected_jobs(
+            connector=connector.metadata,
+            remote_series_id="mock-series-1",
+            series_metadata=connector.normalize_metadata(
+                asyncio.run(connector.get_series("mock-series-1"))
+            ),
+            chapters=chapters,
+            selected_remote_ids=tuple(f"filter-{index}" for index in range(58)),
+        )
+        statuses = ["COMPLETED"] * 52 + ["FAILED"] * 3 + ["INTERRUPTED", "DOWNLOADING", "VERIFYING"]
+        with database.write_session() as session:
+            for item, status in zip(created, statuses, strict=True):
+                row = session.get(DownloadJobRow, str(item.job.job_id))
+                assert row is not None
+                row.status = status
+        path = "/api/v1/download-jobs?status=FAILED&limit=1"
+        first = asyncio.run(_get(app, path)).json()
+        second = asyncio.run(_get(app, path + "&offset=1")).json()
+        assert first["meta"]["total"] == 58
+        assert first["meta"]["filtered_total"] == 3
+        assert sum(first["meta"]["states"].values()) == 58
+        assert first["meta"]["states"]["COMPLETED"] == 52
+        assert first["data"][0]["status"] == second["data"][0]["status"] == "FAILED"
+        assert first["data"][0]["job_id"] != second["data"][0]["job_id"]
+        active = asyncio.run(
+            _get(app, "/api/v1/download-jobs?status=DOWNLOADING&status=VERIFYING")
+        ).json()
+        assert active["meta"]["filtered_total"] == 2
+        assert {item["status"] for item in active["data"]} == {"DOWNLOADING", "VERIFYING"}
+        assert (
+            "filtered_total" not in asyncio.run(_get(app, "/api/v1/download-jobs")).json()["meta"]
+        )
+        archived = asyncio.run(
+            _post_without_body(app, f"/api/v1/download-jobs/{first['data'][0]['job_id']}/archive")
+        )
+        assert archived.status_code == 204
+        history = asyncio.run(_get(app, "/api/v1/download-jobs?archived=true&status=FAILED")).json()
+        assert history["meta"]["total"] == history["meta"]["filtered_total"] == 1
+        assert asyncio.run(_get(app, path)).json()["meta"]["filtered_total"] == 2
+        assert asyncio.run(_get(app, "/api/v1/download-jobs?status=unknown")).status_code == 422
+        too_many = "/api/v1/download-jobs?" + "&".join(["status=FAILED"] * 13)
+        assert asyncio.run(_get(app, too_many)).status_code == 422
+    finally:
+        database.close()
 
 
 async def _post(
@@ -88,7 +157,7 @@ def test_group_pause_persists_and_other_manga_dispatches_without_recreating_jobs
             remote_series_id="mock-series-1",
             series_metadata=metadata,
             chapters=chapters,
-            selected_remote_ids=tuple(ch.remote_id for ch in chapters),
+            selected_remote_ids=_remote_ids(chapters),
         )
         second = service.create_selected_jobs(
             connector=connector.metadata,
@@ -156,7 +225,15 @@ def test_reader_descending_order_applies_before_pagination(tmp_path: Path) -> No
     try:
         connector = MockConnector()
         template = asyncio.run(connector.get_chapters("mock-series-1"))[0]
-        chapters = (template, replace(template, remote_id="chapter-2", chapter_sort_key=(2,)))
+        chapters = (
+            replace(template, display_label="Capítulo 1"),
+            replace(
+                template,
+                remote_id="chapter-2",
+                chapter_sort_key=(2,),
+                display_label="Capítulo 2 · EDICIÓN 100%_extra",
+            ),
+        )
         jobs = DownloadJobService(database).create_selected_jobs(
             connector=connector.metadata,
             remote_series_id="mock-series-1",
@@ -164,7 +241,7 @@ def test_reader_descending_order_applies_before_pagination(tmp_path: Path) -> No
                 asyncio.run(connector.get_series("mock-series-1"))
             ),
             chapters=chapters,
-            selected_remote_ids=tuple(ch.remote_id for ch in chapters),
+            selected_remote_ids=_remote_ids(chapters),
         )
         for job in jobs:
             index_test_job(database, job.job.job_id)
@@ -185,6 +262,18 @@ def test_reader_descending_order_applies_before_pagination(tmp_path: Path) -> No
         assert descending["data"][0]["chapter_id"] != ascending["data"][0]["chapter_id"]
         assert next_page["data"] == ascending["data"]
         assert asyncio.run(_get(app, path + "&order=invalid")).status_code == 422
+        for search in ("edición", "%_", "  100%_  "):
+            result = asyncio.run(_get(app, path + "&q=" + quote(search)))
+            assert result.status_code == 200
+            assert result.json()["meta"]["total"] == 1
+            assert result.json()["data"] == descending["data"]
+        assert (
+            asyncio.run(_get(app, path + "&q=CAPÍTULO&offset=1")).json()["data"]
+            == descending["data"]
+        )
+        empty = asyncio.run(_get(app, path + "&q=not-found")).json()
+        assert empty["data"] == [] and empty["meta"]["total"] == 0
+        assert asyncio.run(_get(app, path + "&q=" + "a" * 201)).status_code == 422
     finally:
         database.close()
 
@@ -222,7 +311,7 @@ def test_ambiguous_library_entry_returns_conflict_without_writing(
 def test_batch_downloads_dispatch_and_display_in_numeric_chapter_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, database = _ready_app(tmp_path)
+    _app, database = _ready_app(tmp_path)
     connector = MockConnector()
     template = asyncio.run(connector.get_chapters("mock-series-1"))[0]
     keys = ((10,), (2,), (1,), (2, 5), (2, 5, 1))
@@ -247,7 +336,7 @@ def test_batch_downloads_dispatch_and_display_in_numeric_chapter_order(
             remote_series_id="mock-series-1",
             series_metadata=metadata,
             chapters=chapters,
-            selected_remote_ids=tuple(chapter.remote_id for chapter in chapters),
+            selected_remote_ids=_remote_ids(chapters),
             now=observed_at,
         )
         expected = tuple(summaries[index].job.job_id for index in (2, 1, 3, 4, 0))
@@ -266,7 +355,7 @@ def test_batch_downloads_dispatch_and_display_in_numeric_chapter_order(
             remote_series_id="mock-series-1",
             series_metadata=metadata,
             chapters=(later,),
-            selected_remote_ids=(later.remote_id,),
+            selected_remote_ids=_remote_ids((later,)),
             now=observed_at + timedelta(seconds=1),
         )[0].job.job_id
         with database.read_session() as session:
@@ -280,7 +369,7 @@ def test_batch_downloads_dispatch_and_display_in_numeric_chapter_order(
 def test_sequential_queue_finishes_current_series_across_sources_and_batches(
     tmp_path: Path,
 ) -> None:
-    app, database = _ready_app(tmp_path)
+    _app, database = _ready_app(tmp_path)
     connector = MockConnector()
     template = asyncio.run(connector.get_chapters("mock-series-1"))[0]
     metadata = connector.normalize_metadata(asyncio.run(connector.get_series("mock-series-1")))
@@ -294,7 +383,7 @@ def test_sequential_queue_finishes_current_series_across_sources_and_batches(
             remote_series_id="series-a",
             series_metadata=metadata,
             chapters=(first_chapter,),
-            selected_remote_ids=(first_chapter.remote_id,),
+            selected_remote_ids=_remote_ids((first_chapter,)),
             now=observed_at,
         )[0]
         second = service.create_selected_jobs(
@@ -302,7 +391,7 @@ def test_sequential_queue_finishes_current_series_across_sources_and_batches(
             remote_series_id="series-b",
             series_metadata=replace(metadata, title="Another manga"),
             chapters=(template,),
-            selected_remote_ids=(template.remote_id,),
+            selected_remote_ids=_remote_ids((template,)),
             now=observed_at + timedelta(seconds=1),
         )[0]
         lower_chapters = tuple(
@@ -314,7 +403,7 @@ def test_sequential_queue_finishes_current_series_across_sources_and_batches(
             remote_series_id="series-a",
             series_metadata=metadata,
             chapters=lower_chapters,
-            selected_remote_ids=tuple(chapter.remote_id for chapter in lower_chapters),
+            selected_remote_ids=_remote_ids(lower_chapters),
             now=observed_at + timedelta(seconds=2),
         )
         expected = (lower, decimal, first, second)
@@ -326,9 +415,9 @@ def test_sequential_queue_finishes_current_series_across_sources_and_batches(
             # A priority added to another manga must not interrupt the current one.
             if index == 1:
                 with database.write_session() as session:
-                    session.get(
-                        DownloadJobRow, str(second.job.job_id)
-                    ).priority = DownloadPriority.HIGH.value
+                    row = session.get(DownloadJobRow, str(second.job.job_id))
+                    assert row is not None
+                    row.priority = DownloadPriority.HIGH.value
             with database.read_session() as session:
                 window = repository.list_queued_for_dispatch(
                     session,
@@ -341,13 +430,17 @@ def test_sequential_queue_finishes_current_series_across_sources_and_batches(
             assert candidate.job.job_id == wanted.job.job_id
             current_series = candidate.series_id
             with database.write_session() as session:
-                session.get(DownloadJobRow, str(candidate.job.job_id)).status = "DOWNLOADING"
+                row = session.get(DownloadJobRow, str(candidate.job.job_id))
+                assert row is not None
+                row.status = "DOWNLOADING"
             visible = service.list_jobs().items
             assert visible[0].job.job_id == wanted.job.job_id
             if index == 1:
                 assert visible[1].job.job_id == first.job.job_id
             with database.write_session() as session:
-                session.get(DownloadJobRow, str(candidate.job.job_id)).status = "COMPLETED"
+                row = session.get(DownloadJobRow, str(candidate.job.job_id))
+                assert row is not None
+                row.status = "COMPLETED"
         with database.read_session() as session:
             assert not repository.list_queued_for_dispatch(
                 session, limit=1, sequential=True
@@ -363,7 +456,9 @@ def test_queue_counts_all_pages_and_only_verified_assets_are_available(
     app, database = _ready_app(tmp_path)
     template = asyncio.run(MockConnector().get_chapters("mock-series-1"))[0]
 
-    async def two_chapters(self: MockConnector, remote_series_id: str) -> tuple:
+    async def two_chapters(
+        self: MockConnector, remote_series_id: str
+    ) -> tuple[ConnectorChapter, ...]:
         return template, replace(template, remote_id="mock-chapter-2", chapter_sort_key=(2,))
 
     monkeypatch.setattr(MockConnector, "get_chapters", two_chapters)
@@ -378,8 +473,12 @@ def test_queue_counts_all_pages_and_only_verified_assets_are_available(
         assert response.status_code == 200
         first, second = response.json()["data"]
         with database.write_session() as session:
-            session.get(DownloadJobRow, first["job_id"]).status = "DOWNLOADING"
-            session.get(DownloadJobRow, second["job_id"]).status = "COMPLETED"
+            first_row = session.get(DownloadJobRow, first["job_id"])
+            second_row = session.get(DownloadJobRow, second["job_id"])
+            assert first_row is not None
+            assert second_row is not None
+            first_row.status = "DOWNLOADING"
+            second_row.status = "COMPLETED"
             session.add_all(
                 [
                     DownloadPageRow(
@@ -445,6 +544,7 @@ def test_blocked_interrupted_job_retries_from_zero_preserving_its_evidence(tmp_p
         ).json()["data"][0]
         with database.write_session() as session:
             job = session.get(DownloadJobRow, original["job_id"])
+            assert job is not None
             job.status = "INTERRUPTED"
             job.interrupted_from_status = "VALIDATING"
             job.recovery_blocked = True
@@ -481,10 +581,12 @@ def test_blocked_interrupted_job_retries_from_zero_preserving_its_evidence(tmp_p
         )
         assert repeated.json()["data"]["job_id"] == new["job_id"]
         with database.read_session() as session:
-            assert session.get(DownloadJobRow, original["job_id"]).status == "INTERRUPTED"
-            assert (
-                session.get(DownloadPageRow, (original["job_id"], 1)).remote_reference == "old-page"
-            )
+            original_job = session.get(DownloadJobRow, original["job_id"])
+            original_page = session.get(DownloadPageRow, (original["job_id"], 1))
+            assert original_job is not None
+            assert original_page is not None
+            assert original_job.status == "INTERRUPTED"
+            assert original_page.remote_reference == "old-page"
             assert session.get(DownloadPageRow, (new["job_id"], 1)) is None
         assert (
             asyncio.run(
@@ -838,7 +940,9 @@ def test_explicit_retry_creates_one_new_job_and_preserves_failed_evidence(
         assert preserved_part.read_bytes() == preserved_bytes
         # A retry already queued by an older version must be promoted, not duplicated.
         with database.write_session() as session:
-            session.get(DownloadJobRow, retried_job_id).priority = "NORMAL"
+            retried_job = session.get(DownloadJobRow, retried_job_id)
+            assert retried_job is not None
+            retried_job.priority = "NORMAL"
         promoted = asyncio.run(_post_without_body(app, f"/api/v1/downloads/{job_id}/retry"))
         assert promoted.status_code == 200
         assert promoted.json()["data"]["job_id"] == retried_job_id

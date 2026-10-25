@@ -61,7 +61,17 @@ class ReaderProgressRepository:
         session: Session,
         *,
         limit: int,
+        per_series: bool = False,
     ) -> tuple[RecentReaderProgressRecord, ...]:
+        latest_per_series = (
+            "WHERE NOT EXISTS (SELECT 1 FROM reader_progress AS newer "
+            "WHERE newer.series_id = reader_progress.series_id AND "
+            "(newer.updated_at_us > reader_progress.updated_at_us OR "
+            "(newer.updated_at_us = reader_progress.updated_at_us "
+            "AND newer.chapter_id < reader_progress.chapter_id))) "
+            if per_series
+            else ""
+        )
         rows = (
             session.execute(
                 text(
@@ -73,7 +83,8 @@ class ReaderProgressRepository:
                     "JOIN series ON series.series_id = reader_progress.series_id "
                     "JOIN chapters ON chapters.series_id = reader_progress.series_id "
                     "AND chapters.chapter_id = reader_progress.chapter_id "
-                    "ORDER BY reader_progress.updated_at_us DESC, "
+                    + latest_per_series
+                    + "ORDER BY reader_progress.updated_at_us DESC, "
                     "reader_progress.series_id ASC, reader_progress.chapter_id ASC "
                     "LIMIT :limit"
                 ),
