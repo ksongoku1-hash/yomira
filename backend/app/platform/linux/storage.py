@@ -28,19 +28,20 @@ LOCAL_FILESYSTEMS = frozenset(
 )
 
 
-def mount_for(path: str, mountinfo: str) -> tuple[str, str]:
+def mount_for(path: str, mountinfo: str) -> tuple[str, str, str]:
     if not posixpath.isabs(path):
         raise ValueError("An absolute Linux path is required")
-    candidates: list[tuple[str, str]] = []
+    candidates: list[tuple[str, str, str]] = []
     for line in mountinfo.splitlines():
         before, separator, after = line.partition(" - ")
         fields = before.split()
         filesystem = after.split()
-        if not separator or len(fields) < 6 or not filesystem:
+        if not separator or len(fields) < 6 or len(filesystem) < 2:
             continue
         mount = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4])
         if path == mount or path.startswith(mount.rstrip("/") + "/"):
-            candidates.append((mount, filesystem[0]))
+            source = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), filesystem[1])
+            candidates.append((mount, filesystem[0], source))
     if not candidates:
         raise OSError("The data volume is not present in /proc/self/mountinfo")
     return max(candidates, key=lambda item: len(item[0]))
@@ -51,7 +52,7 @@ def local_mount(path: Path) -> str:
         mountinfo = stream.read(1024 * 1024 + 1)
     if len(mountinfo) > 1024 * 1024:
         raise OSError("The mount table is too large")
-    mount, filesystem = mount_for(str(path), mountinfo)
+    mount, filesystem, _source = mount_for(str(path), mountinfo)
     if filesystem not in LOCAL_FILESYSTEMS:
         raise OSError("Yomira requires a supported local filesystem, not network storage")
     return mount

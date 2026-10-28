@@ -11,7 +11,7 @@ import pytest
 from app import settings
 from app.factory import create_app
 from app.persistence.windows_paths import DataRootIdentity, DataRootIdentityError, windows_path_key
-from app.platform.linux.resources import disk_totals, memory_bytes
+from app.platform.linux.resources import btrfs_devices, disk_totals, memory_bytes
 from app.platform.linux.storage import lock_file, mount_for, move_new
 from app.settings import Settings
 from app.single_instance import InstanceAlreadyRunningError, LinuxFileGuard
@@ -23,8 +23,8 @@ def test_mount_parser_selects_longest_mount_and_decodes_spaces() -> None:
         "2 1 8:2 / /home/Manga\\040disk rw - btrfs /dev/sda2 rw\n"
         "3 1 0:40 / /home/remote rw - nfs server:/data rw\n"
     )
-    assert mount_for("/home/Manga disk/books", mounts) == ("/home/Manga disk", "btrfs")
-    assert mount_for("/home/Manga disk-two/books", mounts) == ("/", "ext4")
+    assert mount_for("/home/Manga disk/books", mounts) == ("/home/Manga disk", "btrfs", "/dev/sda2")
+    assert mount_for("/home/Manga disk-two/books", mounts) == ("/", "ext4", "/dev/sda1")
     assert mount_for("/home/remote/books", mounts)[1] == "nfs"
     with pytest.raises(ValueError):
         mount_for("relative/path", mounts)
@@ -38,6 +38,16 @@ def test_linux_memory_and_disk_counters_are_validated() -> None:
     assert disk_totals(counters, {(8, 1)}) == (50, 60, 40)
     with pytest.raises(ValueError):
         disk_totals(counters, {(8, 9)})
+
+
+def test_btrfs_counter_devices_include_every_disk(tmp_path: Path) -> None:
+    for name, value in (("disk1", "8:1"), ("disk2", "8:2")):
+        device = tmp_path / "filesystem-id/devices" / name
+        device.mkdir(parents=True)
+        (device / "dev").write_text(value + "\n", encoding="ascii")
+    assert btrfs_devices((8, 1), tmp_path) == {(8, 1), (8, 2)}
+    with pytest.raises(ValueError):
+        btrfs_devices((8, 9), tmp_path)
 
 
 def test_xdg_data_home_ignores_relative_values(

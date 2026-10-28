@@ -29,13 +29,12 @@ def package() -> Path:
                                  for name, data in sorted(files.items())).encode()
     output = ROOT / "dist-linux" / f"{NAME}.tar.gz"
     output.parent.mkdir(exist_ok=True)
-    with output.open("xb") as destination:
-        with tarfile.open(fileobj=destination, mode="w:gz") as archive:
-            for name, data in sorted(files.items()):
-                info = tarfile.TarInfo(f"{NAME}/{name}")
-                info.size = len(data)
-                info.mode = 0o755 if name.endswith(".sh") or name == "tools/uv" else 0o644
-                archive.addfile(info, io.BytesIO(data))
+    with output.open("xb") as destination, tarfile.open(fileobj=destination, mode="w:gz") as archive:
+        for name, data in sorted(files.items()):
+            info = tarfile.TarInfo(f"{NAME}/{name}")
+            info.size = len(data)
+            info.mode = 0o755 if name.endswith(".sh") or name == "tools/uv" else 0o644
+            archive.addfile(info, io.BytesIO(data))
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
     output.with_suffix(output.suffix + ".sha256").write_text(
         f"{digest}  {output.name}\n", encoding="ascii",

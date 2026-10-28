@@ -1,10 +1,12 @@
 """Read Linux memory and storage pressure without optional Python packages."""
 
 import os
+import stat
 import time
 from pathlib import Path
 
 from app.domain.job_backpressure import ResourceSample
+from app.platform.linux.storage import mount_for
 from app.platform.windows_resources import ResourceSamplingUnavailable
 
 
@@ -41,6 +43,39 @@ def disk_totals(text: str, devices: set[tuple[int, int]]) -> tuple[int, int, int
     return tuple(sum(value[index] for value in values.values()) for index in range(3))  # type: ignore[return-value]
 
 
+def btrfs_devices(device: tuple[int, int], sysfs: Path) -> set[tuple[int, int]]:
+    for directory in sysfs.glob("*/devices"):
+        devices: set[tuple[int, int]] = set()
+        for entry in directory.iterdir():
+            major, minor = (entry / "dev").read_text(encoding="ascii").strip().split(":")
+            devices.add((int(major), int(minor)))
+        if device in devices:
+            return devices
+    raise ValueError("Btrfs backing devices are unavailable")
+
+
+def disk_devices(roots: tuple[Path, ...]) -> set[tuple[int, int]]:
+    devices: set[tuple[int, int]] = set()
+    for path in roots:
+        device = path.stat().st_dev
+        if os.major(device) != 0:
+            devices.add((os.major(device), os.minor(device)))
+            continue
+        _mount, filesystem, source = mount_for(
+            str(path), Path("/proc/self/mountinfo").read_text(encoding="utf-8")
+        )
+        if filesystem != "btrfs" or not Path(source).is_absolute():
+            raise ValueError("Storage has no block-device I/O counters")
+        # Btrfs st_dev is virtual; sample every real device, including multi-device volumes.
+        info = Path(source).stat()
+        if not stat.S_ISBLK(info.st_mode):
+            raise ValueError("The Btrfs mount source is not a block device")
+        devices.update(btrfs_devices(
+            (os.major(info.st_rdev), os.minor(info.st_rdev)), Path("/sys/fs/btrfs")
+        ))
+    return devices
+
+
 class LinuxResourceSampler:
     def __init__(self, roots: tuple[Path, ...]) -> None:
         self._roots = roots
@@ -49,9 +84,7 @@ class LinuxResourceSampler:
     def sample(self) -> ResourceSample:
         try:
             available, total = memory_bytes(Path("/proc/meminfo").read_text(encoding="ascii"))
-            devices = {
-                (os.major(path.stat().st_dev), os.minor(path.stat().st_dev)) for path in self._roots
-            }
+            devices = disk_devices(self._roots)
             counters = disk_totals(Path("/proc/diskstats").read_text(encoding="ascii"), devices)
             now = time.monotonic()
             previous = self._last
