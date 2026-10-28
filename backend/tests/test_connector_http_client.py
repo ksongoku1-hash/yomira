@@ -702,3 +702,52 @@ def test_shared_per_host_limit_serializes_wrappers() -> None:
 
     asyncio.run(exercise())
     assert peak == 1
+
+
+@pytest.mark.parametrize("redirect", [False, True])
+@pytest.mark.parametrize(
+    "url,allowed",
+    [
+        ("https://oni.ntr-files.online/public/archivos/mangas/manga/cover.jpg?1707674542", True),
+        ("https://oni.ntr-files.online/public/archivos/mangas/manga/cover.jpg?170767454", False),
+        ("https://oni.ntr-files.online/public/archivos/mangas/manga/cover.jpg?17076745422", False),
+        (
+            "https://oni.ntr-files.online/public/archivos/mangas/manga/cover.jpg"
+            "?1707674542&token=secret",
+            False,
+        ),
+        (
+            "https://oni.ntr-files.online/public/archivos/mangas/manga/cover.jpg?signature=secret",
+            False,
+        ),
+        ("https://oni.ntr-files.online/private/cover.jpg?1707674542", False),
+        ("https://oni.ntr-files.online/public/archivos/mangas/manga/page.jpg?1707674542", False),
+        ("https://other.example/public/archivos/mangas/manga/cover.jpg?1707674542", False),
+    ],
+)
+def test_mangaoni_cover_timestamp_is_bounded_and_public(
+    url: str, allowed: bool, redirect: bool
+) -> None:
+    requests: list[httpx.Request] = []
+    initial = "https://oni.ntr-files.online/public/archivos/mangas/manga/cover.jpg"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if redirect and len(requests) == 1:
+            return httpx.Response(302, headers={"location": url})
+        return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=b"cover")
+
+    async def exercise() -> None:
+        session = _session(respond)
+        try:
+            client = session.scoped_client(frozenset({"https://oni.ntr-files.online", "https://other.example"}))
+            if allowed:
+                assert (await client.get_image(initial if redirect else url)).body == b"cover"
+            else:
+                with pytest.raises(SourceConnectorError):
+                    await client.get_image(initial if redirect else url)
+                assert len(requests) == int(redirect)
+        finally:
+            await session.close()
+
+    asyncio.run(exercise())

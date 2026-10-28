@@ -291,7 +291,12 @@ class LocalImportService:
         if self._folder_problem(path):
             raise OSError("library folder unavailable")
         if os.name != "nt":
-            raise NotImplementedError("folder opening requires Windows")
+            import subprocess
+
+            subprocess.Popen(
+                ["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            return
         os.startfile(str(path), "explore")
 
     def status(self) -> dict[str, object]:

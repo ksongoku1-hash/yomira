@@ -1,4 +1,5 @@
 const paths = {
+  bookmark: "M6 3h12v18l-6-4-6 4V3Z",
   sidebar: "M3 3h18v18H3V3Zm6 0v18m6-13-3 4 3 4",
   pause: "M8 5v14m8-14v14",
   check: "m5 12 4 4L19 6",

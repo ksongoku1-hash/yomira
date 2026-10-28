@@ -7,6 +7,8 @@ import { LocalImportPanel } from "../library/LibraryPage";
 import { useAppearanceStore } from "../app/appearanceStore";
 import { AppUpdates } from "../app/AppUpdates";
 import styles from "./SettingsPage.module.css";
+import { isMobileConnection, MobileAccessPanel } from "./MobileAccessPanel";
+import { ReaderCachePanel } from "./ReaderCachePanel";
 
 const READER_SETTINGS_QUERY_KEY = ["reader-settings"] as const;
 
@@ -111,23 +113,35 @@ export function SettingsPage() {
           <p className={styles.eyebrow}>Preferencias locales</p>
           <h1 id="settings-title">Ajustes</h1>
           <p className={styles.intro}>
-            Revisa las carpetas de tus mangas y ajusta el lector.
+            {isMobileConnection ? "Personaliza la apariencia y ajusta el lector." : "Revisa las carpetas de tus mangas y ajusta el lector."}
           </p>
         </div>
       </header>
 
-      <LocalImportPanel />
-      <AppUpdates />
+      <MobileAccessPanel />
+      {!isMobileConnection ? <LocalImportPanel /> : null}
+      {!isMobileConnection ? <AppUpdates /> : null}
+      <ReaderCachePanel />
 
       <section aria-labelledby="appearance-title" className={styles.appearanceCard}>
         <h2 id="appearance-title">Apariencia</h2>
+        <label className={styles.fieldLabel} htmlFor="interface-theme">Tema de la interfaz</label>
+        <select className={styles.selectInput} id="interface-theme" value={appearance.theme}
+          aria-describedby="interface-theme-description"
+          onChange={(event) => appearance.update({ theme: event.currentTarget.value === "papel" ? "papel" : "tinta" })}>
+          <option value="tinta">Tinta · oscuro</option>
+          <option value="papel">Papel · claro</option>
+        </select>
+        <p className={styles.fieldDescription} id="interface-theme-description">
+          Se aplica al instante. El lector conserva el fondo y el brillo que elegiste para leer.
+        </p>
         <label className={styles.toggleLabel}>
           <input type="checkbox" checked={appearance.enabled}
             onChange={(event) => appearance.update({ enabled: event.currentTarget.checked })} />
           Fondos ilustrados
         </label>
         <p className={styles.fieldDescription} id="backdrop-description">
-          Usa las portadas locales en Inicio y en la ficha de cada manga. El lector mantiene su fondo habitual.
+          Usa la ilustración decorativa y las portadas locales en Inicio y en la ficha de cada manga. El lector mantiene su fondo habitual.
         </p>
         <label className={styles.fieldLabel} htmlFor="backdrop-intensity">
           Intensidad del fondo: {appearance.intensity}%

@@ -47,6 +47,10 @@ def _kernel32() -> Any:
 
 def _get_volume_path_name(path: Path) -> str:
     """Return the Win32 mount path containing ``path``."""
+    if os.name != "nt":
+        from app.platform.linux.storage import local_mount
+
+        return local_mount(path)
     kernel32 = _kernel32()
     function = kernel32.GetVolumePathNameW  # type: ignore[attr-defined]
     function.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
@@ -62,6 +66,11 @@ def _get_volume_path_name(path: Path) -> str:
 
 def _get_drive_type(volume_root: str) -> int:
     """Return the Win32 drive type for a volume mount path."""
+    if os.name != "nt":
+        from app.platform.linux.storage import local_mount
+
+        local_mount(Path(volume_root))
+        return _DRIVE_FIXED
     kernel32 = _kernel32()
     function = kernel32.GetDriveTypeW  # type: ignore[attr-defined]
     function.argtypes = (ctypes.c_wchar_p,)
@@ -71,6 +80,10 @@ def _get_drive_type(volume_root: str) -> int:
 
 def _get_file_id_info(path: Path) -> tuple[int, bytes]:
     """Read the volume serial and 128-bit file ID for a directory handle."""
+    if os.name != "nt":
+        from app.platform.linux.storage import file_identity
+
+        return file_identity(path)
     kernel32 = _kernel32()
     create_file = kernel32.CreateFileW  # type: ignore[attr-defined]
     create_file.argtypes = (
@@ -141,12 +154,16 @@ def _validate_file_id_info(value: object) -> tuple[int, bytes]:
 
 def windows_path_key(path: Path | str) -> str:
     """Normalize a Windows path lexically without consulting the filesystem."""
+    if os.name != "nt":
+        return os.path.normpath(os.fspath(path))
     value = os.fspath(path).replace("/", "\\")
     normalized = ntpath.normpath(value)
     return normalized.casefold()
 
 
 def is_absolute_windows_path(path: Path | str) -> bool:
+    if os.name != "nt":
+        return os.path.isabs(path)
     value = os.fspath(path).replace("/", "\\")
     drive, tail = ntpath.splitdrive(value)
     return bool(drive and tail.startswith("\\")) or value.startswith("\\\\")
@@ -230,9 +247,7 @@ class DataRootIdentity:
             canonical_path = Path(path).resolve()
             if not canonical_path.is_absolute() or not canonical_path.is_dir():
                 raise DataRootIdentityError("The data root must resolve to an existing directory.")
-            volume_root, volume_serial, file_id = _capture_physical_identity(
-                canonical_path
-            )
+            volume_root, volume_serial, file_id = _capture_physical_identity(canonical_path)
         except DataRootIdentityError:
             raise
         except Exception as error:
@@ -256,15 +271,12 @@ class DataRootIdentity:
                 resolved_path = self.canonical_path.resolve()
                 if (
                     not resolved_path.is_absolute()
-                    or windows_path_key(resolved_path)
-                    != windows_path_key(self.canonical_path)
+                    or windows_path_key(resolved_path) != windows_path_key(self.canonical_path)
                     or not resolved_path.is_dir()
                 ):
                     raise DataRootIdentityError("The canonical data-root path has changed.")
                 _require_supported_volume_root(self._volume_root)
-                current_identity = _validate_file_id_info(
-                    _get_file_id_info(resolved_path)
-                )
+                current_identity = _validate_file_id_info(_get_file_id_info(resolved_path))
                 if current_identity != (self._volume_serial, self._file_id):
                     raise DataRootIdentityError("The physical data-root identity has changed.")
             except Exception as error:

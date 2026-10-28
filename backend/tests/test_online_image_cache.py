@@ -10,6 +10,7 @@ import pytest
 from support.sqlite import open_test_database
 from test_online_reader import _memory_harness  # pyright: ignore[reportPrivateUsage]
 
+import app.services.online_image_cache as cache_module
 from app.connectors.pages import PageFetchRequest
 from app.persistence.disk_budget import DiskBudgetManager, DiskBudgetUnavailableError
 from app.persistence.migrations.runner import MigrationRunner
@@ -19,6 +20,34 @@ from app.services.online_image_cache import OnlineImageCache
 from app.services.online_reader import OnlineReaderSessionService
 
 KEY = hashlib.sha256(b"chapter-source").hexdigest()
+
+
+def test_recent_disk_hits_do_not_reserve_space_or_write_access_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = open_test_database(tmp_path)
+    MigrationRunner(database, tmp_path / "backups").upgrade_to_head()
+    budget = DiskBudgetManager(database)
+    now = [1.0]
+    cache = OnlineImageCache(database, budget, clock=lambda: now[0])
+    try:
+        cache.put(KEY, 1, 1, b"cached", "image/png")
+        reservations: list[int] = []
+        original = budget.reserve_bounded_operation
+
+        def reserve(reservation_id: UUID, *, page_bytes: int, cbz_bytes: int = 0) -> None:
+            reservations.append(page_bytes)
+            original(reservation_id, page_bytes=page_bytes, cbz_bytes=cbz_bytes)
+
+        monkeypatch.setattr(budget, "reserve_bounded_operation", reserve)
+        now[0] += 10
+        assert cache.get(KEY, 1, 1) == (b"cached", "image/png")
+        assert reservations == []
+        now[0] += 60
+        assert cache.get(KEY, 1, 1) == (b"cached", "image/png")
+        assert reservations == [65536]
+    finally:
+        database.close()
 
 
 def test_disk_cache_is_bounded_persistent_expires_and_can_be_refreshed(tmp_path: Path) -> None:
@@ -31,7 +60,7 @@ def test_disk_cache_is_bounded_persistent_expires_and_can_be_refreshed(tmp_path:
         cache.put(KEY, 1, 4, b"111", "image/png")
         now[0] += 1
         cache.put(KEY, 2, 4, b"222", "image/png")
-        now[0] += 1
+        now[0] += 61
         assert cache.get(KEY, 1, 4) == (b"111", "image/png")
         now[0] += 1
         cache.put(KEY, 3, 4, b"333", "image/png")
@@ -191,6 +220,105 @@ def test_hardlinked_cache_is_not_read_or_modified(tmp_path: Path) -> None:
         cache.put(KEY, 1, 1, b"new", "image/png")
         with pytest.raises(OSError):
             cache.invalidate(KEY)
+        assert path.read_bytes() == before
+    finally:
+        database.close()
+
+
+def test_status_does_not_create_an_empty_cache_and_limit_changes_are_bounded(
+    tmp_path: Path,
+) -> None:
+    database = open_test_database(tmp_path)
+    MigrationRunner(database, tmp_path / "backups").upgrade_to_head()
+    cache = OnlineImageCache(database, DiskBudgetManager(database))
+    try:
+        state = cache.status()
+        assert state.used_bytes == state.entries == state.file_bytes == 0
+        assert not (tmp_path / "cache").exists()
+        with cache.changing_limit(2 * 1024**3):
+            pass
+        assert cache.status().max_bytes == 2 * 1024**3
+        for invalid in (0, -1, True, 8 * 1024**3 + 1):
+            with pytest.raises(ValueError):
+                with cache.changing_limit(invalid):
+                    pass
+        assert not (tmp_path / "cache").exists()
+    finally:
+        database.close()
+
+
+def test_reducing_payload_budget_preserves_physical_cache_and_persistence_failure_rolls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = open_test_database(tmp_path)
+    MigrationRunner(database, tmp_path / "backups").upgrade_to_head()
+    cache = OnlineImageCache(database, DiskBudgetManager(database), max_bytes=6)
+    try:
+        cache.put(KEY, 1, 2, b"111", "image/png")
+        cache.put(KEY, 2, 2, b"222", "image/png")
+        # Scale the overhead down to exercise physical-file-vs-payload limits inexpensively.
+        monkeypatch.setattr(cache_module, "_SQLITE_OVERHEAD_BYTES", 4096)
+        before = cache.status()
+        assert before.file_bytes > 3 + 4096
+        with cache.changing_limit(3):
+            assert cache.status().used_bytes == 3
+        assert cache.status().max_bytes == 3
+        assert cache.get(KEY, 2, 2) == (b"222", "image/png")
+        assert cache.status().file_bytes > 3 + 4096
+        with pytest.raises(RuntimeError, match="commit failed"):
+            with cache.changing_limit(20):
+                raise RuntimeError("commit failed")
+        assert cache.status().max_bytes == 3
+    finally:
+        database.close()
+
+
+def test_eviction_reserves_bounded_journal_and_leaves_limit_unchanged_on_budget_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = open_test_database(tmp_path)
+    MigrationRunner(database, tmp_path / "backups").upgrade_to_head()
+    budget = DiskBudgetManager(database)
+    cache = OnlineImageCache(database, budget, max_bytes=6)
+    try:
+        cache.put(KEY, 1, 2, b"111", "image/png")
+        cache.put(KEY, 2, 2, b"222", "image/png")
+        reservations: list[int] = []
+
+        def unavailable(_reservation_id: UUID, *, page_bytes: int, cbz_bytes: int = 0) -> None:
+            reservations.append(page_bytes + cbz_bytes)
+            raise DiskBudgetUnavailableError("INSUFFICIENT_SPACE", free_bytes=0, required_bytes=1)
+
+        monkeypatch.setattr(budget, "reserve_bounded_operation", unavailable)
+        with pytest.raises(DiskBudgetUnavailableError):
+            with cache.changing_limit(3):
+                pass
+        assert reservations == [3 * 64 * 1024 * 1024 + 65536]
+        assert cache.status().max_bytes == 6
+        assert cache.status().used_bytes == 6
+    finally:
+        database.close()
+
+
+@pytest.mark.parametrize("foreign", [True, False])
+def test_limit_change_never_rewrites_foreign_or_malformed_cache(
+    tmp_path: Path, foreign: bool
+) -> None:
+    database = open_test_database(tmp_path)
+    MigrationRunner(database, tmp_path / "backups").upgrade_to_head()
+    cache = OnlineImageCache(database, DiskBudgetManager(database))
+    path = tmp_path / "cache/online-images/images.sqlite3"
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(path) as connection:
+        if not foreign:
+            connection.execute("PRAGMA application_id=1498368323")
+        connection.execute("CREATE TABLE personal(value TEXT)")
+        connection.execute("INSERT INTO personal VALUES ('keep')")
+    before = path.read_bytes()
+    try:
+        with pytest.raises(sqlite3.DatabaseError):
+            with cache.changing_limit(128 * 1024**2):
+                pass
         assert path.read_bytes() == before
     finally:
         database.close()

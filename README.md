@@ -4,6 +4,10 @@ Yomira es una aplicación local para Windows que organiza, descarga y permite le
 
 La versión 0.1.16 reúne el nuevo inicio y las opciones del lector, la reapertura online con progreso guardado, las recomendaciones públicas y 21 fuentes integradas. Incluye actualización de la aplicación desde GitHub Releases y refresco automático de los catálogos de Inventario Oculto y Ragnarok. Consulta las [notas de esta versión](docs/releases/0.1.16.md) para conocer las mejoras y sus límites.
 
+## Linux: Arch / SteamOS (versión de prueba)
+
+Se ha preparado un port nativo experimental para Linux x86_64, orientado al modo Escritorio de Steam Deck. Consulta [la guía Linux](README-LINUX.md) para instalarlo en la carpeta del usuario y conocer las funciones incluidas y los límites. La validación en un Linux real sigue pendiente; todavía no tiene paridad con el motor FMD ni con MTP de Windows.
+
 ## Descargar Yomira 0.1.16
 
 **Para usar Yomira en Windows 10/11 de 64 bits:**

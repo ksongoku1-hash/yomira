@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
@@ -9,8 +9,13 @@ import { queryPollingInterval } from "./app/queryPolling";
 import { AppUpdates } from "./app/AppUpdates";
 import { ActionIcon } from "./app/ActionIcon";
 import { AppSearch } from "./app/AppSearch";
+import { AppQuickAccess } from "./app/AppQuickAccess";
+import { getSystemReadiness } from "./api/client";
 
 import { HomePage } from "./home/HomePage";
+import { useInterfaceMotion } from "./app/useInterfaceMotion";
+
+import { isMobileConnection, MobileSessionGuard } from "./settings/MobileAccessPanel";
 
 import "./global.css";
 
@@ -79,12 +84,27 @@ const navigationSections = [
 function AppShell() {
   const pathname = useLocation().pathname;
   const reading = pathname.startsWith("/reader/");
-  const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 1100);
+  const readiness = useQuery({ queryKey: ["system", "readiness"], queryFn: getSystemReadiness, enabled: !reading });
+  const ready = readiness.isSuccess && readiness.data.status === "ready";
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("yomira.sidebar") !== "expanded"; } catch { return true; } });
+  const toggleSidebar = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try { localStorage.setItem("yomira.sidebar", next ? "collapsed" : "expanded"); }
+    catch { /* El menú sigue funcionando sin almacenamiento. */ }
+  };
+  const [commandsOpen, setCommandsOpen] = useState(false);
+  const backgroundEnabled = useAppearanceStore((state) => state.enabled);
+  const backgroundIntensity = useAppearanceStore((state) => state.intensity);
   const simpleGraphics = useAppearanceStore((state) => state.simpleGraphics);
+  const theme = useAppearanceStore((state) => state.theme);
   const isNavigationOpen = useShellStore((state) => state.isNavigationOpen);
   const toggleNavigation = useShellStore((state) => state.toggleNavigation);
   const closeNavigation = useShellStore((state) => state.closeNavigation);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const moreNavigationRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  useInterfaceMotion(mainRef, pathname, !reading && !simpleGraphics);
   useEffect(() => {
     if (!isNavigationOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -94,15 +114,27 @@ function AppShell() {
       }
     };
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    const closeOnOutsideTap = (event: PointerEvent) => {
+      if (event.target instanceof Node && !moreNavigationRef.current?.contains(event.target)
+        && !menuButtonRef.current?.contains(event.target)) closeNavigation();
+    };
+    document.addEventListener("pointerdown", closeOnOutsideTap);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("pointerdown", closeOnOutsideTap);
+    };
   }, [isNavigationOpen, closeNavigation]);
 
   return (
-    <div className={`${styles.appShell} ${reading ? styles.readerShell : ""} ${collapsed ? styles.collapsed : ""} ${simpleGraphics ? styles.simpleGraphics : ""}`}>
+    <div className={`${styles.appShell} ${reading ? styles.readerShell : ""} ${collapsed ? styles.collapsed : ""} ${simpleGraphics ? styles.simpleGraphics : ""}`} data-simple-graphics={simpleGraphics} data-theme={theme}
+      data-illustrated-background={backgroundEnabled} style={{ "--ambient-art-opacity": backgroundIntensity / 100 * 0.18 } as React.CSSProperties}>
+      <MobileSessionGuard />
+      {!reading && backgroundEnabled && !simpleGraphics ? <div className={styles.ambientMotion} aria-hidden="true" /> : null}
+      {!reading && backgroundEnabled && !simpleGraphics && theme === "tinta" ? <div className={styles.decorativeArt} aria-hidden="true" /> : null}
       <a className={styles.skipLink} href="#main-content">Saltar al contenido</a>
       <header className={styles.topBar} hidden={reading}>
-        <NavLink className={[styles.brand].filter(Boolean).join(" ")} to="/" onClick={closeNavigation}>
-          <img alt="" className={styles.brandMark} src="/assets/brand/yomira-ice-mark.svg" width="44" height="44" />
+        <NavLink aria-label="Yomira · Inicio" className={[styles.brand].filter(Boolean).join(" ")} to="/" onClick={closeNavigation}>
+          <img alt="" className={styles.brandMark} src="/assets/brand/yomira-glacial.svg" width="44" height="44" />
           <span className={styles.brandCopy}>
             <strong>Yomira</strong>
             <small>Tu mundo entre páginas</small>
@@ -113,10 +145,10 @@ function AppShell() {
           className={styles.navigation}
           id="primary-navigation"
         >
-          {[...navigationSections.slice(0, 2), {label: "Preferencias", items: [navigationSections[2].items[0]]}].map((section) => (
+          {navigationSections.map((section) => (
             <div className={styles.navigationSection} key={section.label}>
               <h2>{section.label}</h2>
-              {section.items.filter(({ path }) => path !== "/usb-exports").map(({ icon, label, path }) => (
+              {section.items.filter((item) => !isMobileConnection || item.path !== "/usb-exports").map(({ icon, label, path }) => (
                 <NavLink
                   className={({ isActive }) =>
                     [styles.navigationLink, isActive ? styles.navigationLinkActive : ""]
@@ -131,19 +163,24 @@ function AppShell() {
                   to={path}
                 >
                   <span className={styles.navigationIcon}><ActionIcon name={icon} /></span>
-                  <span className={styles.navigationLabel}>{path === "/downloads" ? "Descargas" : label}</span>
+                  <span className={styles.navigationLabel}>{path === "/downloads" ? "Descargas" : path === "/settings" ? "Ajustes" : label}</span>
                 </NavLink>
               ))}
             </div>
           ))}
         </nav>
-        <div className={styles.localStatus} title="Biblioteca local">
+        {!reading ? <AppQuickAccess open={commandsOpen} onOpen={() => setCommandsOpen(true)} onClose={() => setCommandsOpen(false)}
+          destinations={navigationSections.flatMap<{ label: string; path: string }>((section) => section.items.filter((item) => !isMobileConnection || item.path !== "/usb-exports"))} /> : null}
+        <div className={styles.localStatus} title={ready ? "Biblioteca local · Servicio local listo." : "Biblioteca local"}>
           <span aria-hidden="true" className={styles.localDot} />
-          <span className={styles.navigationLabel}>Biblioteca local</span>
+          <div className={styles.localStatusCopy}>
+            <span className={styles.navigationLabel}>Biblioteca local</span>
+            {ready ? <p className={styles.serviceReady}>Servicio local listo.</p> : null}
+          </div>
         </div>
         <button className={styles.collapseButton} type="button" aria-controls="primary-navigation" aria-expanded={!collapsed}
           aria-label={collapsed ? "Expandir menú" : "Contraer menú"} title={collapsed ? "Expandir menú" : "Contraer menú"}
-          onClick={() => setCollapsed(!collapsed)}><ActionIcon name="sidebar" /><span className={styles.navigationLabel}>{collapsed ? "Expandir menú" : "Contraer menú"}</span></button>
+          onClick={toggleSidebar}><ActionIcon name="sidebar" /><span className={styles.navigationLabel}>{collapsed ? "Expandir menú" : "Contraer menú"}</span></button>
           <button
             aria-controls="more-navigation"
             aria-expanded={isNavigationOpen}
@@ -158,11 +195,12 @@ function AppShell() {
             <span className={styles.menuLabel}>Más</span>
           </button>
           <nav aria-label="Más opciones" className={styles.moreNavigation} hidden={!isNavigationOpen}
-            id="more-navigation">
+            id="more-navigation" ref={moreNavigationRef}>
+            <button className={styles.navigationLink} type="button" onClick={() => { closeNavigation(); setCommandsOpen(true); }}><ActionIcon name="keyboard" />Comandos</button>
             {[
               navigationSections[1].items[1],
               navigationSections[2].items[1],
-            ].map(({ label, path, icon }) => (
+            ].filter((item) => !isMobileConnection || item.path !== "/usb-exports").map(({ label, path, icon }) => (
               <NavLink className={({ isActive }) => [styles.navigationLink, isActive ? styles.navigationLinkActive : ""].filter(Boolean).join(" ")}
                 key={path} onClick={closeNavigation} to={path}>
                 <ActionIcon name={icon} />{label}
@@ -171,9 +209,9 @@ function AppShell() {
           </nav>
       </header>
       <div className={styles.appMain}>
-        <main className={styles.mainContent} id="main-content" tabIndex={-1}>
-          {!reading ? <AppSearch /> : null}
-          <AppUpdates compact hidden={reading || pathname === "/settings"} />
+        <main ref={mainRef} className={styles.mainContent} id="main-content" tabIndex={-1}>
+          {!reading ? <AppSearch ready={ready} /> : null}
+          {!isMobileConnection ? <AppUpdates compact hidden={reading || pathname === "/settings"} /> : null}
           <Suspense fallback={<p role="status">Abriendo pantalla…</p>}><Outlet /></Suspense>
         </main>
       </div>

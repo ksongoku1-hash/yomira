@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -172,6 +172,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   window.history.replaceState({}, "", "/");
+  localStorage.removeItem("yomira.sidebar");
   useShellStore.setState({ isNavigationOpen: false });
 });
 
@@ -181,6 +182,33 @@ afterEach(() => {
 });
 
 describe("App", () => {
+  it("remembers both sidebar positions after reopening the interface", () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => mockResponse({status: "not_ready"}, 503)));
+    localStorage.setItem("yomira.sidebar", "expanded");
+    const first = render(<App />);
+    fireEvent.click(screen.getByRole("button", {name: "Contraer menú"}));
+    expect(localStorage.getItem("yomira.sidebar")).toBe("collapsed");
+    first.unmount();
+    const second = render(<App />);
+    fireEvent.click(screen.getByRole("button", {name: "Expandir menú"}));
+    expect(localStorage.getItem("yomira.sidebar")).toBe("expanded");
+    second.unmount();
+    render(<App />);
+    expect(screen.getByRole("button", {name: "Contraer menú"})).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it.each(["invalid preference", "blocked storage"])("keeps the sidebar usable with %s", (kind) => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => mockResponse({status: "not_ready"}, 503)));
+    if (kind === "invalid preference") localStorage.setItem("yomira.sidebar", "unexpected");
+    else {
+      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new DOMException("Blocked", "SecurityError"); });
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Blocked", "SecurityError"); });
+    }
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", {name: "Expandir menú"}));
+    expect(screen.getByRole("button", {name: "Contraer menú"})).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("shows the latest point per manga and sends a finished chapter to its chapter list", async () => {
     const finishedSeries = syntheticSeriesId(31);
     const ongoingSeries = syntheticSeriesId(32);
@@ -198,7 +226,7 @@ describe("App", () => {
       return Promise.resolve(recentLibraryResponse([]));
     }));
     render(<App />);
-    expect(await screen.findByRole("heading", {level: 1, name: "Frieren"})).toBeInTheDocument();
+    expect(await screen.findByRole("heading", {level: 2, name: "Frieren"})).toBeInTheDocument();
     expect(screen.getByRole("link", {name: "Continuar lectura: Capítulo 2"})).toHaveAttribute("href", `/reader/${ongoingChapter}`);
     expect(screen.getByRole("link", {name: "Ver capítulos de Berserk"})).toHaveAttribute("href", `/series/${finishedSeries}`);
     expect(screen.queryByRole("link", {name: "Leer Capítulo 8 de Berserk"})).not.toBeInTheDocument();
@@ -249,7 +277,7 @@ describe("App", () => {
     expect(new URLSearchParams(window.location.search).get("q")).toBe(query);
     expect(window.location.search).toContain("%26");
   });
-  it("keeps five main destinations, collapses the menu and offers global search from the library", async () => {
+  it("keeps all desktop destinations, collapses the menu and offers global search from the library", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/api/v1/system/readiness") return Promise.resolve(mockResponse({status: "ready"}));
@@ -261,8 +289,12 @@ describe("App", () => {
     }));
     render(<App />);
     const nav = screen.getByRole("navigation", {name: "Navegación principal"});
-    expect(nav.querySelectorAll("a")).toHaveLength(5);
+    expect([...nav.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
+      "/", "/search", "/library", "/downloads", "/usb-exports", "/settings", "/diagnostics",
+    ]);
     const toggle = screen.getByRole("button", {name: /^(Expandir|Contraer) menú$/});
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("link", {name: "Yomira · Inicio"})).toHaveAttribute("href", "/");
     const expanded = toggle.getAttribute("aria-expanded");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", expanded === "true" ? "false" : "true");
@@ -566,7 +598,7 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Abrir navegación" }));
-    fireEvent.click(screen.getByRole("link", { name: "Diagnóstico" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Más opciones" })).getByRole("link", { name: "Diagnóstico" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "Diagnóstico" }))
       .toBeInTheDocument();
@@ -610,7 +642,7 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Abrir navegación" }));
-    fireEvent.click(screen.getByRole("link", { name: "Diagnóstico" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Más opciones" })).getByRole("link", { name: "Diagnóstico" }));
 
     expect(await screen.findByText("Cargando comprobaciones del sistema…"))
       .toBeInTheDocument();
@@ -663,7 +695,7 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Abrir navegación" }));
-    fireEvent.click(screen.getByRole("link", { name: "Diagnóstico" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Más opciones" })).getByRole("link", { name: "Diagnóstico" }));
 
     const error = await screen.findByRole("alert", { name: "Error de diagnóstico" });
     expect(error).toHaveTextContent("SYS_DIAGNOSTICS_UNAVAILABLE");
@@ -698,7 +730,7 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Abrir navegación" }));
-    fireEvent.click(screen.getByRole("link", { name: "Diagnóstico" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Más opciones" })).getByRole("link", { name: "Diagnóstico" }));
 
     expect(await screen.findByRole("heading", { level: 2, name: "Modo de recuperación" }))
       .toBeInTheDocument();
@@ -780,13 +812,17 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Berserk" }))
+    expect(await screen.findByRole("heading", { level: 2, name: "Berserk" }))
       .toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "Continuar lectura: Capítulo 8" })).toHaveAttribute(
       "href", `/reader/${syntheticSeriesId(11)}`,
     );
     expect(await screen.findByText("Servicio local listo.")).toBeInTheDocument();
     expect(screen.getByRole("search", { name: "Buscar historias" })).toContainElement(screen.getByLabelText("Buscar una historia"));
+    expect(screen.getByRole("navigation", { name: "Navegación principal" }).closest("header"))
+      .toContainElement(screen.getByText("Servicio local listo."));
+    expect(screen.getByText("Servicio local listo.").parentElement).toContainElement(screen.getByText("Biblioteca local"));
+    expect(screen.getByRole("search", { name: "Buscar historias" })).not.toContainElement(screen.getByText("Servicio local listo."));
     expect(screen.getByRole("heading", { level: 2, name: "Mi biblioteca" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Continuar leyendo" }))
       .toBeInTheDocument();
@@ -802,8 +838,23 @@ describe("App", () => {
       "href",
       `/series/${syntheticSeriesId(1)}`,
     );
+    const poster = screen.getByRole("link", { name: "Abrir ficha destacada de Berserk" });
+    vi.spyOn(poster, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 200, 300));
+    vi.stubGlobal("PointerEvent", class extends MouseEvent {
+      pointerType: string;
+      constructor(type: string, init: PointerEventInit) { super(type, init); this.pointerType = init.pointerType ?? ""; }
+    });
+    fireEvent.pointerMove(poster, { pointerType: "touch", clientX: 200, clientY: 0 });
+    expect(poster.style.getPropertyValue("--tilt-x")).toBe("");
+    fireEvent.pointerMove(poster, { pointerType: "mouse", clientX: 200, clientY: 0 });
+    expect(poster.style.getPropertyValue("--tilt-x")).toBe("8deg");
+    expect(poster.style.getPropertyValue("--tilt-y")).toBe("8deg");
+    fireEvent.pointerLeave(poster);
+    expect(poster.style.getPropertyValue("--tilt-x")).toBe("");
+    expect(poster.style.getPropertyValue("--tilt-y")).toBe("");
     expect(screen.getByText("Capítulo 8 · Página 5 · 50.00 %")).toBeInTheDocument();
-    expect(screen.getByRole("progressbar", {name: "Progreso de Capítulo 8"})).toHaveAttribute("aria-valuenow", "50");
+    expect(screen.getByRole("progressbar", {name: "Progreso de Capítulo 8"})).toHaveAttribute("value", "50");
+    expect(screen.getByRole("progressbar", {name: "Progreso de Capítulo 8"})).toHaveAttribute("max", "100");
     expect(screen.getByRole("progressbar", { name: "Progreso de Capítulo 8 de Berserk" })).toHaveAttribute("value", "50");
     fireEvent.click(screen.getByRole("button", {name: "Terminados"}));
     expect(screen.getByText("No hay capítulos terminados entre tus lecturas recientes.")).toBeInTheDocument();
@@ -1016,12 +1067,11 @@ describe("App", () => {
   it("renders the dark app shell and all primary destinations", () => {
     render(<App />);
 
-    expect(screen.getByRole("heading", { level: 1, name: "Tu próxima historia empieza aquí." }))
+    expect(screen.getByRole("heading", { level: 1, name: "Descubre tu próxima historia" }))
       .toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Navegación principal" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Abrir navegación" }));
-    for (const label of ["Biblioteca", "Explorar", "Cola de descargas", "Configuración", "Diagnóstico"]) {
-      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+    const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
+    for (const label of ["Inicio", "Biblioteca", "Explorar", "Cola de descargas", "Exportar USB", "Configuración", "Diagnóstico"]) {
+      expect(within(navigation).getByRole("link", { name: label })).toBeInTheDocument();
     }
   });
 
@@ -1812,14 +1862,34 @@ describe("App", () => {
       "aria-expanded",
       "true",
     );
+    const moreNavigation = screen.getByRole("navigation", { name: "Más opciones" });
+    expect(within(moreNavigation).getByRole("link", { name: "Exportar USB" })).toHaveAttribute("href", "/usb-exports");
+    expect(within(moreNavigation).getByRole("link", { name: "Diagnóstico" })).toHaveAttribute("href", "/diagnostics");
 
     fireEvent.click(screen.getByRole("link", { name: "Explorar" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "Buscar" })).toBeInTheDocument();
     expect(useShellStore.getState().isNavigationOpen).toBe(false);
+    expect(moreNavigation).toHaveAttribute("hidden");
     fireEvent.click(menuButton);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(menuButton).toHaveAttribute("aria-expanded", "false");
     expect(menuButton).toHaveFocus();
+  });
+
+  it("closes the mobile menu on an outside tap while keeping taps inside available", () => {
+    render(<App />);
+    const menuButton = screen.getByRole("button", { name: "Abrir navegación" });
+    fireEvent.click(menuButton);
+    const menu = screen.getByRole("navigation", { name: "Más opciones" });
+    fireEvent.pointerDown(menu);
+    expect(menuButton).toHaveAttribute("aria-expanded", "true");
+    fireEvent.pointerDown(menuButton);
+    expect(menuButton).toHaveAttribute("aria-expanded", "true");
+    fireEvent.pointerDown(screen.getByRole("main"));
+    expect(menuButton).toHaveAttribute("aria-expanded", "false");
+    expect(menu).toHaveAttribute("hidden");
+    expect(within(screen.getByRole("navigation", { name: "Navegación principal" }))
+      .getByRole("link", { name: "Configuración" })).toHaveTextContent("Ajustes");
   });
 });

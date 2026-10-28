@@ -1,6 +1,7 @@
 import ctypes
 import os
 from ctypes import wintypes
+from pathlib import Path
 from time import sleep
 
 INSTANCE_MUTEX_NAME = r"Local\Yomira.V1.Backend"
@@ -65,5 +66,27 @@ class WindowsMutexGuard:
             raise OSError(error_code, "CloseHandle failed.")
 
 
+class LinuxFileGuard(WindowsMutexGuard):
+    def acquire(self) -> None:
+        if self._handle is not None:
+            return
+        from app.platform.linux.storage import lock_file
+
+        runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+        parent = (
+            Path(runtime) if runtime and Path(runtime).is_absolute() else Path.home() / ".cache"
+        )
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            self._handle = lock_file(parent / "yomira" / "instance.lock", timeout=0)
+        except TimeoutError:
+            raise InstanceAlreadyRunningError() from None
+
+    def release(self) -> None:
+        if self._handle is not None:
+            os.close(self._handle)
+            self._handle = None
+
+
 def create_instance_guard() -> WindowsMutexGuard:
-    return WindowsMutexGuard()
+    return WindowsMutexGuard() if os.name == "nt" else LinuxFileGuard()

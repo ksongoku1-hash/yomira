@@ -27,6 +27,10 @@ def _local_app_data_directory() -> Path:
 
 
 def _default_data_root() -> Path:
+    if os.name != "nt":
+        value = os.environ.get("XDG_DATA_HOME", "")
+        root = Path(value) if value and Path(value).is_absolute() else Path.home() / ".local/share"
+        return root / "yomira"
     return _local_app_data_directory() / "Yomira" / "YomiraData"
 
 
@@ -140,7 +144,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         for environment_name, model_field in environment_fields.items()
         if environment_name in source
     }
-    if values.get("app_env") == "prod" and "data_root" not in values:
+    if os.name == "nt" and values.get("app_env") == "prod" and "data_root" not in values:
         current_database = _default_data_root() / "database" / "yomira.sqlite3"
         legacy_root = _legacy_alpha_data_root()
         legacy_database = legacy_root / "database" / "yomira.sqlite3"

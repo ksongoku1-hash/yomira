@@ -1,0 +1,50 @@
+name: Linux preview (Arch)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['backend/**', 'frontend/**', 'scripts/*linux*', '*.sh', '.github/workflows/linux-preview.yml']
+permissions:
+  contents: read
+jobs:
+  native-linux:
+    runs-on: ubuntu-latest
+    container: archlinux:base
+    timeout-minutes: 25
+    steps:
+      - name: Prepare Arch tools
+        run: pacman -Syu --noconfirm --needed git curl tar gzip nodejs npm
+      - uses: actions/checkout@v4
+      - name: Restore verified runtime manager
+        shell: bash
+        run: |
+          mkdir -p tools
+          curl --fail --location --proto '=https' --tlsv1.2 --output /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-unknown-linux-gnu.tar.gz
+          echo 'f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645  /tmp/uv.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/uv.tar.gz --strip-components=1 -C tools uv-x86_64-unknown-linux-gnu/uv
+          tools/uv venv --python 3.14.7 .venv
+          tools/uv pip install --python .venv/bin/python -r backend/requirements.lock
+      - name: Build web interface
+        run: npm ci --prefix frontend && npm run build --prefix frontend
+      - name: Validate Linux scripts
+        run: bash -n Instalar-Yomira.sh Abrir-Yomira.sh Cerrar-Yomira.sh
+      - name: Run native Linux tests
+        working-directory: backend
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+          YOMIRA_APP_ENV: test
+        run: >-
+          ../.venv/bin/python -m pytest tests/test_linux_platform.py tests/test_linux_installer.py
+          tests/test_reader_settings.py tests/test_reader_progress_api.py tests/test_mangadex_reader.py
+          tests/test_local_import.py::test_import_is_readable_ordered_enriched_and_idempotent
+      - name: Check Linux adapters
+        working-directory: backend
+        run: |
+          ../.venv/bin/python -m ruff check app/platform/linux tests/test_linux_platform.py
+          ../.venv/bin/python -m pyright --pythonplatform Linux app/platform/linux
+      - name: Package Linux preview after native tests
+        run: .venv/bin/python scripts/package-linux.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Yomira-Linux-x86_64-preview
+          path: dist-linux/*
+          if-no-files-found: error

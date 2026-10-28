@@ -1,7 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -223,3 +223,126 @@ def test_provider_ranking_rejects_invalid_collections(kind: str) -> None:
             await session.close()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("provider", ["AniList", "MyAnimeList"])
+def test_public_catalogs_have_independent_cache_and_send_no_reading_history(
+    tmp_path: Path, provider: Literal["AniList", "MyAnimeList"]
+) -> None:
+    from app.services.recommendation_catalogs import CATALOG_ORIGINS
+
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.host in {"graphql.anilist.co", "api.jikan.moe"}
+        assert "cookie" not in request.headers and "authorization" not in request.headers
+        if provider == "AniList":
+            assert "isAdult:false" in request.content.decode()
+            value = {
+                "data": {
+                    "Page": {
+                        "media": [
+                            {
+                                "id": 12,
+                                "isAdult": False,
+                                "title": {"english": "Example", "romaji": "Ejemplo"},
+                                "synonyms": ["Otro nombre"],
+                                "genres": ["Action"],
+                                "coverImage": {
+                                    "large": "https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/a.jpg"
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        else:
+            assert request.url.params["limit"] == "24"
+            value = {
+                "data": [
+                    {
+                        "mal_id": 12,
+                        "title_english": "Example",
+                        "title": "Ejemplo",
+                        "title_synonyms": [],
+                        "explicit_genres": [],
+                        "genres": [{"name": "Action"}],
+                        "images": {
+                            "jpg": {"image_url": "https://cdn.myanimelist.net/images/manga/1/2.jpg"}
+                        },
+                    }
+                ]
+            }
+        return httpx.Response(200, json=value)
+
+    async def exercise() -> None:
+        session = ConnectorHttpSession(test_transport=httpx.MockTransport(respond))
+        try:
+            service = RecommendationsService(tmp_path / "feed.json", clock=lambda: NOW)
+            client = session.scoped_client(frozenset({CATALOG_ORIGINS[provider]}))
+            feed = await service.get_public(provider, client)
+            assert feed.meta.provider == provider and feed.meta.status == "ready"
+            assert feed.data[0].title == "Example" and feed.data[0].cover_url is not None
+            restored = RecommendationsService(tmp_path / "feed.json", clock=lambda: NOW)
+            assert (await restored.get_public(provider, client)).data == feed.data
+            assert len(requests) == 1
+        finally:
+            await session.close()
+
+    asyncio.run(exercise())
+
+
+def test_failed_public_catalog_does_not_poison_another_feed(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        session = ConnectorHttpSession(
+            test_transport=httpx.MockTransport(lambda _r: httpx.Response(503))
+        )
+        try:
+            service = RecommendationsService(tmp_path / "feed.json", clock=lambda: NOW)
+            client = session.scoped_client(frozenset({"https://api.jikan.moe"}))
+            assert (await service.get_public("MyAnimeList", client)).meta.status == "unavailable"
+            assert (await service.get_public("MyAnimeList", client)).data == []
+            assert not (tmp_path / "feed.json").exists()
+        finally:
+            await session.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "kind", ["duplicate", "boolean-id", "oversized", "missing-title", "unsafe-cover", "adult"]
+)
+def test_public_catalog_validates_untrusted_metadata(tmp_path: Path, kind: str) -> None:
+    item: dict[str, object] = {
+        "id": 12,
+        "isAdult": kind == "adult",
+        "title": {"english": "Example"},
+        "coverImage": {"large": "https://attacker.example/image.jpg"},
+    }
+    if kind == "boolean-id":
+        item["id"] = True
+    if kind == "missing-title":
+        item["title"] = {}
+    rows = [item] * (25 if kind == "oversized" else 2 if kind == "duplicate" else 1)
+
+    async def exercise() -> None:
+        session = ConnectorHttpSession(
+            test_transport=httpx.MockTransport(
+                lambda _r: httpx.Response(200, json={"data": {"Page": {"media": rows}}})
+            )
+        )
+        try:
+            service = RecommendationsService(tmp_path / "feed.json", clock=lambda: NOW)
+            feed = await service.get_public(
+                "AniList", session.scoped_client(frozenset({"https://graphql.anilist.co"}))
+            )
+            if kind in {"unsafe-cover", "adult"}:
+                assert feed.meta.status == "ready"
+                assert (not feed.data) if kind == "adult" else feed.data[0].cover_url is None
+            else:
+                assert feed.meta.status == "unavailable" and not feed.data
+        finally:
+            await session.close()
+
+    asyncio.run(exercise())
