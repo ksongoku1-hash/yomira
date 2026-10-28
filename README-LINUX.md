@@ -2,7 +2,8 @@
 
 Este paquete contiene la adaptación **nativa de Python y la interfaz web** para Linux x86_64.
 No ejecuta el programa de Windows mediante Wine. Está preparado para probarse en Arch y en el
-**modo Escritorio de Steam Deck**, pero todavía no se ha ejecutado ni certificado en un Linux real.
+**modo Escritorio de Steam Deck**. El arranque, los adaptadores de almacenamiento y la importación
+ya superaron pruebas automatizadas en un contenedor Arch; falta la instalación física en Steam Deck.
 No lo consideres una versión estable ni una sustitución de tu biblioteca actual de Windows.
 
 ## Instalación
@@ -40,8 +41,8 @@ su servicio esté activo.
 - Acceso móvil con PIN y preferencia de inicio automático. El cortafuegos se configura con las
   herramientas de Linux; la app no modifica sus reglas automáticamente.
 
-Estas funciones describen el alcance del código adaptado; su funcionamiento completo en Linux
-requiere superar las pruebas nativas pendientes. La disponibilidad de páginas externas depende
+Estas funciones describen el alcance del código adaptado; la validación automática cubre una
+biblioteca temporal y fuentes simuladas. La disponibilidad de páginas externas depende
 de cada proveedor y de sus contenidos.
 
 ## Diferencias de esta primera versión
@@ -76,7 +77,7 @@ systemctl --user stop yomira.service
 Si no arranca, consulta esos registros y el espacio libre antes de repetir la instalación. La
 política de espacio de seguridad de Yomira se mantiene; no se desactivó para hacer pasar el port.
 
-## Desarrollo y validación pendiente
+## Desarrollo y validación
 
 El código añade identidad por dispositivo/inodo, respeto por mayúsculas en rutas Linux, bloqueos
 de archivos entre procesos y publicación con `renameat2(RENAME_NOREPLACE)` y sincronización de
@@ -84,10 +85,16 @@ directorios. Las comprobaciones de memoria y disco leen contadores de Linux y fa
 segura cuando no están disponibles.
 
 El repositorio incluye `.github/workflows/linux-preview.yml`, que prepara un contenedor Arch,
-construye la interfaz y ejecuta las pruebas nativas. Preparar el archivo de CI no significa que el
-trabajo se haya ejecutado en GitHub. Antes de publicar una versión estable deben pasar esas pruebas
-y una instalación real en SteamOS. En el equipo de desarrollo actual solo se verificó la regresión
-de Windows, los analizadores, los scripts y la integridad del paquete.
+construye la interfaz y ejecuta las pruebas nativas antes de generar el paquete. La primera
+ejecución detectó una comprobación de rutas que conservaba el separador de Windows; se corrigió
+en el publicador compartido y la siguiente ejecución pasó, incluida la importación y lectura de
+imágenes, CBZ, ZIP y EPUB. También se verificaron las regresiones de Windows.
+
+La rama de prueba está en https://github.com/ksongoku1-hash/yomira/pull/1 . El último resultado y
+el paquete generado se consultan en la pestaña de comprobaciones de ese PR. Una prueba en un
+contenedor no certifica el escritorio, el navegador ni el hardware de Steam Deck. Antes de publicar
+una versión estable falta una instalación real en SteamOS. No se han validado todos los tipos de
+disco; si sus contadores no están disponibles, se mantiene la pausa preventiva de descargas.
 
 Referencias técnicas:
 

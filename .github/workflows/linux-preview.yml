@@ -32,7 +32,10 @@ jobs:
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
           YOMIRA_APP_ENV: test
-        run: ../.venv/bin/python -m pytest tests/test_linux_platform.py tests/test_linux_installer.py tests/test_reader_settings.py tests/test_local_import.py::test_import_is_readable_ordered_enriched_and_idempotent
+        run: >-
+          ../.venv/bin/python -m pytest tests/test_linux_platform.py tests/test_linux_installer.py
+          tests/test_reader_settings.py tests/test_reader_progress_api.py tests/test_mangadex_reader.py
+          tests/test_local_import.py::test_import_is_readable_ordered_enriched_and_idempotent
       - name: Check Linux adapters
         working-directory: backend
         run: |
