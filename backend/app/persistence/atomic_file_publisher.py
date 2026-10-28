@@ -422,9 +422,9 @@ class AtomicFilePublisher:
         try:
             absolute = Path(os.path.abspath(path))
             root = self.data_root_identity.canonical_path
-            root_key = windows_path_key(root).rstrip("\\")
+            root_key = windows_path_key(root).rstrip(os.sep)
             absolute_key = windows_path_key(absolute)
-            if not absolute_key.startswith(f"{root_key}\\"):
+            if not absolute_key.startswith(f"{root_key}{os.sep}"):
                 self._raise(
                     "path_outside_data_root",
                     trace_id=trace_id,
