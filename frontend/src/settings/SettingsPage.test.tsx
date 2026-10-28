@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsPage } from "./SettingsPage";
 import { useAppearanceStore } from "../app/appearanceStore";
 
+const connection = vi.hoisted(() => ({ mobile: false }));
+vi.mock("./MobileAccessPanel", () => ({ MobileAccessPanel: () => null, get isMobileConnection() { return connection.mobile; } }));
+vi.mock("./ReaderCachePanel", () => ({ ReaderCachePanel: () => null }));
 vi.mock("../app/AppUpdates", () => ({ AppUpdates: () => null }));
 
 function mockResponse(payload: unknown, status = 200): Response {
@@ -35,16 +38,31 @@ function renderSettingsPage() {
 }
 
 afterEach(() => {
+  connection.mobile = false;
   vi.unstubAllGlobals();
 });
 
 describe("SettingsPage", () => {
+  it("keeps PC folder actions out of mobile connection settings", async () => {
+    connection.mobile = true;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse({ data: {
+      cache_limit_mb: 500, preload_ahead: 2, mode: "single", rtl: false, e_reader: false,
+    }, meta: {} })));
+    renderSettingsPage();
+    expect(await screen.findByRole("heading", { name: "Ajustes" })).toBeInTheDocument();
+    await screen.findByRole("spinbutton", { name: /presupuesto de caché del lector/i });
+    expect(screen.queryByRole("heading", { name: "Carpetas de tus mangas" })).not.toBeInTheDocument();
+    expect(screen.getByText("Personaliza la apariencia y ajusta el lector.")).toBeInTheDocument();
+  });
   it("applies appearance immediately without submitting reader settings", async () => {
-    useAppearanceStore.setState({ enabled: true, intensity: 60, simpleGraphics: false, storageError: false });
+    useAppearanceStore.setState({ enabled: true, intensity: 60, simpleGraphics: false, theme: "tinta", storageError: false });
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
       .mockResolvedValue(mockResponse(null, 500));
     vi.stubGlobal("fetch", fetchMock);
     renderSettingsPage();
+    fireEvent.change(screen.getByRole("combobox", { name: "Tema de la interfaz" }), { target: { value: "papel" } });
+    expect(useAppearanceStore.getState().theme).toBe("papel");
+    expect(screen.getByRole("combobox", { name: "Tema de la interfaz" })).toHaveValue("papel");
     const slider = screen.getByRole("slider", { name: "Intensidad del fondo: 60%" });
     fireEvent.change(slider, { target: { value: "35" } });
     expect(useAppearanceStore.getState().intensity).toBe(35);
@@ -56,7 +74,7 @@ describe("SettingsPage", () => {
     expect(useAppearanceStore.getState().simpleGraphics).toBe(true);
     await screen.findByRole("alert");
     expect(fetchMock.mock.calls.every((call) => call[1]?.method !== "PUT")).toBe(true);
-    useAppearanceStore.setState({ enabled: true, intensity: 60, simpleGraphics: false, storageError: false });
+    useAppearanceStore.setState({ enabled: true, intensity: 60, simpleGraphics: false, theme: "tinta", storageError: false });
   });
   it("edits only cache and bounded preload settings while preserving the full DTO", async () => {
     const settings = {

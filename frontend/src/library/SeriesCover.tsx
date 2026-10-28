@@ -10,17 +10,19 @@ export function SeriesCover({
   className = "",
   fallbackLabel = "Sin portada asignada",
   previewSource = null,
+  retryKey = 0,
 }: {
   series: LibrarySeriesSummary;
   variant?: SeriesCoverVariant;
   className?: string | undefined;
   fallbackLabel?: string;
   previewSource?: string | null;
+  retryKey?: number;
 }) {
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const source = series.coverAssetId === null
     ? previewSource
-    : getSeriesCoverUrl(series.seriesId, variant, `${series.coverAssetId}:${series.updatedAt}`);
+    : getSeriesCoverUrl(series.seriesId, variant, `${series.coverAssetId}:${series.updatedAt}${retryKey ? `:${retryKey}` : ""}`);
 
   if (source !== null && source !== failedSource) {
     return (

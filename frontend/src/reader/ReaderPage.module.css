@@ -465,7 +465,7 @@
 }
 .readerChrome {
   position: absolute; inset: 0; z-index: 5; pointer-events: none;
-  transition: opacity 160ms ease;
+  transition: opacity 350ms ease;
 }
 .pageHeader { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 4rem; padding: 0.5rem 1rem; background: #080c13f5; border-bottom: 1px solid var(--panel-border); pointer-events: auto; }
 .pageHeader > div { min-width: 0; }
@@ -536,11 +536,21 @@
 .chapterEnd > div { display: grid; gap: 0.2rem; margin-right: auto; }
 .chapterEnd span { color: var(--text-secondary); font-size: 0.78rem; }
 .primaryButton { display: inline-flex; align-items: center; justify-content: center; min-height: 2.75rem; padding: 0.6rem 0.9rem; border-radius: 0.5rem; background: var(--accent); color: var(--background); font-size: 0.85rem; font-weight: 700; text-decoration: none; }
-.page:fullscreen { width: 100%; height: 100dvh; overflow: hidden; padding: 0; }
-.page:fullscreen .readerCanvas, .page:fullscreen .verticalViewport { min-height: 0; height: auto; }
+.page:fullscreen { width: 100%; height: 100dvh; overflow: hidden; padding: 0; border: 0; border-radius: 0; outline: none; box-shadow: none; }
+.page:fullscreen .readerCanvas, .page:fullscreen .verticalViewport {
+  min-height: 0; height: auto; border: 0; border-radius: 0; outline: none; box-shadow: none;
+}
+.nextChapterCountdown { position: relative; isolation: isolate; overflow: hidden; background: color-mix(in srgb, var(--accent) 65%, var(--surface)); }
+.nextChapterCountdown::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; background: var(--accent);
+  transform: scaleX(var(--advance-progress, 0)); transform-origin: left; transition: transform 100ms linear;
+}
+.chapterEnd .nextChapterLabel { color: inherit; font: inherit; }
+@media (prefers-reduced-motion: reduce) { .nextChapterCountdown::before { transition: none; } }
 .ereaderProfile .optionsPanel, .ereaderProfile .navigator,
 .ereaderProfile .chapterEnd, .ereaderProfile .thumbnail { background: #fff; color: #111; }
 .ereaderProfile .primaryButton { background: #111; color: #fff; }
+.ereaderProfile .nextChapterCountdown::before { background: #555; transition: none; }
 .page.ereaderProfile { background: #fff; color: #111; }
 .ereaderProfile .chapterEnd span, .ereaderProfile .shortcuts { color: #111; }
 .ereaderProfile .readerChrome > .progressMessage { background: #fff; color: #111; }
@@ -790,4 +800,70 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .optionsPanel *, .optionsPanel *::after { transition: none; }
+}
+.formatSelect { width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--option-line); border-radius: 10px; background: var(--option-card); color: var(--option-text); font: inherit; }
+.savedPanel { display: grid; gap: 12px; width: min(30rem, calc(100% - 1.5rem)); }
+.savedHeader, .savedTabs { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.savedHeader h2 { margin: 0; font-size: 18px; }
+.savedTabs > button { flex: 1; }
+.savedTabs > button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--surface-hover); }
+.ereaderProfile .savedTabs > button[aria-pressed="true"] { border-color: #111; color: #fff; background: #111; }
+.savedList { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.savedList li { display: flex; gap: 8px; min-width: 0; }
+.savedList li > :first-child { flex: 1; min-width: 0; justify-content: flex-start; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.savedList li > :last-child:not(:first-child) { flex: none; }
+.savedPanel .panelHint, .savedPanel > p { margin: 0; }
+
+/* Keep the gutter fixed so revealing the thumb never moves the reading position. */
+.readerCanvas, .verticalViewport {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.scrolling .readerCanvas, .scrolling .verticalViewport {
+  scrollbar-color: #74849b transparent;
+}
+.ereaderProfile.scrolling .readerCanvas, .ereaderProfile.scrolling .verticalViewport {
+  scrollbar-color: #555 transparent;
+}
+.readerCanvas::-webkit-scrollbar, .verticalViewport::-webkit-scrollbar { width: 6px; height: 6px; }
+.readerCanvas::-webkit-scrollbar-track, .verticalViewport::-webkit-scrollbar-track,
+.readerCanvas::-webkit-scrollbar-corner, .verticalViewport::-webkit-scrollbar-corner { background: transparent; }
+.readerCanvas::-webkit-scrollbar-thumb, .verticalViewport::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.scrolling .readerCanvas::-webkit-scrollbar-thumb, .scrolling .verticalViewport::-webkit-scrollbar-thumb { background: #74849b; }
+.ereaderProfile.scrolling .readerCanvas::-webkit-scrollbar-thumb, .ereaderProfile.scrolling .verticalViewport::-webkit-scrollbar-thumb { background: #555; }
+
+/* Reveal pixels without changing the geometry used to restore long-page positions. */
+@keyframes pageEnter { from { opacity: .3; clip-path: inset(var(--reader-page-clip, 0 8% 0 0)); } to { opacity: 1; clip-path: inset(0); } }
+.page:not(.ereaderProfile) .readerCanvas .pageImage { animation: pageEnter 360ms cubic-bezier(.2,.7,.2,1); }
+.pageHeader, .bottomBar { transition: transform 350ms cubic-bezier(.2,.7,.2,1); }
+.readerChrome[aria-hidden="true"] .pageHeader { transform: translateY(-100%); }
+.readerChrome[aria-hidden="true"] .bottomBar { transform: translateY(100%); }
+.ereaderProfile .pageHeader, .ereaderProfile .bottomBar { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .page:not(.ereaderProfile) .readerCanvas .pageImage { animation: none; }
+  .pageHeader, .bottomBar { transition: none; }
+}
+
+@media (max-width: 700px), (max-width: 1000px) and (max-height: 500px) {
+  .pageHeader { padding: calc(6px + env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 6px max(8px, env(safe-area-inset-left)); gap: 8px; flex-wrap: wrap; }
+  .toolbarLabel { display: none; }
+  .readerIdentity { flex-basis: 160px; }
+  .readerTitle h1 { max-width: none; }
+  .headerActions { margin-left: auto; gap: 4px; }
+  .bottomBar { padding: 0 max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+  .bottomBar .controls { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; width: 100%; gap: 8px; padding: 0; }
+  .controls .secondaryButton { min-height: 48px; height: 48px; }
+  .pageNumber { min-width: 0; font-size: 14px; }
+  .progressSlider { min-height: 44px; margin: 0; }
+  .optionsPanel, .navigator, .chapterDropdown, .headerActions .downloadPanel, .savedPanel {
+    left: max(8px, env(safe-area-inset-left)); right: max(8px, env(safe-area-inset-right)); width: auto;
+    max-width: none; max-height: calc(100dvh - var(--reader-top, 96px) - var(--reader-bottom, 104px) - 16px);
+    overscroll-behavior: contain; scroll-padding-bottom: 24px;
+  }
+  .optionsPanel { top: calc(var(--reader-top, 96px) + 8px); border-radius: 16px; }
+  .navigator { bottom: calc(var(--reader-bottom, 104px) + 8px); }
+  .optionsPanel select, .navigator input, .chapterSearch input { font-size: 16px; min-height: 44px; }
+  .downloadChapterList label { min-height: 48px; }
+  .chapterEnd { flex-wrap: wrap; }
+  .chapterEnd .primaryButton { width: 100%; white-space: normal; text-align: center; }
 }

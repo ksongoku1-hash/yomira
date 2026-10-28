@@ -120,10 +120,7 @@ def _fail(
 
 
 def _temporary_page_io_error_code(error: OSError) -> ErrorCode:
-    if (
-        error.errno == errno.ENOSPC
-        or getattr(error, "winerror", None) in _DISK_FULL_WINERRORS
-    ):
+    if error.errno == errno.ENOSPC or getattr(error, "winerror", None) in _DISK_FULL_WINERRORS:
         return ErrorCode.SYS_DISK_BUDGET_EXCEEDED
     return ErrorCode.DL_TEMPORARY_PATH_UNAVAILABLE
 
@@ -183,12 +180,8 @@ def _read_manifest_bytes(
         job_id=job_id,
         trace_id=stable_trace_id,
     )
-    if (
-        parent_identity is None
-        or (
-            expected_parent_identity is not None
-            and parent_identity != expected_parent_identity
-        )
+    if parent_identity is None or (
+        expected_parent_identity is not None and parent_identity != expected_parent_identity
     ):
         raise OSError(errno.EIO, "manifest parent identity changed")
     info = _lstat_or_none(
@@ -634,11 +627,7 @@ def _assert_no_reparse(
                     trace_id=stable_trace_id,
                     validate_path=validate_root,
                 )
-                if (
-                    info is None
-                    or _is_reparse_point(info)
-                    or not stat.S_ISDIR(info.st_mode)
-                ):
+                if info is None or _is_reparse_point(info) or not stat.S_ISDIR(info.st_mode):
                     _fail(
                         ErrorCode.DL_TEMPORARY_PATH_UNAVAILABLE,
                         stage,
@@ -1023,9 +1012,7 @@ class JobManifestStore:
                 identity=self.data_root_identity,
                 job_id=job_id,
             )
-            root_identity = (
-                _managed_file_identity(root_info) if root_info is not None else None
-            )
+            root_identity = _managed_file_identity(root_info) if root_info is not None else None
             if root_identity is None:
                 _fail(
                     ErrorCode.DL_MANIFEST_PERSIST_FAILED,
@@ -1070,15 +1057,24 @@ class JobManifestStore:
                     cause=error,
                 )
         else:
-            # The product runtime is Windows. This process-local adapter keeps
-            # isolated persistence tests usable on hosts without Win32; it is
-            # never selected by the packaged Windows application.
             with _fallback_locks_guard:
                 thread_lock = _fallback_locks.setdefault(mutex_name, RLockType())
+            thread_acquired = False
             try:
-                if not thread_lock.acquire(timeout=_JOB_MUTEX_TIMEOUT_MS / 1_000):
-                    raise TimeoutError("The test-host job mutex wait timed out.")
+                thread_acquired = thread_lock.acquire(timeout=_JOB_MUTEX_TIMEOUT_MS / 1_000)
+                if not thread_acquired:
+                    raise TimeoutError("The job mutex wait timed out.")
+                if os.name == "posix":
+                    from app.platform.linux.storage import lock_file
+
+                    name = hashlib.sha256(mutex_name.encode()).hexdigest() + ".lock"
+                    handle = lock_file(
+                        self.data_root_identity.canonical_path / "locks" / name,
+                        timeout=_JOB_MUTEX_TIMEOUT_MS / 1_000,
+                    )
             except Exception as error:
+                if thread_acquired:
+                    thread_lock.release()
                 _fail(
                     ErrorCode.DL_MANIFEST_PERSIST_FAILED,
                     "job_mutex_wait",
@@ -1110,10 +1106,15 @@ class JobManifestStore:
             self._expire_reservations(held)
             holds.pop(mutex_name, None)
             try:
-                if held.handle is not None:
-                    _named_mutex_release_and_close(held.handle)
-                elif held.thread_lock is not None:
-                    held.thread_lock.release()
+                try:
+                    if held.handle is not None:
+                        if os.name == "nt":
+                            _named_mutex_release_and_close(held.handle)
+                        else:
+                            os.close(held.handle)
+                finally:
+                    if held.thread_lock is not None:
+                        held.thread_lock.release()
             except Exception as error:
                 _fail(
                     ErrorCode.DL_MANIFEST_PERSIST_FAILED,
@@ -1422,9 +1423,7 @@ class JobManifestStore:
         job_id = manifest.job_id
         for attempt in range(16):
             staging_path = (
-                first_candidate
-                if attempt == 0
-                else _new_staging_path(directory, generation)
+                first_candidate if attempt == 0 else _new_staging_path(directory, generation)
             )
             if staging_path.parent != directory or staging_path == self._target_path(job_id):
                 _fail(
@@ -1445,6 +1444,7 @@ class JobManifestStore:
             )
             if existing is not None:
                 continue
+
             def write_staging_file(staging_target: Path = staging_path) -> None:
                 _assert_root_identity(self.data_root_identity, job_id=job_id)
                 with RetryingFileStream.create(
@@ -1643,11 +1643,7 @@ class JobManifestStore:
                             "recovery_namespace_unattributed",
                             job_id=job_id,
                         )
-                    if (
-                        nonce.version != 4
-                        or str(nonce) != match.group(2)
-                        or generation in found
-                    ):
+                    if nonce.version != 4 or str(nonce) != match.group(2) or generation in found:
                         _fail(
                             ErrorCode.DL_MANIFEST_PERSIST_FAILED,
                             "recovery_namespace_unattributed",
@@ -1706,8 +1702,7 @@ class JobManifestStore:
                 cause=error,
             )
         if not expected.keys() <= found.keys() or (
-            allow_older_generations_before is None
-            and found.keys() != expected.keys()
+            allow_older_generations_before is None and found.keys() != expected.keys()
         ):
             _fail(
                 ErrorCode.DL_MANIFEST_PERSIST_FAILED,
@@ -1818,10 +1813,7 @@ class JobManifestStore:
             or _SHA256_PATTERN.fullmatch(current_sha256) is None
             or type(current_size_bytes) is not int
             or not 1 <= current_size_bytes <= MAX_MANIFEST_BYTES
-            or (
-                current_generation > 1
-                and previous_sha256 is None
-            )
+            or (current_generation > 1 and previous_sha256 is None)
             or (
                 previous_sha256 is not None
                 and (
@@ -1838,9 +1830,7 @@ class JobManifestStore:
 
         target = self._target_path(job_id)
         expected_current_backup = (
-            ((current_generation, previous_sha256),)
-            if previous_sha256 is not None
-            else ()
+            ((current_generation, previous_sha256),) if previous_sha256 is not None else ()
         )
         expected = self._assert_recovery_namespace_expected(
             job_id,
@@ -2031,9 +2021,7 @@ class JobManifestStore:
         manifests_info = self._assert_manifest_directories_safe(job_id)
         directories_exist = manifests_info is not None
         manifests_identity = (
-            _managed_file_identity(manifests_info)
-            if manifests_info is not None
-            else None
+            _managed_file_identity(manifests_info) if manifests_info is not None else None
         )
         target_info = _assert_no_reparse(
             target,
@@ -2096,9 +2084,7 @@ class JobManifestStore:
         )
         retained_size_bytes = retained.get(retained_generation, (target, 0))[1]
         entry_count = (1 if target_info is None else 2) + len(retained)
-        recovery_bytes = (
-            new_size_bytes + (target_size_bytes or 0) + retained_size_bytes
-        )
+        recovery_bytes = new_size_bytes + (target_size_bytes or 0) + retained_size_bytes
         if entry_count > _MAX_RECOVERY_ENTRIES or recovery_bytes > _MAX_RECOVERY_BYTES:
             _fail(
                 ErrorCode.DL_MANIFEST_PERSIST_FAILED,
@@ -2147,10 +2133,7 @@ class JobManifestStore:
                 job_id=manifest.job_id,
             )
         serialized, new_digest = self._serialize(manifest)
-        if (
-            new_digest != reservation.new_sha256
-            or len(serialized) != reservation.new_size_bytes
-        ):
+        if new_digest != reservation.new_sha256 or len(serialized) != reservation.new_size_bytes:
             _fail(
                 ErrorCode.DL_MANIFEST_STALE_SNAPSHOT,
                 "reservation_manifest_mismatch",
@@ -2175,9 +2158,7 @@ class JobManifestStore:
         _assert_root_identity(self.data_root_identity, job_id=manifest.job_id)
         manifests_info = self._assert_manifest_directories_safe(manifest.job_id)
         manifests_identity = (
-            _managed_file_identity(manifests_info)
-            if manifests_info is not None
-            else None
+            _managed_file_identity(manifests_info) if manifests_info is not None else None
         )
         target_info = _assert_no_reparse(
             target,
@@ -2229,14 +2210,9 @@ class JobManifestStore:
         retained_size_bytes = retained_backups.get(retained_generation, (target, 0))[1]
         recovery_entries = (1 if target_info is None else 2) + len(retained_backups)
         recovery_bytes = (
-            len(serialized)
-            + (reservation.target_size_bytes or 0)
-            + retained_size_bytes
+            len(serialized) + (reservation.target_size_bytes or 0) + retained_size_bytes
         )
-        if (
-            recovery_entries > _MAX_RECOVERY_ENTRIES
-            or recovery_bytes > _MAX_RECOVERY_BYTES
-        ):
+        if recovery_entries > _MAX_RECOVERY_ENTRIES or recovery_bytes > _MAX_RECOVERY_BYTES:
             _fail(
                 ErrorCode.DL_MANIFEST_PERSIST_FAILED,
                 "recovery_budget",
@@ -2342,8 +2318,7 @@ class JobManifestStore:
                 except Exception:
                     return False
                 return (
-                    _directory_identity(staging_path.parent)
-                    == staging_parent_identity
+                    _directory_identity(staging_path.parent) == staging_parent_identity
                     and _directory_identity(target.parent) == target_parent_identity
                 )
 
@@ -2492,8 +2467,7 @@ class JobManifestStore:
                     return False
                 return (
                     _directory_identity(target.parent) == target_parent_identity
-                    and _directory_identity(staging_path.parent)
-                    == staging_parent_identity
+                    and _directory_identity(staging_path.parent) == staging_parent_identity
                     and _directory_identity(backup_path.parent) == backup_parent_identity
                 )
 
@@ -2690,9 +2664,7 @@ class JobManifestStore:
                 )
             )
         if reservation.target_sha256 is not None:
-            expected_backups.append(
-                (reservation.new_generation, reservation.target_sha256)
-            )
+            expected_backups.append((reservation.new_generation, reservation.target_sha256))
         backups = self._assert_recovery_namespace_expected(
             reservation.job_id,
             tuple(expected_backups),
@@ -2700,10 +2672,7 @@ class JobManifestStore:
         )
         if reservation.target_sha256 is not None:
             backup = backups.get(reservation.new_generation)
-            if (
-                backup is None
-                or backup[1] != reservation.target_size_bytes
-            ):
+            if backup is None or backup[1] != reservation.target_size_bytes:
                 _fail(
                     ErrorCode.DL_MANIFEST_STALE_SNAPSHOT,
                     "manifest_backup_verify",
@@ -2814,11 +2783,7 @@ class JobManifestStore:
                 job_id=job_id,
             )
 
-        expected_backups = (
-            ((generation, previous_sha256),)
-            if previous_sha256 is not None
-            else ()
-        )
+        expected_backups = ((generation, previous_sha256),) if previous_sha256 is not None else ()
         self._assert_recovery_namespace_expected(job_id, expected_backups)
         return manifest_from_bytes(target_bytes)
 
@@ -2888,9 +2853,7 @@ class JobManifestStore:
             self._read_target(target, job_id) if target_info is not None else None
         )
         target_digest = (
-            hashlib.sha256(target_bytes).hexdigest()
-            if target_bytes is not None
-            else None
+            hashlib.sha256(target_bytes).hexdigest() if target_bytes is not None else None
         )
 
         if target_bytes is not None and target_bytes == serialized:
@@ -3075,10 +3038,7 @@ class JobManifestStore:
                 job_id=job_id,
                 cause=error,
             )
-        if (
-            retained_manifest.job_id != job_id
-            or retained_canonical_bytes != retained_bytes
-        ):
+        if retained_manifest.job_id != job_id or retained_canonical_bytes != retained_bytes:
             _fail(
                 ErrorCode.DL_MANIFEST_PERSIST_FAILED,
                 "manifest_recovery_retained_backup_verify",
@@ -3108,9 +3068,7 @@ class JobManifestStore:
         retained_path, _retained_size = retained
         manifests_info = self._assert_manifest_directories_safe(reservation.job_id)
         manifests_identity = (
-            _managed_file_identity(manifests_info)
-            if manifests_info is not None
-            else None
+            _managed_file_identity(manifests_info) if manifests_info is not None else None
         )
         if manifests_identity is None:
             _fail(
@@ -3127,9 +3085,7 @@ class JobManifestStore:
             job_id=reservation.job_id,
             expected_parent_identity=manifests_identity,
         )
-        recovery_root_identity = _managed_file_identity(
-            cast(os.stat_result, recovery_root_info)
-        )
+        recovery_root_identity = _managed_file_identity(cast(os.stat_result, recovery_root_info))
         if recovery_root_identity is None:
             _fail(
                 ErrorCode.DL_MANIFEST_PERSIST_FAILED,
@@ -3277,9 +3233,7 @@ class TemporaryPageStore:
                 trace_id=stable_trace_id,
             )
         target_parent_identity = (
-            _managed_file_identity(target_parent_info)
-            if target_parent_info is not None
-            else None
+            _managed_file_identity(target_parent_info) if target_parent_info is not None else None
         )
 
         existing = _assert_no_reparse(
@@ -3336,9 +3290,7 @@ class TemporaryPageStore:
                 try:
                     stream.close()
                 except BaseException as cleanup_error:
-                    if isinstance(cleanup_error, OSError) and is_disk_full_os_error(
-                        cleanup_error
-                    ):
+                    if isinstance(cleanup_error, OSError) and is_disk_full_os_error(cleanup_error):
                         self.storage_gate.close("FILESYSTEM_DISK_FULL")
                     error.add_note(
                         "Temporary page stream cleanup failed after write error "
@@ -3359,9 +3311,7 @@ class TemporaryPageStore:
                 try:
                     stream.close()
                 except BaseException as cleanup_error:
-                    if isinstance(cleanup_error, OSError) and is_disk_full_os_error(
-                        cleanup_error
-                    ):
+                    if isinstance(cleanup_error, OSError) and is_disk_full_os_error(cleanup_error):
                         self.storage_gate.close("FILESYSTEM_DISK_FULL")
                     operation_error.add_note(
                         "Temporary page stream cleanup failed during abort "

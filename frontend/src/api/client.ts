@@ -187,7 +187,7 @@ export interface ExternalMetadataCandidate {
 
 export interface ExternalMetadataCandidates {
   data: ExternalMetadataCandidate[];
-  meta: { provider: "MangaDex"; total: number; limit: 10 };
+  meta: { provider: RecommendationProvider; total: number; limit: 10 };
 }
 
 export interface LibraryPage {
@@ -472,7 +472,7 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-async function requestJson(
+export async function requestJson(
   path: string,
   options: RequestOptions = {},
 ): Promise<{ payload: unknown; response: Response }> {
@@ -2893,6 +2893,15 @@ export async function getSystemVersion(): Promise<VersionResponse> {
   return { app_version: payload.app_version, api_version: payload.api_version };
 }
 
+export type RecommendationProvider = "MangaDex" | "AniList" | "MyAnimeList";
+const recommendationFormats = {
+  MangaDex: { criterion: "followed_count", id: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    cover: /^https:\/\/uploads\.mangadex\.org\/covers\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(?:jpg|jpeg|png|webp)$/ },
+  AniList: { criterion: "trending", id: /^anilist:[1-9][0-9]{0,9}$/,
+    cover: /^https:\/\/s4\.anilist\.co\/file\/anilistcdn\/media\/manga\/cover\/(?:medium|large)\/[A-Za-z0-9_.-]+$/ },
+  MyAnimeList: { criterion: "popularity", id: /^jikan:[1-9][0-9]{0,9}$/,
+    cover: /^https:\/\/cdn\.myanimelist\.net\/images\/manga\/[0-9]+\/[0-9]+\.(?:jpg|jpeg|png|webp)$/ },
+};
 export interface Recommendation {
   remoteId: string; title: string; aliases: string[]; genres: string[]; coverUrl: string | null;
 }
@@ -2912,28 +2921,30 @@ export async function getPublicSources(): Promise<PublicSource[]> {
 }
 export interface RecommendationFeed {
   data: Recommendation[];
-  meta: { provider: "MangaDex"; status: "ready" | "stale" | "unavailable"; updatedAt: string | null; retryAt: string | null };
+  meta: { provider: RecommendationProvider; status: "ready" | "stale" | "unavailable"; updatedAt: string | null; retryAt: string | null };
 }
-export async function getRecommendations(): Promise<RecommendationFeed> {
-  const {payload, response} = await requestJson("/recommendations");
+export async function getRecommendations(provider: RecommendationProvider = "MangaDex"): Promise<RecommendationFeed> {
+  const format = recommendationFormats[provider];
+  if (!format) throw new RangeError("Unknown recommendation provider");
+  const {payload, response} = await requestJson(provider === "MangaDex" ? "/recommendations" : `/recommendations?provider=${provider}`);
   const invalid = () => new ApiError({code: null, message: "No se pudo leer la lista de recomendaciones.",
     retryable: true, status: response.status, traceId: response.headers.get("X-Trace-ID")});
   const shortText = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 200 && !Array.from(value).some((char)=>char.charCodeAt(0)<32);
   const texts = (value: unknown, limit: number): value is string[] => Array.isArray(value) && value.length <= limit && value.every(shortText);
   const timestamp = (value: unknown): value is string | null => value === null || (typeof value === "string" && value.length <= 40 && Number.isFinite(Date.parse(value)));
   if (!isRecord(payload) || !Array.isArray(payload.data) || payload.data.length > 24 || !isRecord(payload.meta) ||
-      payload.meta.provider !== "MangaDex" || payload.meta.criterion !== "followed_count" ||
+      payload.meta.provider !== provider || payload.meta.criterion !== format.criterion ||
       typeof payload.meta.status !== "string" || !["ready", "stale", "unavailable"].includes(payload.meta.status) ||
       !timestamp(payload.meta.updated_at) || !timestamp(payload.meta.retry_at)) throw invalid();
   const data: Recommendation[] = [];
   const seen = new Set<string>();
   for (const item of payload.data) {
-    if (!isRecord(item) || typeof item.remote_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(item.remote_id) ||
+    if (!isRecord(item) || typeof item.remote_id !== "string" || !format.id.test(item.remote_id) ||
         seen.has(item.remote_id) || !shortText(item.title) || !texts(item.aliases, 6) || !texts(item.genres, 64) ||
-        !(item.cover_url === null || (typeof item.cover_url === "string" && /^https:\/\/uploads\.mangadex\.org\/covers\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(?:jpg|jpeg|png|webp)$/.test(item.cover_url)))) throw invalid();
+        !(item.cover_url === null || (typeof item.cover_url === "string" && format.cover.test(item.cover_url)))) throw invalid();
     seen.add(item.remote_id);
     data.push({remoteId:item.remote_id, title:item.title, aliases:item.aliases, genres:item.genres, coverUrl:item.cover_url});
   }
   if (payload.meta.status === "unavailable" && data.length || payload.meta.status !== "unavailable" && payload.meta.updated_at === null) throw invalid();
-  return {data, meta:{provider:"MangaDex", status:payload.meta.status as RecommendationFeed["meta"]["status"], updatedAt:payload.meta.updated_at, retryAt:payload.meta.retry_at}};
+  return {data, meta:{provider, status:payload.meta.status as RecommendationFeed["meta"]["status"], updatedAt:payload.meta.updated_at, retryAt:payload.meta.retry_at}};
 }

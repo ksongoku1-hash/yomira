@@ -1109,7 +1109,11 @@ def _move_file_ex_win32(source: Path, destination: Path, flags: int) -> None:
     """Call MoveFileExW with flags 0: same-volume move, never replace/copy."""
     if flags != _MOVE_FILE_FLAGS:
         raise ValueError("MoveFileExW flags must be zero")
-    if os.name != "nt" or not hasattr(ctypes, "WinDLL"):
+    if os.name != "nt":
+        from app.platform.linux.storage import move_new
+        move_new(source, destination)
+        return
+    if not hasattr(ctypes, "WinDLL"):
         raise OSError("MoveFileExW is unavailable on this platform.")
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     move_file = kernel32.MoveFileExW  # type: ignore[attr-defined]

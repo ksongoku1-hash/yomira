@@ -93,14 +93,14 @@
 }
 
 .recoveryPanel {
-  border-color: #8a6734;
-  background: #211b12;
+  border-color: var(--warning-border, #8a6734);
+  background: var(--warning-surface, #211b12);
 }
 
 .recoveryPanel p {
   max-width: 65rem;
   margin: 0;
-  color: #e1d5bf;
+  color: var(--warning, #e1d5bf);
   line-height: 1.55;
 }
 
@@ -144,11 +144,11 @@
 }
 
 .stateOk {
-  color: #b3f5ce;
+  color: var(--success, #b3f5ce);
 }
 
 .stateWarning {
-  color: #f5d9a8;
+  color: var(--warning, #f5d9a8);
 }
 
 .statusText,
@@ -164,9 +164,9 @@
   gap: 0.65rem;
   min-width: 0;
   padding: 0.9rem;
-  border: 1px solid #754044;
+  border: 1px solid var(--error-border, #754044);
   border-radius: 0.6rem;
-  background: #211619;
+  background: var(--error-surface, #211619);
   color: var(--text-secondary);
 }
 
@@ -192,7 +192,7 @@
 
 .errorMeta code,
 .checkMeta code {
-  color: #ffd5d8;
+  color: var(--error-text, #ffd5d8);
   overflow-wrap: anywhere;
 }
 
@@ -278,26 +278,26 @@
 
 .statusOk {
   border-color: #24754c;
-  background: #10251b;
-  color: #b3f5ce;
+  background: var(--success-surface, #10251b);
+  color: var(--success, #b3f5ce);
 }
 
 .statusWarning {
-  border-color: #8a6734;
-  background: #282012;
-  color: #f5d9a8;
+  border-color: var(--warning-border, #8a6734);
+  background: var(--warning-surface, #282012);
+  color: var(--warning, #f5d9a8);
 }
 
 .statusError {
-  border-color: #754044;
-  background: #2a171a;
-  color: #ffc6cb;
+  border-color: var(--error-border, #754044);
+  background: var(--error-surface, #2a171a);
+  color: var(--error-text, #ffc6cb);
 }
 
 .statusUnknown {
   border-color: #59616b;
-  background: #1b2026;
-  color: #d3d8df;
+  background: var(--surface-soft, #1b2026);
+  color: var(--text-secondary, #d3d8df);
 }
 
 .checkMessage {

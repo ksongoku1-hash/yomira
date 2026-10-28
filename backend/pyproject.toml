@@ -14,6 +14,5 @@ select = ["E", "F", "I", "UP", "B"]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 include = ["app", "tests"]
+exclude = ["app/platform/linux"]
 reportMissingTypeStubs = false
-
-

@@ -120,3 +120,17 @@ describe("local series covers", () => {
     expect(within(library).getByText("Fantasía · Acción")).toBeInTheDocument();
   });
 });
+
+
+it("retries a failed library cover on refresh even when its metadata did not change", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => response({
+    data: [wireSeries], meta: { limit: 100, offset: 0, total: 1 },
+  })));
+  renderPage(<LibraryPage />);
+  const image = await screen.findByRole("img", { name: "Portada de Berserk" });
+  const original = image.getAttribute("src");
+  fireEvent.error(image);
+  expect(screen.getByRole("img", { name: "Vista previa no disponible: Berserk" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Actualizar biblioteca" }));
+  expect((await screen.findByRole("img", { name: "Portada de Berserk" })).getAttribute("src")).not.toBe(original);
+});

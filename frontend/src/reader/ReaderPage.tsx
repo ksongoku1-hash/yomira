@@ -24,10 +24,15 @@ import type { ReaderChapter, ReaderSettings } from "../api/client";
 import { compareConnectorChapters, currentConnectorChapter } from "../api/chapterOrder";
 import { readReaderPreferences, saveReaderPreferences } from "./readerPreferences";
 import { anchorAt, fittedPageWidth, readReaderAnchor, saveReaderAnchor, verticalLayout } from "./readerPresentation";
-import { requestReaderPage } from "./readerPageRequests";
+import { prioritizeReaderPage, requestReaderPage } from "./readerPageRequests";
 import { prepareOnlineChapter, warmOnlineChapter } from "./prepareOnlineChapter";
 import { ReaderPageCache } from "./readerPageCache";
 import { ReaderDownloads } from "./ReaderDownloads";
+import { ReaderSavedPanel } from "./ReaderSavedPanel";
+import { ReaderNextChapter } from "./ReaderNextChapter";
+import { readReaderLibrary, type ReaderWorkPreferences } from "./readerLibrary";
+import { loadReaderLibrary, putReaderWorkPreferences, readerLibraryError, READER_LIBRARY_QUERY_KEY } from "../api/readerLibrary";
+import { detectReaderFormat, formatPreferences } from "./readerFormat";
 import { ActionIcon } from "../app/ActionIcon";
 import type { CachedReaderPage, EvictedReaderPage } from "./readerPageCache";
 import styles from "./ReaderPage.module.css";
@@ -415,7 +420,20 @@ export function ReaderPage() {
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [chaptersOpen, setChaptersOpen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(presentation.visibility !== "manual");
+  const [scrolling, setScrolling] = useState(false);
+  const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canvasInteractionRef = useRef(false);
+  useEffect(() => () => {
+    if (scrollIdleTimerRef.current !== null) clearTimeout(scrollIdleTimerRef.current);
+  }, []);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [readerLibrary, setReaderLibrary] = useState(readReaderLibrary);
+  const [workSaveFailed, setWorkSaveFailed] = useState(false);
+  const locallyEditedWorksRef = useRef(new Set<string>());
+  const workLayoutRef = useRef<string | null>(null);
+  const [savedToolsOpen, setSavedToolsOpen] = useState(false);
+  const savedToolsButtonRef = useRef<HTMLButtonElement>(null);
+  const automaticallyAppliedRef = useRef<string | null>(null);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   const [jumpPage, setJumpPage] = useState("1");
   const optionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -434,10 +452,10 @@ export function ReaderPage() {
   const [screenWidth, setScreenWidth] = useState(() => window.innerWidth);
   const activityRef = useRef(0);
   const controlsRef = useRef<HTMLDivElement>(null);
-  const controlsHidden = presentation.visibility !== "always" && !controlsVisible && !chaptersOpen;
+  const controlsHidden = !controlsVisible && !chaptersOpen && !savedToolsOpen;
   useEffect(() => {
-    setPresentationSaveFailed(!saveReaderPreferences({ ...presentation, zoom, fit, immersive, continuous, autoChapter }));
-  }, [presentation, zoom, fit, immersive, continuous, autoChapter]);
+    setPresentationSaveFailed(!saveReaderPreferences({ ...presentation, zoom, fit, immersive, autoChapter }));
+  }, [presentation, zoom, fit, immersive, autoChapter]);
   const anchorRef = useRef({ chapterId, page: 1, fraction: 0 });
   const anchorSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canvasAnchorRef = useRef<{ chapterId: string; mode: "single" | "double";
@@ -515,10 +533,28 @@ export function ReaderPage() {
   const chapter = online && (chapterQuery.isFetching || chapterQuery.isError) ? undefined : chapterQuery.data;
   const readerCacheIdentity = chapter === undefined ? null :
     `${chapter.chapterId}:${online ? chapterQuery.dataUpdatedAt : "local"}`;
+  const libraryQuery = useQuery({ queryKey: READER_LIBRARY_QUERY_KEY, queryFn: loadReaderLibrary,
+    enabled: chapter !== undefined, staleTime: 30_000, retry: false, refetchOnWindowFocus: true });
+  const profileSave = useMutation({ mutationFn: ({ seriesId, preferences }: { seriesId: string; preferences: ReaderWorkPreferences }) =>
+    putReaderWorkPreferences(seriesId, preferences),
+    onMutate: () => queryClient.cancelQueries({ queryKey: READER_LIBRARY_QUERY_KEY }),
+    onSuccess: (value) => { queryClient.setQueryData(READER_LIBRARY_QUERY_KEY, value); setWorkSaveFailed(false); },
+    onError: () => setWorkSaveFailed(true),
+  });
+  const { mutate: saveWorkProfile } = profileSave;
+  useEffect(() => {
+    if (!libraryQuery.data) return;
+    const saved = libraryQuery.data;
+    setReaderLibrary((current) => ({ ...saved, preferences: [
+      ...saved.preferences.filter((item) => !locallyEditedWorksRef.current.has(item.seriesId)),
+      ...current.preferences.filter((item) => locallyEditedWorksRef.current.has(item.seriesId)),
+    ] }));
+  }, [libraryQuery.data]);
+  const metadataSeriesId = chapter?.seriesId ?? originatingSeriesIdFromState(location.state);
   const seriesQuery = useQuery({
-    queryKey: ["series", chapter?.seriesId],
-    queryFn: () => getSeriesDetail(chapter!.seriesId),
-    enabled: chapter !== undefined,
+    queryKey: ["series", metadataSeriesId],
+    queryFn: () => getSeriesDetail(metadataSeriesId!),
+    enabled: metadataSeriesId !== null,
   });
   const adjacentQuery = useQuery({
     queryKey: ["reader-adjacent", chapter?.seriesId, chapterId, online ? "online" : "local"],
@@ -556,7 +592,46 @@ export function ReaderPage() {
     queryFn: getReaderSettings,
     retry: false,
   });
-  const readerSettings = readerSettingsDraft ?? readerSettingsQuery.data ?? DEFAULT_READER_SETTINGS;
+  const baseReaderSettings = readerSettingsDraft ?? readerSettingsQuery.data ?? DEFAULT_READER_SETTINGS;
+  const workProfile = readerLibrary.preferences.find((item) => item.seriesId === chapter?.seriesId);
+  const readerSettings = workProfile ? { ...baseReaderSettings, mode: workProfile.mode, rtl: workProfile.rtl } : baseReaderSettings;
+  const detectedFormat = useMemo(() => detectReaderFormat(seriesQuery.data?.genres ?? [],
+    routeChapterIdRef.current === chapterId ? [...pageRatios.values()] : []),
+    [seriesQuery.data?.genres, pageRatios, chapterId]);
+  const applyWorkProfile = useCallback((preferences: ReaderWorkPreferences) => {
+    if (!chapter) return;
+    flushCanvasAnchor();
+    canvasAnchorRef.current = null;
+    canvasRestoredRef.current = false;
+    pendingScrollPageRef.current = page;
+    anchorRef.current = { chapterId: chapter.chapterId, page, fraction: readReaderAnchor(chapter.chapterId, page)?.fraction ?? 0 };
+    setContinuous(preferences.continuous);
+    locallyEditedWorksRef.current.add(chapter.seriesId);
+    saveWorkProfile({ seriesId: chapter.seriesId, preferences });
+    setReaderLibrary((current) => ({ ...current, preferences: [
+      ...current.preferences.filter((item) => item.seriesId !== chapter.seriesId),
+      { ...preferences, seriesId: chapter.seriesId },
+    ] }));
+  }, [chapter, page, flushCanvasAnchor, saveWorkProfile]);
+  useLayoutEffect(() => {
+    if (!chapter) return;
+    const key = `${chapter.chapterId}:${readerSettings.mode}:${readerSettings.rtl}:${workProfile?.continuous ?? presentation.continuous}`;
+    if (workLayoutRef.current !== null && workLayoutRef.current !== key) {
+      flushCanvasAnchor(); canvasAnchorRef.current = null; canvasRestoredRef.current = false;
+      pendingScrollPageRef.current = pageRef.current;
+      anchorRef.current = { chapterId: chapter.chapterId, page: pageRef.current,
+        fraction: readReaderAnchor(chapter.chapterId, pageRef.current)?.fraction ?? 0 };
+    }
+    workLayoutRef.current = key;
+    setContinuous(workProfile?.continuous ?? presentation.continuous);
+  }, [chapter, readerSettings.mode, readerSettings.rtl, workProfile?.continuous, presentation.continuous, flushCanvasAnchor]);
+  useEffect(() => {
+    if (!libraryQuery.isSuccess || !chapter || routeChapterIdRef.current !== chapterId || workProfile?.format !== "auto" || !detectedFormat || automaticallyAppliedRef.current === chapter.chapterId) return;
+    automaticallyAppliedRef.current = chapter.chapterId;
+    // A late metadata response must not change the layout while someone is already reading.
+    if (interactedChapterRef.current === chapter.chapterId) return;
+    applyWorkProfile(detectedFormat.preferences);
+  }, [chapter, chapterId, workProfile?.format, detectedFormat, applyWorkProfile, libraryQuery.isSuccess]);
   const mode = readerSettings.mode === "double" && screenWidth < 700 ? "single" : readerSettings.mode;
   const rtl = readerSettings.rtl;
   const eReader = readerSettings.e_reader;
@@ -612,6 +687,9 @@ export function ReaderPage() {
     const resource = pageResources.get(number);
     return resource?.chapterId === readerChapterId && resource.kind === "ready";
   });
+  const currentPageResource = pageResources.get(page);
+  const canBookmark = progressQuery.isSuccess && progressQuery.fetchStatus !== "fetching" &&
+    currentPageResource?.chapterId === readerChapterId && currentPageResource?.kind === "ready" && currentPageResource.decoded;
   const jumpTarget = Number(jumpPage);
   const validJump = chapter !== undefined && Number.isSafeInteger(jumpTarget)
     && jumpPage.trim() !== "" && jumpTarget >= 1 && jumpTarget <= chapter.pageCount;
@@ -622,7 +700,7 @@ export function ReaderPage() {
 
   const updateReaderSettings = (updates: Partial<ReaderSettings>) => {
     if (!settingsAvailable) return;
-    const nextSettings: ReaderSettings = { ...readerSettings, ...updates };
+    const nextSettings: ReaderSettings = { ...baseReaderSettings, ...updates };
     const generation = settingsWriteGenerationRef.current + 1;
     settingsWriteGenerationRef.current = generation;
     setReaderSettingsDraft(nextSettings);
@@ -680,7 +758,11 @@ export function ReaderPage() {
     setPageRatios(new Map());
     setAtVerticalEnd(false);
     setControlsVisible(presentation.visibility !== "manual");
-    setNavigatorOpen(false);
+    setScrolling(false);
+    canvasInteractionRef.current = false;
+    if (scrollIdleTimerRef.current !== null) clearTimeout(scrollIdleTimerRef.current);
+    scrollIdleTimerRef.current = null;
+    setNavigatorOpen(false); setSavedToolsOpen(false);
     programScrollRef.current = null;
     scrollInteractionRef.current = false;
     setProgressSaveView({ chapterId, status: "idle" });
@@ -725,20 +807,37 @@ export function ReaderPage() {
 
     restoredProgressChapterRef.current = readerChapterId;
     if (interactedChapterRef.current === readerChapterId) return;
-    const restoredPage = progressQuery.data === null
+    const requestedBookmark = location.state && typeof location.state === "object" && "readerBookmarkPage" in location.state
+      ? location.state.readerBookmarkPage : null;
+    const bookmarkPage = originatingSeriesIdFromState(location.state) === chapter.seriesId &&
+      typeof requestedBookmark === "number" && Number.isSafeInteger(requestedBookmark) &&
+      requestedBookmark >= 1 && requestedBookmark <= chapter.pageCount ? requestedBookmark : null;
+    const restoredPage = bookmarkPage ?? (progressQuery.data === null
       ? 1
-      : Math.min(chapter.pageCount, progressQuery.data.pageIndex + 1);
+      : Math.min(chapter.pageCount, progressQuery.data.pageIndex + 1));
     const savedAnchor = progressQuery.data === null ? null : readReaderAnchor(readerChapterId, restoredPage);
     anchorRef.current = { chapterId: readerChapterId, page: restoredPage, fraction: savedAnchor?.fraction ?? 0 };
     pendingScrollPageRef.current = restoredPage;
     setAnchorRevision((current) => current + 1);
-    updatePagePosition(restoredPage, false);
+    const bookmarkAtCurrentPage = bookmarkPage !== null && pageRef.current === restoredPage;
+    updatePagePosition(restoredPage, bookmarkPage !== null);
+    if (bookmarkPage !== null) {
+      if (bookmarkAtCurrentPage) {
+        interactedChapterRef.current = readerChapterId;
+        if (online) pendingOnlineProgressRef.current = { chapterId: readerChapterId, page: restoredPage };
+        else enqueueChapterProgressSave(readerChapterId, restoredPage - 1);
+      }
+      const nextState = { ...location.state };
+      delete nextState.readerBookmarkPage;
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: nextState });
+    }
   }, [
     chapter,
     progressQuery.data,
     progressQuery.fetchStatus,
     progressQuery.isSuccess,
     readerChapterId,
+    location.state, location.pathname, location.search, navigate, online,
   ]);
 
   useEffect(() => {
@@ -890,6 +989,9 @@ export function ReaderPage() {
       if (suppressedPreloadPagesRef.current.has(pageNumber)) continue;
       const activeResource = pageResourcesRef.current.get(pageNumber);
       if (activeResource !== undefined) {
+        if (activeResource.kind === "loading" && currentOrVisiblePages.has(pageNumber)) {
+          prioritizeReaderPage(activeResource.controller.signal);
+        }
         if (activeResource.kind === "ready") pageCacheRef.current.get(pageNumber);
         continue;
       }
@@ -1110,12 +1212,12 @@ export function ReaderPage() {
   }, [chapterId, mode]);
 
   useEffect(() => {
-    if (presentation.visibility !== "auto" || !controlsVisible || downloadsOpen || chaptersOpen || optionsOpen || navigatorOpen || progressQuery.isError || readerSettingsQuery.isError || fullscreenMessage.length > 0 || progressSaveView.status === "error" || settingsSaveStatus === "error") return;
+    if (presentation.visibility !== "auto" || !controlsVisible || downloadsOpen || chaptersOpen || optionsOpen || navigatorOpen || savedToolsOpen || progressQuery.isError || readerSettingsQuery.isError || fullscreenMessage.length > 0 || progressSaveView.status === "error" || settingsSaveStatus === "error") return;
     const timer = setTimeout(() => {
       if (!controlsRef.current?.contains(document.activeElement)) setControlsVisible(false);
     }, 3000);
     return () => clearTimeout(timer);
-  }, [presentation.visibility, controlsVisible, downloadsOpen, chaptersOpen, optionsOpen, navigatorOpen, activity, progressQuery.isError, readerSettingsQuery.isError, fullscreenMessage, progressSaveView.status, settingsSaveStatus]);
+  }, [presentation.visibility, controlsVisible, downloadsOpen, chaptersOpen, optionsOpen, navigatorOpen, savedToolsOpen, activity, progressQuery.isError, readerSettingsQuery.isError, fullscreenMessage, progressSaveView.status, settingsSaveStatus]);
 
   useEffect(() => {
     if (settingsSaveStatus !== "saved") return;
@@ -1131,13 +1233,6 @@ export function ReaderPage() {
     const timer = setTimeout(() => { void warmOnlineChapter(queryClient, next).catch(() => {}); }, 300);
     return () => clearTimeout(timer);
   }, [online, chapter, page, pageResources, adjacentQuery.data, queryClient, effectivePreloadAhead]);
-
-  useEffect(() => {
-    if (!autoChapter || !atVerticalEnd || mode !== "vertical" || adjacentQuery.data?.next == null || progressSaveView.status !== "saved" || onlineTransition.isPending || onlineTransition.isError) return;
-    const next = adjacentQuery.data.next;
-    const timer = setTimeout(() => openAdjacentChapter(next), 5000);
-    return () => clearTimeout(timer);
-  }, [autoChapter, atVerticalEnd, mode, adjacentQuery.data, openAdjacentChapter, progressSaveView.status, onlineTransition.isPending, onlineTransition.isError]);
 
   useEffect(() => () => {
     clearReaderPageResources(pageCacheRef.current, pageResourcesRef.current);
@@ -1245,6 +1340,20 @@ export function ReaderPage() {
     }
   };
 
+  const showScrollActivity = (viewport: HTMLDivElement) => {
+    setScrolling(true);
+    if (scrollIdleTimerRef.current !== null) clearTimeout(scrollIdleTimerRef.current);
+    scrollIdleTimerRef.current = setTimeout(() => {
+      scrollIdleTimerRef.current = null;
+      setScrolling(false);
+    }, 900);
+    if (downloadsOpen || chaptersOpen || optionsOpen || navigatorOpen || savedToolsOpen
+      || progressQuery.isError || readerSettingsQuery.isError || fullscreenMessage.length > 0
+      || progressSaveView.status === "error" || settingsSaveStatus === "error") return;
+    if (controlsRef.current?.contains(document.activeElement)) viewport.focus({ preventScroll: true });
+    setControlsVisible(false);
+  };
+
   const handleCanvasScroll = (viewport: HTMLDivElement) => {
     const anchor = canvasAnchorRef.current;
     if (!canvasRestoredRef.current || anchor === null
@@ -1253,6 +1362,7 @@ export function ReaderPage() {
     if (programmed !== null && Math.abs(programmed.top - viewport.scrollTop) < 1
       && Math.abs(programmed.left - viewport.scrollLeft) < 1) return;
     canvasProgramScrollRef.current = null;
+    if (canvasInteractionRef.current) showScrollActivity(viewport);
     const content = viewport.firstElementChild?.getBoundingClientRect();
     if (content === undefined || content.width <= 0 || content.height <= 0) return;
     const saved = { ...anchor, fraction: Math.min(0.999, Math.max(0, viewport.scrollTop / content.height)),
@@ -1269,6 +1379,7 @@ export function ReaderPage() {
       return;
     }
     if (!scrollInteractionRef.current) return;
+    if (verticalViewportRef.current !== null) showScrollActivity(verticalViewportRef.current);
     const anchor = anchorAt(layout.offsets, scrollTop);
     anchorRef.current = { chapterId, ...anchor };
     const viewport = verticalViewportRef.current;
@@ -1317,20 +1428,13 @@ export function ReaderPage() {
     });
   };
 
-  const changeMode = (nextMode: ReaderMode) => {
-    if (readerSettings.mode === nextMode) return;
-    flushCanvasAnchor();
-    canvasAnchorRef.current = null;
-    canvasRestoredRef.current = false;
-    if (nextMode === "vertical") {
-      pendingScrollPageRef.current = page;
-      anchorRef.current = { chapterId, page, fraction: readReaderAnchor(chapterId, page)?.fraction ?? 0 };
-    }
-    updateReaderSettings({ mode: nextMode });
+  const changeMode = (nextMode: ReaderMode, nextContinuous = continuous) => {
+    if (readerSettings.mode === nextMode && continuous === nextContinuous) return;
+    applyWorkProfile({ format: "custom", mode: nextMode, rtl, continuous: nextContinuous });
   };
 
   const changeRtl = (nextRtl: boolean) => {
-    updateReaderSettings({ rtl: nextRtl });
+    applyWorkProfile({ format: "custom", mode: readerSettings.mode, rtl: nextRtl, continuous });
   };
 
   const changeEReaderProfile = (enabled: boolean) => {
@@ -1338,14 +1442,15 @@ export function ReaderPage() {
   };
 
   const handleReaderKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key === "Escape" && (optionsOpen || navigatorOpen)) {
+    if (event.key === "Escape" && (optionsOpen || navigatorOpen || savedToolsOpen)) {
       event.preventDefault();
-      if (navigatorOpen) { setNavigatorOpen(false); navigatorButtonRef.current?.focus(); }
+      if (savedToolsOpen) { setSavedToolsOpen(false); savedToolsButtonRef.current?.focus(); }
+      else if (navigatorOpen) { setNavigatorOpen(false); setSavedToolsOpen(false); navigatorButtonRef.current?.focus(); }
       else { setOptionsOpen(false); optionsButtonRef.current?.focus(); }
       return;
     }
     if (event.key !== "Escape" && event.target instanceof Element &&
-      event.target.closest("#reader-options, #reader-navigator")) return;
+      event.target.closest("#reader-options, #reader-navigator, #reader-saved")) return;
     if (
       event.defaultPrevented ||
       event.ctrlKey ||
@@ -1373,7 +1478,7 @@ export function ReaderPage() {
       case "Escape":
         setDownloadsOpen(false); setChaptersOpen(false);
         setOptionsOpen(false);
-        setNavigatorOpen(false);
+        setNavigatorOpen(false); setSavedToolsOpen(false);
         if (document.fullscreenElement === readerRootRef.current) toggleFullscreen();
         setImmersive(false);
         setPresentation((value) => ({ ...value, visibility: "always" }));
@@ -1451,6 +1556,7 @@ export function ReaderPage() {
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    canvasInteractionRef.current = true;
     canvasProgramScrollRef.current = null;
     if ((event.target as HTMLElement).closest("button,a,input,summary") !== null) return;
     handleTouchPointerDown(event);
@@ -1537,18 +1643,15 @@ export function ReaderPage() {
     naturalWidth: number,
     naturalHeight: number,
   ) => {
+    const resource = pageResourcesRef.current.get(pageNumber);
+    if (resource?.kind !== "ready" || resource.chapterId !== readerChapterId) return;
     if (naturalWidth > 0 && naturalHeight > 0 && pageRatios.get(pageNumber) !== naturalWidth / naturalHeight) {
       setPageRatios((current) => new Map(current).set(pageNumber, naturalWidth / naturalHeight));
     }
     if (mode !== "vertical" && (pageNumber === page || (mode === "double" && pageNumber === page + 1))) {
       setAnchorRevision((current) => current + 1);
     }
-    const resource = pageResourcesRef.current.get(pageNumber);
-    if (
-      resource?.kind !== "ready" ||
-      resource.chapterId !== readerChapterId ||
-      resource.decoded
-    ) return;
+    if (resource.decoded) return;
     const decodedBytes = Math.max(0, naturalWidth * naturalHeight * 4);
     const decodedResource: CachedReaderPage = {
       ...resource,
@@ -1628,6 +1731,7 @@ export function ReaderPage() {
     }
     return (
       <img
+        key={`${readerChapterId}:${pageNumber}:${resource.url}`}
         alt={`${chapter.displayLabel}, página ${pageNumber} de ${chapter.pageCount}`}
         className={pageImageClass(vertical, fit)}
         onLoad={(event) => markPageDecoded(
@@ -1652,15 +1756,16 @@ export function ReaderPage() {
 
   return (
     <section
-      className={`${styles.page} ${eReader ? styles.ereaderProfile : ""} ${immersive ? styles.immersive : ""} ${continuous ? styles.continuous : ""} ${presentation.compact ? styles.compact : ""} ${nextDisabled || atVerticalEnd ? styles.chapterFinished : ""}`}
+      className={`${styles.page} ${scrolling ? styles.scrolling : ""} ${eReader ? styles.ereaderProfile : ""} ${immersive ? styles.immersive : ""} ${continuous ? styles.continuous : ""} ${presentation.compact ? styles.compact : ""} ${nextDisabled || atVerticalEnd ? styles.chapterFinished : ""}`}
       aria-labelledby="reader-title"
       style={{ "--reader-top": `${chromeSize.top}px`, "--reader-bottom": `${chromeSize.bottom}px`,
         "--reader-background": eReader ? "#fff" : presentation.background === "sepia" ? "#e8dcc4" : presentation.background === "light" ? "#e9edf2" : "#080c13",
         "--reader-brightness": eReader ? 1 : presentation.brightness / 100,
+        "--reader-page-clip": rtl ? "0 0 0 8%" : "0 8% 0 0",
       } as CSSProperties}
       onKeyDown={handleReaderKeyDown}
       onMouseMove={(event) => {
-        if (presentation.visibility !== "auto" || event.buttons !== 0) return;
+        if (presentation.visibility !== "auto" || event.buttons !== 0 || scrollIdleTimerRef.current !== null) return;
         if (controlsHidden && (event.target as Element).closest("button,a,input,select,textarea")) return;
         const bounds = event.currentTarget.getBoundingClientRect();
         if (mode === "vertical" && event.clientY > bounds.top + chromeSize.top + 12 && event.clientY < bounds.bottom - chromeSize.bottom - 12) return;
@@ -1684,13 +1789,18 @@ export function ReaderPage() {
           <ReaderDownloads key={`chapters:${chapter.chapterId}`} chapterId={chapter.chapterId}
             headingId="reader-title" displayLabel={chapter.displayLabel}
             open={chaptersOpen} onOpenChange={(open) => {
-              setChaptersOpen(open); setDownloadsOpen(false); setOptionsOpen(false); setNavigatorOpen(false);
+              setChaptersOpen(open); setDownloadsOpen(false); setOptionsOpen(false); setNavigatorOpen(false); setSavedToolsOpen(false);
             }} navigation={{ chapter, onRead: openAdjacentChapter, isPending: onlineTransition.isPending, isError: onlineTransition.isError }} />
           </div>
         </div>
         <div className={styles.headerActions}>
+          <button className={`${styles.secondaryButton} ${styles.iconButton}`} type="button"
+            ref={savedToolsButtonRef} aria-label="Marcadores e historial" title="Marcadores e historial"
+            aria-controls="reader-saved" aria-expanded={savedToolsOpen} onClick={() => {
+              setSavedToolsOpen(!savedToolsOpen); setDownloadsOpen(false); setChaptersOpen(false); setOptionsOpen(false); setNavigatorOpen(false);
+            }}><ActionIcon name="bookmark" /></button>
           <ReaderDownloads key={chapter.chapterId} chapterId={chapter.chapterId} displayLabel={chapter.displayLabel} online={online} open={downloadsOpen} onOpenChange={(open) => {
-            setDownloadsOpen(open); setChaptersOpen(false); setOptionsOpen(false); setNavigatorOpen(false);
+            setDownloadsOpen(open); setChaptersOpen(false); setOptionsOpen(false); setNavigatorOpen(false); setSavedToolsOpen(false);
           }} />
         <button
           aria-pressed={isFullscreen}
@@ -1705,7 +1815,7 @@ export function ReaderPage() {
           <button className={`${styles.secondaryButton} ${styles.toolbarButton}`} aria-expanded={optionsOpen} aria-controls="reader-options"
             ref={optionsButtonRef}
             aria-label="Opciones de lectura" title="Opciones de lectura"
-            onClick={() => { setOptionsOpen(!optionsOpen); setDownloadsOpen(false); setChaptersOpen(false); setNavigatorOpen(false); }} type="button">
+            onClick={() => { setOptionsOpen(!optionsOpen); setDownloadsOpen(false); setChaptersOpen(false); setNavigatorOpen(false); setSavedToolsOpen(false); }} type="button">
             <ActionIcon name="settings" /><span className={styles.toolbarLabel}>Opciones de lectura</span>
           </button>
         </div>
@@ -1788,7 +1898,7 @@ export function ReaderPage() {
             ) : null}
             <button
               className={styles.secondaryButton}
-              onClick={() => updateReaderSettings(readerSettingsDraft ?? readerSettings)}
+              onClick={() => updateReaderSettings(baseReaderSettings)}
               type="button"
             >
               Reintentar preferencias
@@ -1805,6 +1915,8 @@ export function ReaderPage() {
         <p className={styles.settingsMessage} role="status">{fullscreenMessage}</p>
       ) : null}
 
+      {savedToolsOpen ? <ReaderSavedPanel chapter={chapter} page={page} canBookmark={canBookmark}
+        onPage={goToPage} onClose={() => { setSavedToolsOpen(false); savedToolsButtonRef.current?.focus(); }} /> : null}
       {optionsOpen ? <div id="reader-options" className={styles.optionsPanel}>
         <div className={styles.panelHeading}>
           <div><h2>Configuración de lectura</h2><p className={styles.panelHint}>Los cambios se aplican al instante.</p></div>
@@ -1820,6 +1932,30 @@ export function ReaderPage() {
           </div>
           <span className={styles.previewTag} aria-hidden="true">{rtl ? "RTL" : "LTR"} · {Math.round(zoom * 100)}%</span>
         </div>
+        <fieldset className={styles.optionGroup}><legend>Perfil de esta obra</legend>
+          <label className={styles.controlLabel} htmlFor="reader-work-format">Tipo y modo de lectura</label>
+          <select id="reader-work-format" className={styles.formatSelect} value={workProfile?.format ?? "custom"}
+            onChange={(event) => {
+              const format = event.currentTarget.value;
+              if (format === "auto") {
+                automaticallyAppliedRef.current = detectedFormat ? chapter.chapterId : null;
+                applyWorkProfile(detectedFormat?.preferences ?? { format: "auto", mode: readerSettings.mode, rtl, continuous });
+              } else if (format === "manga" || format === "manhwa" || format === "comic") applyWorkProfile(formatPreferences(format));
+              else applyWorkProfile({ format: "custom", mode: readerSettings.mode, rtl, continuous });
+            }}>
+            <option value="custom">Personalizado</option><option value="auto">Automático</option>
+            <option value="manga">Manga</option><option value="manhwa">Manhwa / Webtoon</option><option value="comic">Cómic</option>
+          </select>
+          <p className={styles.panelHint}>{detectedFormat ? `Detectado: ${detectedFormat.label}. ${detectedFormat.reason}`
+            : "Sin datos suficientes para reconocer el formato. Se conservan tus ajustes."}</p>
+          <p className={styles.panelHint}>Elige Automático para usar la detección. Tus correcciones se guardan por obra en la biblioteca de Yomira.</p>
+          {libraryQuery.isError ? <div role="alert"><p>{readerLibraryError(libraryQuery.error)}</p>
+            <button className={styles.secondaryButton} type="button" onClick={() => void libraryQuery.refetch()}>Reintentar datos del lector</button></div> : null}
+          {libraryQuery.data?.migrationWarning ? <p role="status">{libraryQuery.data.migrationWarning}</p> : null}
+          {profileSave.isPending ? <p role="status">Guardando perfil en la biblioteca…</p> : null}
+          {workSaveFailed ? <div role="alert"><p>No se pudo guardar el perfil en la biblioteca. Se aplica durante esta sesión; los datos anteriores se conservan.</p>
+            {workProfile ? <button className={styles.secondaryButton} type="button" onClick={() => applyWorkProfile(workProfile)}>Reintentar perfil</button> : null}</div> : null}
+        </fieldset>
         <fieldset className={styles.optionGroup}><legend>Lectura</legend>
           <div className={styles.modeTiles} role="group" aria-label="Modo de lectura">
             {([
@@ -1830,7 +1966,8 @@ export function ReaderPage() {
               aria-pressed={(mode === "vertical" && continuous ? "webtoon" : mode) === nextMode}
               onClick={() => {
                 if (nextMode === "vertical" || nextMode === "webtoon") setContinuous(nextMode === "webtoon");
-                changeMode(nextMode === "webtoon" ? "vertical" : nextMode);
+                changeMode(nextMode === "webtoon" ? "vertical" : nextMode,
+                  nextMode === "vertical" || nextMode === "webtoon" ? nextMode === "webtoon" : continuous);
               }}><ActionIcon name={icon} />{label}</button>)}
           </div>
           {readerSettings.mode === "double" && mode === "single" ? <p className={styles.panelHint}>La doble página se recuperará al ampliar la pantalla.</p> : null}
@@ -1899,7 +2036,7 @@ export function ReaderPage() {
       <div className={styles.preferenceFields}>
         <div><p className={styles.controlLabel}>Visibilidad de controles</p>
           <div className={styles.segmented} role="group" aria-label="Visibilidad de controles">
-            {([ ["manual", "Manual"], ["auto", "Auto-ocultar"], ["always", "Siempre visibles"] ] as const).map(([visibility, label]) =>
+            {([ ["manual", "Manual"], ["auto", "Auto-ocultar"], ["always", "Ocultar al desplazar"] ] as const).map(([visibility, label]) =>
               <button key={visibility} className={styles.secondaryButton} type="button" aria-pressed={presentation.visibility === visibility}
                 onClick={() => {
                   setPresentation((value) => ({ ...value, visibility })); setControlsVisible(true);
@@ -1965,17 +2102,17 @@ export function ReaderPage() {
       {navigatorOpen ? <form id="reader-navigator" className={styles.navigator} onSubmit={(event) => {
         event.preventDefault();
         if (!validJump) return;
-        goToPage(jumpTarget); setNavigatorOpen(false); navigatorButtonRef.current?.focus();
+        goToPage(jumpTarget); setNavigatorOpen(false); setSavedToolsOpen(false); navigatorButtonRef.current?.focus();
       }}>
         <label>Ir a la página <input ref={jumpInputRef} type="number" min={1} max={chapter.pageCount} required
           value={jumpPage} onChange={(event) => setJumpPage(event.target.value)} /></label>
         <button className={styles.secondaryButton} disabled={!validJump} type="submit">Ir</button>
-        <button className={styles.secondaryButton} type="button" onClick={() => { setNavigatorOpen(false); navigatorButtonRef.current?.focus(); }}>Cerrar páginas</button>
+        <button className={styles.secondaryButton} type="button" onClick={() => { setNavigatorOpen(false); setSavedToolsOpen(false); navigatorButtonRef.current?.focus(); }}>Cerrar páginas</button>
         <div className={styles.thumbnails}>{previewPages.map((number) => {
           const resource = pageResources.get(number);
           return <button className={styles.thumbnail} type="button" key={number} aria-label={`Ir a página ${number}`}
             aria-current={number === page ? "page" : undefined}
-            onClick={() => { goToPage(number); setNavigatorOpen(false); navigatorButtonRef.current?.focus(); }}>
+            onClick={() => { goToPage(number); setNavigatorOpen(false); setSavedToolsOpen(false); navigatorButtonRef.current?.focus(); }}>
             {resource?.kind === "ready" ? <img src={resource.url} alt={`Miniatura de página ${number}`} draggable={false}
               onLoad={(event) => markPageDecoded(number, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)} /> : <span>Vista previa</span>}
             <span>{number}</span>
@@ -1997,6 +2134,8 @@ export function ReaderPage() {
           }
           onPointerCancel={() => { touchStartRef.current = null; pointersRef.current.clear(); gestureRef.current = null; }}
           onScroll={(event) => handleCanvasScroll(event.currentTarget)}
+          onWheel={() => { canvasInteractionRef.current = true; canvasProgramScrollRef.current = null; }}
+          onKeyDown={() => { canvasInteractionRef.current = true; canvasProgramScrollRef.current = null; }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handleTouchPointerUp}
@@ -2018,6 +2157,8 @@ export function ReaderPage() {
           ))}
           onPointerCancel={() => { touchStartRef.current = null; pointersRef.current.clear(); gestureRef.current = null; }}
           onScroll={(event) => handleCanvasScroll(event.currentTarget)}
+          onWheel={() => { canvasInteractionRef.current = true; canvasProgramScrollRef.current = null; }}
+          onKeyDown={() => { canvasInteractionRef.current = true; canvasProgramScrollRef.current = null; }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handleTouchPointerUp}
@@ -2093,11 +2234,10 @@ export function ReaderPage() {
         {adjacentQuery.data?.previous ? ("chapterId" in adjacentQuery.data.previous
           ? <Link className={styles.secondaryButton} to={`/reader/${adjacentQuery.data.previous.chapterId}`} state={{ originatingSeriesId: chapter.seriesId }}>Capítulo anterior</Link>
           : <button className={styles.secondaryButton} type="button" disabled={onlineTransition.isPending} onClick={() => openAdjacentChapter(adjacentQuery.data!.previous!)}>Capítulo anterior</button>) : null}
-        {adjacentQuery.data?.next ? ("chapterId" in adjacentQuery.data.next
-          ? <Link className={styles.primaryButton} to={`/reader/${adjacentQuery.data.next.chapterId}`} state={{ originatingSeriesId: chapter.seriesId }}>Siguiente capítulo · {adjacentQuery.data.next.displayLabel}</Link>
-          : <button className={styles.primaryButton} type="button" disabled={onlineTransition.isPending} onClick={() => openAdjacentChapter(adjacentQuery.data!.next!)}>Siguiente capítulo · {adjacentQuery.data.next.displayLabel}</button>)
+        {adjacentQuery.data?.next ? <ReaderNextChapter next={adjacentQuery.data.next}
+          automatic={autoChapter && atVerticalEnd && mode === "vertical" && progressSaveView.status === "saved" && !onlineTransition.isPending && !onlineTransition.isError}
+          disabled={onlineTransition.isPending} onOpen={openAdjacentChapter} onCancel={() => setAutoChapter(false)} />
           : <Link className={styles.secondaryButton} to={readerReturnHref}>Volver a la ficha</Link>}
-        {autoChapter && atVerticalEnd && adjacentQuery.data?.next && !onlineTransition.isPending && !onlineTransition.isError ? <span>El siguiente capítulo se abrirá en 5 segundos. <button type="button" className={styles.secondaryButton} onClick={() => setAutoChapter(false)}>Cancelar avance automático</button></span> : null}
       </footer> : null}
     </section>
   );

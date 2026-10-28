@@ -1,10 +1,15 @@
+vi.mock("../api/readerLibrary", async () => (await import("./readerLibrary.test-support")).readerLibraryFixture());
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/client";
+import * as libraryApi from "../api/readerLibrary";
 import { ReaderPage } from "./ReaderPage";
+import styles from "./ReaderPage.module.css";
 import { readReaderAnchor, saveReaderAnchor } from "./readerPresentation";
+import { readReaderLibrary, saveReaderWorkPreferences } from "./readerLibrary";
+import { readReaderPreferences } from "./readerPreferences";
 
 vi.mock("../api/client", async (importOriginal) => {
   const openChapter = vi.fn();
@@ -19,6 +24,7 @@ vi.mock("../api/client", async (importOriginal) => {
       chapter: await openChapter(...args), progress: await getProgress(args[0]),
     })),
     getReaderDownloadSource: vi.fn(),
+    getRecentReaderProgress: vi.fn(),
     getConnectorChapters: vi.fn(), registerOnlineReaderChapter: vi.fn(),
   };
 });
@@ -27,10 +33,12 @@ const seriesId = "123e4567-e89b-42d3-a456-426614174050";
 const nextId = "223e4567-e89b-42d3-a456-426614174051";
 const settings: api.ReaderSettings = { mode: "single", rtl: false, e_reader: false, preload_ahead: 2, cache_limit_mb: 16 };
 
-function openReader(online = false, gcTime = 0, retry = false) {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry, retryDelay: 0, gcTime } } })}>
-    <MemoryRouter initialEntries={[`/reader/${chapterId}${online ? "?online=1" : ""}`]}><Routes><Route path="/reader/:chapterId" element={<ReaderPage />} /><Route path="/series/:seriesId" element={<h1>Ficha de la serie</h1>} /></Routes></MemoryRouter>
+function openReader(online = false, gcTime = 0, retry = false, state?: unknown) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry, retryDelay: 0, gcTime } } });
+  const view = render(<QueryClientProvider client={queryClient}>
+    <MemoryRouter initialEntries={[{ pathname: `/reader/${chapterId}`, search: online ? "?online=1" : "", state }]}><Routes><Route path="/reader/:chapterId" element={<ReaderPage />} /><Route path="/series/:seriesId" element={<h1>Ficha de la serie</h1>} /></Routes></MemoryRouter>
   </QueryClientProvider>);
+  return { ...view, queryClient };
 }
 function decode(image: HTMLElement, width: number, height: number) {
   Object.defineProperty(image, "complete", { configurable: true, value: true });
@@ -54,6 +62,7 @@ beforeEach(() => {
   vi.mocked(api.openOnlineReaderChapter).mockReset();
   vi.mocked(api.getReaderPageBlob).mockReset();
   vi.mocked(api.getReaderDownloadSource).mockResolvedValue(null);
+  vi.mocked(api.getRecentReaderProgress).mockResolvedValue({ data: [], meta: { limit: 20 } });
   localStorage.clear();
   vi.stubGlobal("URL", class extends URL {
     static createObjectURL = vi.fn(() => "blob:experience");
@@ -74,6 +83,201 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 describe("reading experience", () => {
+
+  it("shows the scrollbar only during user scrolling, hides controls, and permits revealing them again", async () => {
+    vi.mocked(api.getReaderSettings).mockResolvedValue({ ...settings, mode: "vertical" });
+    const view = openReader();
+    await screen.findByRole("img", { name: "Capítulo 1, página 1 de 5" });
+    const viewport = screen.getByRole("region", { name: "Páginas en lectura vertical" });
+    const root = viewport.closest("section")!;
+    expect(root).not.toHaveClass(styles.scrolling!);
+    fireEvent.scroll(viewport, { target: { scrollTop: 10 } });
+    expect(root).not.toHaveClass(styles.scrolling!);
+    expect(screen.getByRole("button", { name: "Opciones de lectura" })).toBeInTheDocument();
+    vi.useFakeTimers();
+    screen.getByRole("button", { name: "Opciones de lectura" }).focus();
+    fireEvent.wheel(viewport);
+    fireEvent.scroll(viewport, { target: { scrollTop: 100 } });
+    expect(root).toHaveClass(styles.scrolling!);
+    expect(viewport).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Opciones de lectura" })).not.toBeInTheDocument();
+    expect(readReaderPreferences().visibility).toBe("always");
+    act(() => vi.advanceTimersByTime(800));
+    fireEvent.scroll(viewport, { target: { scrollTop: 150 } });
+    act(() => vi.advanceTimersByTime(800));
+    expect(root).toHaveClass(styles.scrolling!);
+    act(() => vi.advanceTimersByTime(100));
+    expect(root).not.toHaveClass(styles.scrolling!);
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar controles" }));
+    expect(screen.getByRole("button", { name: "Opciones de lectura" })).toBeInTheDocument();
+    fireEvent.scroll(viewport, { target: { scrollTop: 200 } });
+    fireEvent.keyDown(root, { key: "h" });
+    expect(screen.getByRole("button", { name: "Opciones de lectura" })).toBeInTheDocument();
+    view.unmount();
+    expect(() => act(() => vi.advanceTimersByTime(1000))).not.toThrow();
+  });
+
+  it("keeps open settings usable when their list or the reading surface scrolls", async () => {
+    vi.mocked(api.getReaderSettings).mockResolvedValue({ ...settings, mode: "vertical" });
+    openReader();
+    await screen.findByRole("img", { name: "Capítulo 1, página 1 de 5" });
+    fireEvent.click(screen.getByRole("button", { name: "Opciones de lectura" }));
+    fireEvent.scroll(document.getElementById("reader-options")!, { target: { scrollTop: 100 } });
+    expect(screen.getByRole("button", { name: "Cerrar configuración" })).toBeInTheDocument();
+    const viewport = screen.getByRole("region", { name: "Páginas en lectura vertical" });
+    expect(viewport.closest("section")).not.toHaveClass(styles.scrolling!);
+    fireEvent.wheel(viewport);
+    fireEvent.scroll(viewport, { target: { scrollTop: 120 } });
+    expect(screen.getByRole("button", { name: "Cerrar configuración" })).toBeInTheDocument();
+  });
+
+
+  it("shows the five-second progress only at the actual vertical end and cancels when scrolling back", async () => {
+    vi.mocked(api.getReaderSettings).mockResolvedValue({ ...settings, mode: "vertical" });
+    openReader();
+    await screen.findByRole("img", { name: "Capítulo 1, página 1 de 5" });
+    fireEvent.click(screen.getByRole("button", { name: "Opciones de lectura" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Continuar al siguiente capítulo automáticamente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar configuración" }));
+    for (let index = 0; index < 4; index++) fireEvent.click(screen.getByRole("button", { name: "Página siguiente" }));
+    const last = await screen.findByRole("img", { name: "Capítulo 1, página 5 de 5" });
+    decode(last, 768, 768);
+    const viewport = screen.getByRole("region", { name: "Páginas en lectura vertical" });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 500 });
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 4000 });
+    expect(screen.queryByText(/El siguiente capítulo se abrirá/)).not.toBeInTheDocument();
+    fireEvent.wheel(viewport);
+    fireEvent.scroll(viewport, { target: { scrollTop: 3500 } });
+    await screen.findByText("El siguiente capítulo se abrirá en 5 segundos.");
+    expect(screen.getByRole("link", { name: /Siguiente capítulo.*5 s/ })).toBeInTheDocument();
+    fireEvent.wheel(viewport);
+    fireEvent.scroll(viewport, { target: { scrollTop: 100 } });
+    expect(screen.queryByText(/El siguiente capítulo se abrirá/)).not.toBeInTheDocument();
+  });
+
+  it("opens the saved page before remote profiles arrive and retains it afterwards", async () => {
+    let resolve!: (value: libraryApi.StoredReaderLibrary) => void;
+    vi.mocked(libraryApi.loadReaderLibrary).mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    vi.mocked(api.getReaderProgress).mockResolvedValue({ chapterId, seriesId, pageIndex: 2, percentage: "50.00", updatedAt: "2026-10-25T12:00:00Z" });
+    openReader();
+    await screen.findByRole("img", { name: "Capítulo 1, página 3 de 5" });
+    expect(api.putReaderProgress).not.toHaveBeenCalled();
+    await act(async () => resolve({ libraryId: "123e4567-e89b-42d3-a456-426614174099", storageError: false, migrationWarning: null, bookmarks: [],
+      preferences: [{ seriesId, format: "manhwa", mode: "vertical", rtl: false, continuous: true }] }));
+    await screen.findByRole("region", { name: "Páginas en lectura vertical" });
+    expect(screen.getByRole("button", { name: "Página 3 de 5" })).toBeInTheDocument();
+    expect(api.putReaderProgress).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed global setting without copying this work's layout", async () => {
+    saveReaderWorkPreferences(seriesId, { format: "manga", mode: "single", rtl: true, continuous: false });
+    vi.mocked(api.putReaderSettings).mockRejectedValueOnce(new Error("offline")).mockImplementation(async (value) => value);
+    openReader();
+    await screen.findByRole("img", { name: "Capítulo 1, página 1 de 5" });
+    openAdvancedOptions();
+    fireEvent.click(screen.getByRole("button", { name: "Perfil e-reader" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reintentar preferencias" }));
+    await waitFor(() => expect(api.putReaderSettings).toHaveBeenCalledTimes(2));
+    expect(api.putReaderSettings).toHaveBeenLastCalledWith({ ...settings, e_reader: true });
+    expect(readReaderLibrary().preferences[0]).toMatchObject({ format: "manga", rtl: true });
+    await waitFor(() => expect(screen.queryByText(/No se guardaron las preferencias del lector/)).not.toBeInTheDocument());
+  });
+
+  it("keeps work-specific layouts and image geometry out of another cached work", async () => {
+    const otherSeriesId = "323e4567-e89b-42d3-a456-426614174050";
+    const otherChapter = { chapterId: nextId, seriesId: otherSeriesId, displayLabel: "Capítulo 2", pageCount: 5 };
+    saveReaderWorkPreferences(otherSeriesId, { format: "auto", mode: "single", rtl: false, continuous: false });
+    vi.mocked(api.getReaderChapter).mockImplementation(async (id) => id === nextId ? otherChapter : { chapterId, seriesId, displayLabel: "Capítulo 1", pageCount: 5 });
+    vi.mocked(api.getReaderProgress).mockImplementation(async (id) => ({ chapterId: id, seriesId: id === nextId ? otherSeriesId : seriesId,
+      pageIndex: 0, percentage: "0.00", updatedAt: "2026-10-25T12:00:00Z" }));
+    vi.mocked(api.getRecentReaderProgress).mockResolvedValue({ data: [{ seriesId: otherSeriesId, seriesDisplayTitle: "Otra obra",
+      chapterId: nextId, chapterDisplayLabel: "Capítulo 2", pageIndex: 0, percentage: "0.00", updatedAt: "2026-10-25T12:00:00Z" }], meta: { limit: 20 } });
+    const view = openReader();
+    decode(await screen.findByRole("img", { name: "Capítulo 1, página 1 de 5" }), 700, 10000);
+    fireEvent.click(screen.getByRole("button", { name: "Opciones de lectura" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Tipo y modo de lectura" }), { target: { value: "manhwa" } });
+    expect(readReaderPreferences().continuous).toBe(false);
+    expect(api.putReaderSettings).not.toHaveBeenCalled();
+    openAdvancedOptions();
+    fireEvent.click(screen.getByRole("button", { name: "Perfil e-reader" }));
+    await waitFor(() => expect(api.putReaderSettings).toHaveBeenCalledWith({ ...settings, e_reader: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar configuración" }));
+    view.queryClient.setQueryData(["reader-chapter", nextId], otherChapter);
+    fireEvent.click(screen.getByRole("button", { name: "Marcadores e historial" }));
+    fireEvent.click(screen.getByRole("button", { name: "Historial" }));
+    fireEvent.click(await screen.findByRole("link", { name: "Otra obra · Capítulo 2 · Página 1" }));
+    await screen.findByRole("img", { name: "Capítulo 2, página 1 de 5" });
+    expect(screen.queryByRole("region", { name: "Páginas en lectura vertical" })).not.toBeInTheDocument();
+    expect(readReaderLibrary().preferences.find((item) => item.seriesId === otherSeriesId))
+      .toMatchObject({ format: "auto", mode: "single", continuous: false });
+    expect(readReaderPreferences().continuous).toBe(false);
+  });
+
+  it("restores this work's layout without replacing its saved page", async () => {
+    saveReaderWorkPreferences(seriesId, { format: "manhwa", mode: "vertical", rtl: false, continuous: true });
+    vi.mocked(api.getReaderProgress).mockResolvedValue({ chapterId, seriesId, pageIndex: 2, percentage: "50.00", updatedAt: "2026-10-25T12:00:00Z" });
+    openReader();
+    await screen.findByRole("region", { name: "Páginas en lectura vertical" });
+    expect(await screen.findByRole("button", { name: "Página 3 de 5" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Opciones de lectura" }));
+    expect(screen.getByRole("combobox", { name: "Tipo y modo de lectura" })).toHaveValue("manhwa");
+    fireEvent.click(screen.getByRole("button", { name: "Página única" }));
+    await waitFor(() => expect(readReaderLibrary().preferences[0]).toMatchObject({ format: "custom", mode: "single" }));
+    expect(screen.getByRole("button", { name: "Página 3 de 5" })).toBeInTheDocument();
+  });
+
+  it("recognizes a long strip but preserves manual mode until automatic is chosen", async () => {
+    vi.mocked(api.getReaderProgress).mockResolvedValue({ chapterId, seriesId, pageIndex: 0, percentage: "0.00", updatedAt: "2026-10-25T12:00:00Z" });
+    openReader();
+    const image = await screen.findByRole("img", { name: "Capítulo 1, página 1 de 5" });
+    decode(image, 700, 10000);
+    fireEvent.click(screen.getByRole("button", { name: "Opciones de lectura" }));
+    expect(screen.getByText(/Detectado: Tira vertical/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Página única" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.change(screen.getByRole("combobox", { name: "Tipo y modo de lectura" }), { target: { value: "auto" } });
+    expect(await screen.findByRole("region", { name: "Páginas en lectura vertical" })).toBeInTheDocument();
+    expect(readReaderLibrary().preferences[0]).toMatchObject({ format: "auto", continuous: true, mode: "vertical" });
+    expect(api.putReaderProgress).not.toHaveBeenCalled();
+  });
+
+  it("loads known work metadata in parallel without delaying the first image", async () => {
+    let resolveChapter!: (value: api.ReaderChapter) => void;
+    vi.mocked(api.getReaderChapter).mockReturnValue(new Promise((resolve) => { resolveChapter = resolve; }));
+    vi.mocked(api.getSeriesDetail).mockReturnValue(new Promise(() => {}));
+    openReader(false, 0, false, { originatingSeriesId: seriesId });
+    await waitFor(() => expect(api.getSeriesDetail).toHaveBeenCalledWith(seriesId));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    await act(async () => { resolveChapter({ chapterId, seriesId, displayLabel: "Capítulo 1", pageCount: 5 }); });
+    expect(await screen.findByRole("img", { name: "Capítulo 1, página 1 de 5" })).toBeInTheDocument();
+  });
+
+  it("opens and closes saved tools with Escape and restores focus", async () => {
+    openReader();
+    const image = await screen.findByRole("img", { name: "Capítulo 1, página 1 de 5" });
+    decode(image, 700, 1000);
+    const trigger = screen.getByRole("button", { name: "Marcadores e historial" });
+    fireEvent.click(trigger);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Marcar página 1" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Marcar página 1" }));
+    await waitFor(() => expect(readReaderLibrary().bookmarks[0]).toMatchObject({ chapterId, pageIndex: 0 }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Cerrar marcadores e historial" }), { key: "Escape" });
+    expect(screen.queryByRole("heading", { name: "Tu lectura" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("opens an explicit bookmark instead of the last page and consumes it once", async () => {
+    vi.mocked(api.getReaderProgress).mockResolvedValue({ chapterId, seriesId, pageIndex: 3, percentage: "75.00", updatedAt: "2026-10-25T12:00:00Z" });
+    openReader(false, 0, false, { originatingSeriesId: seriesId, readerBookmarkPage: 2 });
+    expect(await screen.findByRole("img", { name: "Capítulo 1, página 2 de 5" })).toBeInTheDocument();
+    await waitFor(() => expect(api.putReaderProgress).toHaveBeenCalledWith(chapterId, 1));
+  });
+
+  it("ignores an invalid bookmark and resumes the actual saved page", async () => {
+    vi.mocked(api.getReaderProgress).mockResolvedValue({ chapterId, seriesId, pageIndex: 3, percentage: "75.00", updatedAt: "2026-10-25T12:00:00Z" });
+    openReader(false, 0, false, { originatingSeriesId: seriesId, readerBookmarkPage: 99 });
+    expect(await screen.findByRole("img", { name: "Capítulo 1, página 4 de 5" })).toBeInTheDocument();
+    expect(api.putReaderProgress).not.toHaveBeenCalled();
+  });
 
   it("keeps advanced settings collapsed and opens chapter navigation from the header", async () => {
     vi.mocked(api.openOnlineReaderChapter).mockResolvedValue({ chapterId, seriesId, displayLabel: "Capítulo 1", pageCount: 5 });
@@ -134,7 +338,13 @@ describe("reading experience", () => {
     await waitFor(() => expect(canvas.scrollTop).toBe(4000));
     expect(canvas.scrollLeft).toBe(400);
     expect(api.putReaderProgress).not.toHaveBeenCalled();
+    fireEvent.scroll(canvas);
+    expect(screen.getByRole("button", { name: "Opciones de lectura" })).toBeInTheDocument();
+    expect(canvas.closest("section")).not.toHaveClass(styles.scrolling!);
+    fireEvent.wheel(canvas);
     fireEvent.scroll(canvas,{target:{scrollTop:6500,scrollLeft:300}});
+    expect(canvas.closest("section")).toHaveClass(styles.scrolling!);
+    expect(screen.getByRole("button", { name: "Mostrar controles" })).toBeInTheDocument();
     fireEvent.scroll(canvas,{target:{scrollTop:0,scrollLeft:0}});
     fireEvent(window,new Event("pagehide"));
     expect(readReaderAnchor(chapterId,3,mode)).toEqual({page:3,fraction:0,horizontal:0});
@@ -467,7 +677,7 @@ describe("reading experience", () => {
       percentage: "50.00", updatedAt: "2026-10-10T00:00:00Z" });
     openReader();
     await screen.findByRole("img", { name: "Capítulo 1, página 3 de 5" });
-    expect(vi.mocked(api.getReaderPageBlob).mock.calls.map(([, number]) => number)).toEqual([3, 4, 5, 2]);
+    await waitFor(() => expect(vi.mocked(api.getReaderPageBlob).mock.calls.map(([, number]) => number)).toEqual([3, 4, 5, 2]));
   });
   it("waits for saved progress and preloads only the restored page window", async () => {
     let restore!: (value: Awaited<ReturnType<typeof api.getReaderProgress>>) => void;
@@ -551,7 +761,8 @@ describe("reading experience", () => {
     expect(screen.getByRole("img", { name: "Vista previa de lectura" })).toHaveAttribute("data-mode", "single");
 
     fireEvent.click(screen.getByRole("button", { name: "Webtoon continuo" }));
-    await waitFor(() => expect(api.putReaderSettings).toHaveBeenLastCalledWith({ ...settings, mode: "vertical" }));
+    await waitFor(() => expect(readReaderLibrary().preferences[0]).toMatchObject({ mode: "vertical", continuous: true }));
+    expect(api.putReaderSettings).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Webtoon continuo" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Vertical" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("img", { name: "Vista previa de lectura" })).toHaveAttribute("data-mode", "webtoon");

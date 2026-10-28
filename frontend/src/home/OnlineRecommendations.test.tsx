@@ -23,7 +23,7 @@ describe("online recommendations",()=>{
     const personal=screen.getByRole("region",{name:"Descubre algo nuevo"});
     expect(await within(popular).findByRole("link",{name:"Solo Leveling"})).toHaveAttribute("href","/search?q=Solo%20Leveling");
     expect(api.getRecommendations).toHaveBeenCalledTimes(1);
-    expect(within(popular).getByText("#2 · MangaDex")).toBeInTheDocument();
+    expect(within(popular).getByText("#2")).toBeInTheDocument();
     expect(within(personal).queryByRole("link",{name:"The Boxer"})).not.toBeInTheDocument();
     expect(within(personal).getByText("Porque lees Acción")).toBeInTheDocument();
     expect(within(popular).getByRole("link",{name:"Misterio & aventura"})).toHaveAttribute("href","/search?q=Misterio%20%26%20aventura");
@@ -68,4 +68,21 @@ describe("online recommendations",()=>{
     await waitFor(()=>expect(api.getRecommendations).not.toHaveBeenCalled());
     view.unmount();
   });
+});
+
+
+it("switches catalogs and expands cached recommendations without importing works", async()=>{
+  vi.mocked(api.getRecommendations).mockImplementation(async (provider)=>({...feed,
+    data:Array.from({length:24},(_,i)=>({...feed.data[0]!,remoteId:`anilist:${i+1}`,title:`Obra ${i+1}`,aliases:[],coverUrl:null})),
+    meta:{...feed.meta,provider:provider??"MangaDex"}}));
+  open(<OnlineRecommendations kind="popular"/>);
+  await screen.findByRole("link",{name:"Obra 1"});
+  fireEvent.change(screen.getByRole("combobox",{name:"Catálogo de Populares online"}),{target:{value:"AniList"}});
+  await waitFor(()=>expect(api.getRecommendations).toHaveBeenCalledWith("AniList"));
+  await screen.findByText("#1");
+  expect(screen.queryByRole("link",{name:"Obra 13"})).not.toBeInTheDocument();
+  const calls=vi.mocked(api.getRecommendations).mock.calls.length;
+  fireEvent.click(screen.getByRole("button",{name:"Ver más recomendaciones"}));
+  expect(screen.getByRole("link",{name:"Obra 13"})).toHaveAttribute("href","/search?q=Obra%2013");
+  expect(api.getRecommendations).toHaveBeenCalledTimes(calls);
 });
