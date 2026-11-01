@@ -34,7 +34,11 @@ jobs:
           tools/uv venv --python 3.14.7 .venv
           tools/uv pip install --python .venv/bin/python -r backend/requirements.lock
       - name: Build web interface
-        run: npm ci --prefix frontend && npm run build --prefix frontend
+        run: |
+          npm ci --prefix frontend
+          npm audit --prefix frontend --audit-level=moderate
+          npm run lint --prefix frontend
+          npm run build --prefix frontend
       - name: Validate Linux scripts
         run: |
           bash -n Instalar-Yomira.sh

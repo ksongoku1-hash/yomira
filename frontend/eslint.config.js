@@ -2,6 +2,7 @@ import js from "@eslint/js";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
+// shortcut: remove the minimatch 11 override when its parent tools accept a patched version.
 export default tseslint.config(
   { ignores: ["dist/**", "coverage/**", "node_modules/**"] },
   js.configs.recommended,
