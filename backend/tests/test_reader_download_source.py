@@ -8,6 +8,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from sqlalchemy import func, select
+from support.cbz import index_test_job
 from test_online_reader import _memory_harness  # pyright: ignore[reportPrivateUsage]
 
 from app.connectors.builtins import create_connector_registry
@@ -19,18 +20,143 @@ from app.persistence.models.source import SourceRow
 from app.runtime import RuntimeState
 from app.secrets.vault import WindowsDpapiSecretVault
 from app.services.jobs import DownloadJobService
+from app.services.reader_asset import ReaderAssetNotFound
 from app.settings import Settings
 
 
-@pytest.mark.parametrize("reference_state", ["matching", "missing", "malformed"])
+@pytest.mark.parametrize(
+    ("body", "session_available"),
+    [({}, True), ({"restart": True}, True), ({"prepare": True}, True), ({}, False)],
+)
+def test_online_entry_uses_completed_download_without_contacting_the_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    body: dict[str, bool],
+    session_available: bool,
+) -> None:
+    async def exercise() -> None:
+        h, online, runtime, _closed = await _memory_harness(tmp_path, monkeypatch)
+        calls = 0
+
+        async def unavailable_source(*_args: object, **_kwargs: object) -> None:
+            nonlocal calls
+            calls += 1
+            raise ReaderAssetNotFound("The remote source is offline.")
+
+        try:
+            chapters = await h.provider.get_chapters("mock-series-1")
+            jobs = DownloadJobService(h.database).create_selected_jobs(
+                connector=h.provider.metadata,
+                remote_series_id="mock-series-1",
+                series_metadata=h.provider.normalize_metadata(
+                    await h.provider.get_series("mock-series-1")
+                ),
+                chapters=chapters,
+                selected_remote_ids=("mock-chapter-1",),
+            )
+            assert jobs[0].chapter_id == h.chapter_id
+            index_test_job(h.database, jobs[0].job.job_id)
+            monkeypatch.setattr(online, "open", unavailable_source)
+            if not session_available:
+                runtime.reader_session_service = None
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=h.app), base_url="http://testserver"
+            ) as client:
+                path = f"/api/v1/reader/{h.chapter_id}"
+                saved = await client.put(path + "/progress", json={"page_index": 0})
+                assert saved.status_code == 200
+                opened = await client.post(path + "/open", json=body)
+                assert opened.status_code == 200, opened.text
+                assert opened.json()["data"]["chapter"]["chapter_id"] == str(h.chapter_id)
+                assert opened.json()["data"]["chapter"]["page_count"] == 1
+                assert opened.json()["meta"] == {"source": "local"}
+                assert (await client.get(path)).json()["meta"] == {"source": "local"}
+                assert opened.json()["data"]["progress"] == saved.json()["data"]
+                page = await client.get(path + "/pages/1")
+                assert page.status_code == 200 and page.headers["content-type"] == "image/png"
+                assert calls == 0
+        finally:
+            await online.close()
+            await h.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("file_state", ["missing", "truncated"])
+def test_unavailable_download_does_not_hide_online_reader_or_its_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file_state: str
+) -> None:
+    async def exercise() -> None:
+        h, online, _runtime, _closed = await _memory_harness(tmp_path, monkeypatch)
+        try:
+            chapters = await h.provider.get_chapters("mock-series-1")
+            job = DownloadJobService(h.database).create_selected_jobs(
+                connector=h.provider.metadata,
+                remote_series_id="mock-series-1",
+                series_metadata=h.provider.normalize_metadata(
+                    await h.provider.get_series("mock-series-1")
+                ),
+                chapters=chapters,
+                selected_remote_ids=("mock-chapter-1",),
+            )[0]
+            index_test_job(h.database, job.job.job_id)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=h.app), base_url="http://testserver"
+            ) as client:
+                route = f"/api/v1/reader/{h.chapter_id}"
+                saved = await client.put(route + "/progress", json={"page_index": 0})
+                assert saved.status_code == 200
+                path = (
+                    h.database.data_root_identity.canonical_path
+                    / "library/chapters"
+                    / f"{h.chapter_id}.cbz"
+                )
+                if file_state == "missing":
+                    path.unlink()
+                else:
+                    path.write_bytes(path.read_bytes()[:-1])
+                assert (await client.get(route)).status_code == 404
+                opened = await client.post(route + "/open", json={})
+                assert opened.status_code == 200, opened.text
+                assert opened.json()["data"]["chapter"]["page_count"] == 10_000
+                assert opened.json()["meta"] == {"source": "online"}
+                assert opened.json()["data"]["progress"] == saved.json()["data"]
+                metadata = (await client.get(route)).json()
+                assert metadata["data"]["page_count"] == 10_000
+                assert metadata["meta"] == {"source": "online"}
+                assert (
+                    await client.put(route + "/progress", json={"page_index": 9999})
+                ).status_code == 422
+                for page in (1, 10_000):
+                    response = await client.get(route + f"/pages/{page}")
+                    assert response.status_code == 200 and response.content == h.body
+                assert (
+                    await client.put(route + "/progress", json={"page_index": 9999})
+                ).status_code == 200
+        finally:
+            await online.close()
+            await h.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("uppercase_hex", [False, True])
+@pytest.mark.parametrize(
+    "reference_state", ["matching", "different_path_case", "missing", "malformed"]
+)
 def test_fmd2_reader_source_uses_the_chapters_exact_series_reference(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference_state: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference_state: str, uppercase_hex: bool
 ) -> None:
     async def exercise() -> None:
         h, online, _runtime, _closed = await _memory_harness(tmp_path, monkeypatch)
         website = "424747b0135c4240a902eb9cfcb11db9"
         manga_path = "/novel/The-Boxer.html"
         manga_ref = "fmd2:v1:" + (website + "\n" + manga_path).encode().hex()
+        stored_manga_ref = (
+            "fmd2:v1:" + manga_ref.removeprefix("fmd2:v1:").upper()
+            if uppercase_hex else manga_ref
+        )
+        different_path_ref = "fmd2:v1:" + (website + "\n" + manga_path.lower()).encode().hex()
         token = (
             base64.urlsafe_b64encode(
                 json.dumps([website, manga_path, "/chapter/16"], separators=(",", ":")).encode()
@@ -53,8 +179,9 @@ def test_fmd2_reader_source_uses_the_chapters_exact_series_reference(
                 )
                 association.remote_id = "unrelated-edition-1"
                 for reference in [
-                    "unrelated-edition-2",
-                    manga_ref if reference_state != "missing" else "unrelated-edition-3",
+                    different_path_ref,
+                    stored_manga_ref if reference_state not in {"missing", "different_path_case"}
+                    else "unrelated-edition-3",
                 ]:
                     session.add(
                         SeriesSourceRow(
@@ -68,7 +195,7 @@ def test_fmd2_reader_source_uses_the_chapters_exact_series_reference(
             if reference_state == "matching":
                 assert resolved is not None
                 assert resolved.connector_id == FMD2_METADATA.connector_id
-                assert resolved.remote_series_id == manga_ref
+                assert resolved.remote_series_id == stored_manga_ref
                 assert resolved.chapter_remote_id == remote_id
             else:
                 assert resolved is None

@@ -1,0 +1,117 @@
+----------------------------------------------------------------------------------------------------
+-- Local Constants
+----------------------------------------------------------------------------------------------------
+
+local domain = 'manhwaweb.com'
+local API_URL = 'https://api.' .. domain
+local DirectoryPagination = '/manhwa/library?order_item=creacion&order_dir=desc&page='
+
+----------------------------------------------------------------------------------------------------
+-- Event Functions
+----------------------------------------------------------------------------------------------------
+
+-- Get links and names from the manga list of the current website.
+function GetNameAndLink()
+	local u = API_URL .. DirectoryPagination .. 1
+
+	if not HTTP.GET(u) then return net_problem end
+
+	local x = CreateTXQuery(HTTP.Document)
+	local page = 1
+	while true do
+		for v in x.XPath('json(*).data()').Get() do
+			if v.GetProperty('_tipo').ToString() ~= 'novela' then
+				local id = v.GetProperty('real_id').ToString()
+				if id == '' then id = v.GetProperty('_id').ToString() end
+				LINKS.Add('manhwa/' .. id)
+				NAMES.Add(v.GetProperty('the_real_name').ToString())
+			end
+		end
+		local has_next = x.XPathString('json(*).next')
+		if has_next ~= 'true' then break end
+		page = page + 1
+		UPDATELIST.UpdateStatusText('Loading page ' .. page)
+		if not HTTP.GET(API_URL .. DirectoryPagination .. page) then break end
+		x.ParseHTML(HTTP.Document)
+	end
+
+	return no_error
+end
+
+-- Get info and chapter list for the current manga.
+function GetInfo()
+	local u = API_URL .. '/manhwa/see/' .. URL:match('[^/]+$')
+	
+	if not HTTP.GET(u) or HTTP.ResultCode ~= 200 then return net_problem end
+
+	local x = CreateTXQuery(HTTP.Document)
+	local info = x.XPath('json(*)')
+	MANGAINFO.Title     = x.XPathString('name_esp', info)
+	if MANGAINFO.Title == '' then return net_problem end
+	MANGAINFO.AltTitles = x.XPathString('string-join((name_raw, _name), ", ")', info)
+	MANGAINFO.CoverLink = x.XPathString('_imagen', info)
+	MANGAINFO.Authors   = x.XPathString('string-join(_extras?autores?*, ", ")', info)
+	MANGAINFO.Genres    = x.XPathString('string-join((_categoris?*?*, concat(upper-case(substring(_demografi, 1, 1)), lower-case(substring(_demografi, 2))), concat(upper-case(substring(_tipo, 1, 1)), lower-case(substring(_tipo, 2)))), ", ")', info)
+	MANGAINFO.Status    = MangaInfoStatusIfPos(x.XPathString('_status', info), 'publicandose', 'finalizado', 'pausado')
+	MANGAINFO.Summary   = x.XPathString('_sinopsis', info)
+
+	local old_id = x.XPathString('_id', info)
+	local real_id = x.XPathString('real_id', info)
+	local prefix = 'https://' .. domain .. '/leer/' .. old_id .. '-'
+	for v in x.XPath('chapters?*', info).Get() do
+		local link = v.GetProperty('link').ToString()
+
+		if link == '' then
+			link = x.XPathString('versions?*?link', v)
+		end
+
+		if real_id ~= '' and old_id ~= '' and link:sub(1, #prefix) == prefix then
+			link = '/leer/' .. real_id .. '-' .. link:sub(#prefix + 1)
+		end
+
+		if link ~= '' then
+			MANGAINFO.ChapterLinks.Add(link)
+			MANGAINFO.ChapterNames.Add('Cap. ' .. v.GetProperty('chapter').ToString())
+		end
+	end   
+
+	HTTP.Reset()
+	HTTP.Headers.Values['Referer'] = MANGAINFO.URL
+
+	return no_error
+end
+
+-- Get the page count and/or page links for the current chapter.
+function GetPageNumber()
+	local u = API_URL .. '/chapters/see/' .. URL:match('[^/]+$')
+
+	if not HTTP.GET(u) or HTTP.ResultCode ~= 200 then return false end
+
+	CreateTXQuery(HTTP.Document).XPathStringAll('json(*).chapter.img()', TASK.PageLinks)
+
+	return TASK.PageLinks.Count > 0
+end
+
+-- Prepare the URL, http header and/or http cookies before downloading an image.
+function BeforeDownloadImage()
+	HTTP.Headers.Values['Referer'] = MODULE.RootURL
+
+	return true
+end
+
+----------------------------------------------------------------------------------------------------
+-- Module Initialization
+----------------------------------------------------------------------------------------------------
+
+function Init()
+	local m = NewWebsiteModule()
+	m.ID                       = 'K042a85566244b7e836679491ce67ot0'
+	m.Name                     = 'ManhwaWeb'
+	m.RootURL                  = 'https://www.' .. domain
+	m.Category                 = 'Spanish'
+	m.OnGetNameAndLink         = 'GetNameAndLink'
+	m.OnGetInfo                = 'GetInfo'
+	m.OnGetPageNumber          = 'GetPageNumber'
+	m.OnBeforeDownloadImage    = 'BeforeDownloadImage'
+	m.SortedList               = true
+end

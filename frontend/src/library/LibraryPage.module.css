@@ -30,10 +30,10 @@
 .folderCard { padding: 1rem; border: 1px solid #303a43; border-radius: 0.65rem; min-width: 0; }
 .folderCard h3 { margin: 0; font-size: 1rem; color: var(--text); }
 .folderActions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
-.folderWarning { color: #ffd38c; }
+.folderWarning { color: var(--warning, #ffd38c); }
 .folderGuide { margin: 1rem 0; }
 .folderGuide summary { cursor: pointer; color: var(--text); }
-.folderExample { overflow-x: auto; padding: 0.75rem; background: #080c10; border-radius: var(--radius-control); }
+.folderExample { overflow-x: auto; padding: 0.75rem; background: var(--surface-soft, #080c10); border-radius: var(--radius-control); }
 
 .pageHeader h1 {
   margin: 0;
@@ -414,8 +414,8 @@
 .errorState {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-color: #754044;
-  background: #211619;
+  border-color: var(--error-border, #754044);
+  background: var(--error-surface, #211619);
 }
 
 .errorDetails {
@@ -423,7 +423,7 @@
 }
 
 .errorDetails code {
-  color: #ffd5d8;
+  color: var(--error-text, #ffd5d8);
   overflow-wrap: anywhere;
 }
 

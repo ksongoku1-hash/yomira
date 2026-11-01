@@ -1,20 +1,24 @@
-# Yomira 0.1.16 — lector híbrido local
+# Yomira 0.1.17 — lector híbrido local
 
 Yomira es una aplicación local para Windows que organiza, descarga y permite leer mangas desde una interfaz web. Los archivos y la biblioteca se guardan en el equipo del usuario.
 
-La versión 0.1.16 reúne el nuevo inicio y las opciones del lector, la reapertura online con progreso guardado, las recomendaciones públicas y 21 fuentes integradas. Incluye actualización de la aplicación desde GitHub Releases y refresco automático de los catálogos de Inventario Oculto y Ragnarok. Consulta las [notas de esta versión](docs/releases/0.1.16.md) para conocer las mejoras y sus límites.
+La versión de prueba 0.1.17 corrige la apertura de capítulos descargados sin conexión, la recuperación de copias dañadas, la navegación de búsqueda y las listas de capítulos. Incluye las mejoras recientes del lector y del acceso móvil, además de correcciones de arranque y diagnóstico de Linux. Consulta las [notas de esta versión](docs/releases/0.1.17.md) para conocer las comprobaciones y sus límites.
 
-## Descargar Yomira 0.1.16
+## Linux: Arch / SteamOS (versión de prueba)
+
+Se ha preparado un port nativo experimental para Linux x86_64, orientado al modo Escritorio de Steam Deck. Consulta [la guía Linux](README-LINUX.md) para instalarlo en la carpeta del usuario y conocer las funciones incluidas y los límites. La validación en un Linux real sigue pendiente; todavía no tiene paridad con el motor FMD ni con MTP de Windows.
+
+## Descargar Yomira 0.1.17
 
 **Para usar Yomira en Windows 10/11 de 64 bits:**
 
-1. [Descarga Yomira-Setup-0.1.16.exe](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.16/Yomira-Setup-0.1.16.exe).
+1. [Descarga Yomira-Setup-0.1.17.exe](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.17/Yomira-Setup-0.1.17.exe).
 2. Abre el archivo y pulsa **Instalar**. El instalador está en español y no necesita permisos de administrador.
 3. Pulsa **Finalizar** con **Abrir Yomira** marcado. La página se abre sola en tu navegador.
 
 Después, abre el acceso directo **Yomira** del escritorio o del menú Inicio. **No necesitas comandos, pip, Python, Node.js ni instalar FMD por separado.** Cada persona instala Yomira en su propio PC y tiene su propia biblioteca.
 
-También hay una [versión portátil](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.16/Yomira-Windows-x64-0.1.16.zip): extrae todo el ZIP y abre **Yomira.exe**. No ejecutes el programa dentro del ZIP.
+También hay una [versión portátil](https://github.com/ksongoku1-hash/yomira/releases/download/v0.1.17/Yomira-Windows-x64-0.1.17.zip): extrae todo el ZIP y abre **Yomira.exe**. No ejecutes el programa dentro del ZIP.
 
 El navegador se abre cuando el servidor está listo. Puedes minimizar la ventana de Yomira; vuelve a ella y pulsa **Ctrl+C** para cerrar la aplicación. Cerrar la pestaña del navegador deja las descargas en marcha. Si el navegador no se abre, entra en http://127.0.0.1:8000/library.
 

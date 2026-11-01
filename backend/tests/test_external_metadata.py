@@ -382,9 +382,10 @@ def test_catalog_cover_preview_is_unique_cached_and_does_not_bind(
 
     async def exercise() -> None:
         expected = url if kind in {"exact", "alias"} else None
+        expected_calls = ["Naruto", "NARUTO"] if kind == "failed" else ["Naruto"]
         assert await service.cover_for_title("Naruto (1999)") == expected
         assert await service.cover_for_title(" NARUTO (1999) ") == expected
-        assert calls == ["Naruto"]
+        assert calls == expected_calls
         assert MetadataService(database).list_sources(series.series_id) == ()
         assert await service.cover_for_title(" ") is None
         assert await service.cover_for_title("x" * 201) is None
@@ -394,7 +395,43 @@ def test_catalog_cover_preview_is_unique_cached_and_does_not_bind(
         with database.write_session() as session:
             session.add(source_to_row(disabled))
         assert await service.cover_for_title("Naruto (1999)") is None
-        assert calls == ["Naruto"]
+        assert calls == expected_calls
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        asyncio.run(http.close())
+        database.close()
+
+
+def test_catalog_cover_can_retry_after_a_temporary_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = _candidate()
+    url = f"https://uploads.mangadex.org/covers/{candidate.remote_id}/{uuid4()}.jpg"
+    candidate = replace(candidate, metadata=replace(candidate.metadata, cover_url=url))
+    database, series, service, http, calls = _fixture(tmp_path, MangaDexLookup(1, (candidate,)))
+    catalog = service._connector()  # pyright: ignore[reportPrivateUsage]
+    lookup = catalog.lookup
+
+    async def transient_lookup(query: ConnectorSearchQuery) -> MangaDexLookup:
+        if not calls:
+            calls.append(query.query)
+            raise SourceConnectorError(
+                code=ErrorCode.SRC_CONNECTOR_FAILED,
+                operation=SourceConnectorOperation.SEARCH,
+                retryable=True,
+            )
+        return await lookup(query)
+
+    monkeypatch.setattr(catalog, "lookup", transient_lookup)
+
+    async def exercise() -> None:
+        assert await service.cover_for_title("Naruto (1999)") is None
+        assert await service.cover_for_title("Naruto (1999)") == url
+        assert await service.cover_for_title(" NARUTO (1999) ") == url
+        assert calls == ["Naruto", "Naruto"]
+        assert MetadataService(database).list_sources(series.series_id) == ()
 
     try:
         asyncio.run(exercise())

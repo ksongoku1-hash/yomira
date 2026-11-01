@@ -510,3 +510,20 @@ def test_tmo_public_versioned_cover_is_saved_offline(tmp_path: Path) -> None:
     finally:
         asyncio.run(http.close())
         database.close()
+
+
+def test_mangaoni_public_timestamp_cover_is_saved_offline(tmp_path: Path) -> None:
+    database, series, service, http, requests = _fixture(
+        tmp_path, _png(),
+        cover_url="https://oni.ntr-files.online/public/archivos/mangas/manga/cover.jpg?1707674542",
+    )
+    try:
+        assert asyncio.run(service.ensure_cover(series.series_id))
+        assert str(requests[0].url).endswith("?1707674542")
+        persisted = LibraryService(database).get_series(series.series_id)
+        assert persisted is not None and persisted.cover_asset_id is not None
+        thumbnail = asyncio.run(service.thumbnail(series.series_id, ThumbnailVariant.SMALL))
+        assert thumbnail is not None and thumbnail.mime_type == "image/webp"
+    finally:
+        asyncio.run(http.close())
+        database.close()

@@ -53,6 +53,17 @@ def _require_static_cover_url(url: str) -> None:
         and parsed.query[2:].isdigit()
     ):
         return
+    # MangaOni adds a public Unix timestamp to its static cover URLs.
+    if (
+        parsed.scheme == "https"
+        and parsed.netloc.casefold() == "oni.ntr-files.online"
+        and parsed.path.startswith("/public/archivos/mangas/")
+        and parsed.path.endswith("/cover.jpg")
+        and len(parsed.query) == 10
+        and parsed.query.isascii()
+        and parsed.query.isdigit()
+    ):
+        return
     raise ValueError("Cover URLs must not contain authorization queries")
 
 

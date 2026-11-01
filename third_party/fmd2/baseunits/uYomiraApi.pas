@@ -236,7 +236,8 @@ begin
   if I in [5..9] then Exit(I);
   if (ASourceID = '5400f8755204497f998fdb1d831e8b50') or
     (ASourceID = 'f3098381220841f8b13928e682de4d7e') then Exit(10);
-  if ASourceID = '35d1c04c0de345b1a52ec4ff1e6098b5' then Exit(11);
+  if (ASourceID = '35d1c04c0de345b1a52ec4ff1e6098b5') or
+    (ASourceID = 'f31e7a36050c424291c839f0a02d92a4') then Exit(11);
   if ASourceID = '889f027efe74448883db0f3fecf3d279' then Exit(12);
   if ASourceID = '0611830535274dfa9f0d879dc1968fdb' then Exit(13);
   Result := -1;
@@ -502,7 +503,7 @@ begin
             IntToStr(ALimit) + '&filter%5Bsortby%5D=5&filter%5BbroadcastStatus%5D=0') then Exit;
         end;
         8: begin
-          SearchURL := 'https://manhwawebbackend-production.up.railway.app/manhwa/library?buscar=' +
+          SearchURL := 'https://api.manhwaweb.com/manhwa/library?buscar=' +
             EncodeURLElement(AQuery) + '&order_item=alfabetico&order_dir=asc&page=0';
           Selector := 'json(*).data()';
           TitleSelector := 'the_real_name';
@@ -524,7 +525,10 @@ begin
         end;
         12: begin
           SearchURL := AModule.RootURL + '/search?q=' + EncodeURLElement(AQuery);
-          Selector := '//a[contains(@class,"mb-2")]';
+          // MangaPill searches words with OR; require each word across the title and its shown aliases.
+          Selector := '//a[contains(@class,"mb-2")][every $word in ' +
+            'tokenize(lower-case(' + QuotedStr(AQuery) + '), "[^\p{L}\p{N}]+")[. != ""] ' +
+            'satisfies contains(lower-case(string(.)), $word)]';
           TitleSelector := 'div[1]';
         end;
         13: begin
@@ -546,7 +550,9 @@ begin
           if SourceIndex = 8 then
           begin
             if Parser.XPathString('_tipo', Node) = 'novela' then Continue;
-            URL := '/manhwa/' + Parser.XPathString('_id', Node);
+            URL := Parser.XPathString('real_id', Node);
+            if URL = '' then URL := Parser.XPathString('_id', Node);
+            URL := '/manhwa/' + URL;
           end
           else if SourceIndex = 9 then URL := Parser.XPathString('uri', Node)
           else URL := Node.toNode.getAttribute('href');
@@ -677,6 +683,8 @@ begin
       for I := 0 to SourceData[SourceIndex].Count - 1 do
         Seen.Add(RemoveHostFromURL(TJSONObject(SourceData[SourceIndex].Items[I]).Get('remote_url', '')));
       Inc(IndexedCount, SourceData[SourceIndex].Count);
+      // Apoll's old index contains removed titles; use its current public search only.
+      if Module.ID = 'f31e7a36050c424291c839f0a02d92a4' then Continue;
       if not SourceCatalogReady(API_SOURCE_IDS[SourceIndex]) then Continue;
       Processor := TDBDataProcess.Create;
       try
@@ -750,6 +758,8 @@ begin
   Info := TMangaInformation.Create;
   try
     Info.Module := Module;
+    Info.HTTP.Timeout := 5000;
+    Info.HTTP.RetryCount := 0;
     if Info.GetInfoFromURL(URL) <> NO_ERROR then
       raise Exception.Create('Public manga metadata could not be retrieved.');
     Root := TJSONObject.Create;
@@ -1469,6 +1479,8 @@ begin
     Module := Modules.LocateModule(API_SOURCE_IDS[I]);
     if Module <> nil then Module.AllowBypass := False;
     Module := PublicModule(I);
+    // Cartel's former domain is parked; never refresh it in the background.
+    if API_SOURCE_IDS[I] = '9a0a1298ca044dd9886a3446092f285e' then Continue;
     if (Module <> nil) and (LiveSearchKind(Module.ID) < 0) and not DBDataFileExist(API_SOURCE_IDS[I]) then
     begin
       if DBUpdaterThread = nil then

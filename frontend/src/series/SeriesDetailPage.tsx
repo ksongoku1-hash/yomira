@@ -30,6 +30,7 @@ import { IllustratedBackdrop } from "../library/IllustratedBackdrop";
 import { publicationStatus } from "../library/publicationStatus";
 import { OnlineChapters } from "./OnlineChapters";
 import { ActionIcon } from "../app/ActionIcon";
+import { isMobileConnection } from "../settings/MobileAccessPanel";
 
 const READER_CHAPTER_PAGE_SIZE = 100;
 
@@ -319,12 +320,12 @@ function ReadyChapters({
           </p>
           {query.isFetching ? <p className={styles.statusMessage} role="status">Actualizando capítulos…</p> : null}
           <div className={styles.chapterTools}>
-            <details id="series-export" className={styles.cbrSelectionPanel} onToggle={(event) => {
+            {!isMobileConnection ? <details id="series-export" className={styles.cbrSelectionPanel} onToggle={(event) => {
               if (event.currentTarget.open) setExportOpen(true);
             }}>
               <summary>Exportar manga a USB o lector conectado</summary>
               {exportOpen ? <SeriesExportAction seriesId={seriesId} /> : null}
-            </details>
+            </details> : null}
             <button type="button" className={`${styles.secondaryButton} ${styles.orderButton}`}
               aria-label="Cambiar orden de capítulos para leer"
               aria-pressed={chapterOrder === "desc"}
@@ -559,7 +560,7 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
                 : "Actualizar metadatos y portada"}
             </button>
           ) : null}
-          {(localSummary.data?.meta.total ?? 0) > 0 ? <a className={styles.secondaryButton} href="#series-export" onClick={(event) => {
+          {!isMobileConnection && (localSummary.data?.meta.total ?? 0) > 0 ? <a className={styles.secondaryButton} href="#series-export" onClick={(event) => {
             document.getElementById("series-export")?.setAttribute("open", "");
             event.currentTarget.closest("details")?.removeAttribute("open");
           }}>Exportar y administrar archivos</a> : null}

@@ -118,7 +118,7 @@
 
 .validationError {
   margin: 0;
-  color: #ffb4ab;
+  color: var(--error-text, #ffb4ab);
 }
 
 .orderButton {
@@ -154,9 +154,9 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 1rem;
-  border: 1px solid #743f43;
+  border: 1px solid var(--error-border, #743f43);
   border-radius: var(--radius-panel);
-  background: #211719;
+  background: var(--error-surface, #211719);
 }
 
 .errorState h2 {
@@ -167,7 +167,7 @@
 
 .errorState p {
   margin: 0.4rem 0 0;
-  color: #ffb4ab;
+  color: var(--error-text, #ffb4ab);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -535,8 +535,8 @@
   padding: 0.75rem;
   border: 1px solid #286b4a;
   border-radius: var(--radius-control);
-  background: #102019;
-  color: #9ce6bb;
+  background: var(--success-surface, #102019);
+  color: var(--success, #9ce6bb);
 }
 
 .sourceFailures {
@@ -551,7 +551,7 @@
 
 .sourceFailure > p {
   margin: 0;
-  color: #ffb4ab;
+  color: var(--error-text, #ffb4ab);
   font-size: 0.9rem;
   font-weight: 650;
 }

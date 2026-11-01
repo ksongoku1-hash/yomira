@@ -91,6 +91,9 @@ export function OnlineChapters({seriesId, sources, source, onSourceChange, downl
     (statusFilter === "all" || (item.remoteId !== null && (statusFilter === "saved" ? ready.has(item.remoteId)
       : statusFilter === "busy" ? busy.has(item.remoteId) : !ready.has(item.remoteId) && !busy.has(item.remoteId)))));
   if (descending) chapters.reverse();
+  useEffect(() => {
+    setOffset((current) => Math.min(current, Math.max(0, Math.ceil(chapters.length / 100) - 1) * 100));
+  }, [chapters.length]);
   const visible = chapters.slice(offset, offset + 100);
   const visibleIds = new Set(visible.flatMap((chapter) => chapter.remoteId === null ? [] : [chapter.remoteId]));
   const visiblePendingIds = [...visibleIds].filter((id) => pendingSet.has(id));

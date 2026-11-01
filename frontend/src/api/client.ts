@@ -187,7 +187,7 @@ export interface ExternalMetadataCandidate {
 
 export interface ExternalMetadataCandidates {
   data: ExternalMetadataCandidate[];
-  meta: { provider: "MangaDex"; total: number; limit: 10 };
+  meta: { provider: RecommendationProvider; total: number; limit: 10 };
 }
 
 export interface LibraryPage {
@@ -382,6 +382,7 @@ export interface ReaderChapter {
   seriesId: string;
   displayLabel: string;
   pageCount: number;
+  source?: "local" | "online";
 }
 
 export interface ReaderChaptersPage {
@@ -472,7 +473,7 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-async function requestJson(
+export async function requestJson(
   path: string,
   options: RequestOptions = {},
 ): Promise<{ payload: unknown; response: Response }> {
@@ -1460,27 +1461,45 @@ export interface ReaderDownloadSource {
   connectorId: string;
   remoteSeriesId: string;
   chapterRemoteId: string;
+  seriesId?: string;
+  originalUrl?: string | null;
+}
+
+function isReaderOriginalUrl(value: unknown): value is string | null {
+  if (value === null) return true;
+  if (typeof value !== "string" || value.length > 4096 || /[\s\\]/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.username === "" && url.password === "";
+  } catch { return false; }
 }
 
 export async function getReaderDownloadSource(chapterId: string): Promise<ReaderDownloadSource | null> {
   if (!UUID_V4_PATTERN.test(chapterId)) throw new RangeError("chapterId must be a UUID v4");
-  const { payload, response } = await requestJson(`/reader/${chapterId}/download-source`);
+  const { payload, response } = await requestJson(`/reader/${chapterId}/download-source?include_recovery=true`);
   if (!isRecord(payload) || !hasExactKeys(payload, ["data", "meta"]) ||
     !isRecord(payload.meta) || Object.keys(payload.meta).length !== 0) {
     throw invalidReaderResponse(response);
   }
   if (payload.data === null) return null;
   const data = payload.data;
-  if (!isRecord(data) || !hasExactKeys(data, [
+  if (!isRecord(data) || !(hasExactKeys(data, [
     "chapter_id", "connector_id", "remote_series_id", "chapter_remote_id",
-  ]) || data.chapter_id !== chapterId ||
+  ]) || hasExactKeys(data, [
+    "chapter_id", "connector_id", "remote_series_id", "chapter_remote_id", "series_id", "original_url",
+  ])) || data.chapter_id !== chapterId ||
     !isNonEmptyString(data.connector_id) || data.connector_id.length > 512 ||
     !isNonEmptyString(data.remote_series_id) || data.remote_series_id.length > 512 ||
     !isNonEmptyString(data.chapter_remote_id) || data.chapter_remote_id.length > 512) {
     throw invalidReaderResponse(response);
   }
+  if ("series_id" in data && (typeof data.series_id !== "string" ||
+    !UUID_V4_PATTERN.test(data.series_id) || !isReaderOriginalUrl(data.original_url))) {
+    throw invalidReaderResponse(response);
+  }
   return { connectorId: data.connector_id, remoteSeriesId: data.remote_series_id,
-    chapterRemoteId: data.chapter_remote_id };
+    chapterRemoteId: data.chapter_remote_id,
+    ...("series_id" in data ? { seriesId: data.series_id as string, originalUrl: data.original_url as string | null } : {}) };
 }
 
 export async function registerOnlineReaderChapter(
@@ -1516,7 +1535,8 @@ export async function openOnlineReader(chapterId: string, restart = false, prepa
     method: "POST", body: JSON.stringify({ restart, ...(prepare ? { prepare: true } : {}) }),
   });
   if (!isRecord(payload) || !hasExactKeys(payload, ["data", "meta"]) ||
-    !isRecord(payload.meta) || Object.keys(payload.meta).length !== 0 ||
+    !isRecord(payload.meta) || !(Object.keys(payload.meta).length === 0 ||
+      (hasExactKeys(payload.meta, ["source"]) && ["local", "online"].includes(payload.meta.source as string))) ||
     !isRecord(payload.data) || !hasExactKeys(payload.data, ["chapter", "progress"])) {
     throw invalidReaderResponse(response);
   }
@@ -1526,7 +1546,7 @@ export async function openOnlineReader(chapterId: string, restart = false, prepa
     (payload.data.progress !== null && (progress === null || progress.seriesId !== chapter.seriesId))) {
     throw invalidReaderResponse(response);
   }
-  return { chapter, progress };
+  return { chapter: { ...chapter, ...(payload.meta.source ? { source: payload.meta.source as "local" | "online" } : {}) }, progress };
 }
 
 export async function openOnlineReaderChapter(chapterId: string, restart = false): Promise<ReaderChapter> {
@@ -1564,7 +1584,8 @@ export async function getReaderChapter(chapterId: string): Promise<ReaderChapter
     !isRecord(payload) ||
     !hasExactKeys(payload, ["data", "meta"]) ||
     !isRecord(payload.meta) ||
-    !Object.values(payload.meta).every((value) => typeof value === "string")
+    !Object.values(payload.meta).every((value) => typeof value === "string") ||
+    ("source" in payload.meta && payload.meta.source !== "local" && payload.meta.source !== "online")
   ) {
     throw invalidReaderResponse(response);
   }
@@ -1573,7 +1594,7 @@ export async function getReaderChapter(chapterId: string): Promise<ReaderChapter
   if (chapter === null || chapter.chapterId !== chapterId) {
     throw invalidReaderResponse(response);
   }
-  return chapter;
+  return { ...chapter, ...(payload.meta.source ? { source: payload.meta.source as "local" | "online" } : {}) };
 }
 
 export async function getReaderChaptersPage({
@@ -2353,6 +2374,7 @@ export async function getConnectorCover(
   connectorId: string,
   remoteSeriesId: string,
   title?: string,
+  signal?: AbortSignal,
 ): Promise<ConnectorCoverResponse> {
   if (!isNonEmptyString(connectorId) || !isNonEmptyString(remoteSeriesId) || remoteSeriesId.length > 512) {
     throw new RangeError("connectorId and remoteSeriesId must be nonempty valid references");
@@ -2361,8 +2383,11 @@ export async function getConnectorCover(
     throw new RangeError("cover title must be nonempty and at most 200 characters");
   }
   const query = title === undefined ? "" : `?title=${encodeURIComponent(title)}`;
+  const options: RequestOptions = {};
+  if (signal !== undefined) options.signal = signal;
   const { payload, response } = await requestJson(
     `/connectors/${encodeURIComponent(connectorId)}/series/${encodeURIComponent(remoteSeriesId)}/cover${query}`,
+    options,
   );
   if (
     !isRecord(payload) ||
@@ -2893,6 +2918,15 @@ export async function getSystemVersion(): Promise<VersionResponse> {
   return { app_version: payload.app_version, api_version: payload.api_version };
 }
 
+export type RecommendationProvider = "MangaDex" | "AniList" | "MyAnimeList";
+const recommendationFormats = {
+  MangaDex: { criterion: "followed_count", id: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    cover: /^https:\/\/uploads\.mangadex\.org\/covers\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(?:jpg|jpeg|png|webp)$/ },
+  AniList: { criterion: "trending", id: /^anilist:[1-9][0-9]{0,9}$/,
+    cover: /^https:\/\/s4\.anilist\.co\/file\/anilistcdn\/media\/manga\/cover\/(?:medium|large)\/[A-Za-z0-9_.-]+$/ },
+  MyAnimeList: { criterion: "popularity", id: /^jikan:[1-9][0-9]{0,9}$/,
+    cover: /^https:\/\/cdn\.myanimelist\.net\/images\/manga\/[0-9]+\/[0-9]+\.(?:jpg|jpeg|png|webp)$/ },
+};
 export interface Recommendation {
   remoteId: string; title: string; aliases: string[]; genres: string[]; coverUrl: string | null;
 }
@@ -2912,28 +2946,30 @@ export async function getPublicSources(): Promise<PublicSource[]> {
 }
 export interface RecommendationFeed {
   data: Recommendation[];
-  meta: { provider: "MangaDex"; status: "ready" | "stale" | "unavailable"; updatedAt: string | null; retryAt: string | null };
+  meta: { provider: RecommendationProvider; status: "ready" | "stale" | "unavailable"; updatedAt: string | null; retryAt: string | null };
 }
-export async function getRecommendations(): Promise<RecommendationFeed> {
-  const {payload, response} = await requestJson("/recommendations");
+export async function getRecommendations(provider: RecommendationProvider = "MangaDex"): Promise<RecommendationFeed> {
+  const format = recommendationFormats[provider];
+  if (!format) throw new RangeError("Unknown recommendation provider");
+  const {payload, response} = await requestJson(provider === "MangaDex" ? "/recommendations" : `/recommendations?provider=${provider}`);
   const invalid = () => new ApiError({code: null, message: "No se pudo leer la lista de recomendaciones.",
     retryable: true, status: response.status, traceId: response.headers.get("X-Trace-ID")});
   const shortText = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 200 && !Array.from(value).some((char)=>char.charCodeAt(0)<32);
   const texts = (value: unknown, limit: number): value is string[] => Array.isArray(value) && value.length <= limit && value.every(shortText);
   const timestamp = (value: unknown): value is string | null => value === null || (typeof value === "string" && value.length <= 40 && Number.isFinite(Date.parse(value)));
   if (!isRecord(payload) || !Array.isArray(payload.data) || payload.data.length > 24 || !isRecord(payload.meta) ||
-      payload.meta.provider !== "MangaDex" || payload.meta.criterion !== "followed_count" ||
+      payload.meta.provider !== provider || payload.meta.criterion !== format.criterion ||
       typeof payload.meta.status !== "string" || !["ready", "stale", "unavailable"].includes(payload.meta.status) ||
       !timestamp(payload.meta.updated_at) || !timestamp(payload.meta.retry_at)) throw invalid();
   const data: Recommendation[] = [];
   const seen = new Set<string>();
   for (const item of payload.data) {
-    if (!isRecord(item) || typeof item.remote_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(item.remote_id) ||
+    if (!isRecord(item) || typeof item.remote_id !== "string" || !format.id.test(item.remote_id) ||
         seen.has(item.remote_id) || !shortText(item.title) || !texts(item.aliases, 6) || !texts(item.genres, 64) ||
-        !(item.cover_url === null || (typeof item.cover_url === "string" && /^https:\/\/uploads\.mangadex\.org\/covers\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(?:jpg|jpeg|png|webp)$/.test(item.cover_url)))) throw invalid();
+        !(item.cover_url === null || (typeof item.cover_url === "string" && format.cover.test(item.cover_url)))) throw invalid();
     seen.add(item.remote_id);
     data.push({remoteId:item.remote_id, title:item.title, aliases:item.aliases, genres:item.genres, coverUrl:item.cover_url});
   }
   if (payload.meta.status === "unavailable" && data.length || payload.meta.status !== "unavailable" && payload.meta.updated_at === null) throw invalid();
-  return {data, meta:{provider:"MangaDex", status:payload.meta.status as RecommendationFeed["meta"]["status"], updatedAt:payload.meta.updated_at, retryAt:payload.meta.retry_at}};
+  return {data, meta:{provider, status:payload.meta.status as RecommendationFeed["meta"]["status"], updatedAt:payload.meta.updated_at, retryAt:payload.meta.retry_at}};
 }

@@ -438,7 +438,7 @@ describe("SearchPage", () => {
       .toHaveAttribute("src", "https://zonatmo.org/storage/covers/dragon-ball.jpg");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/connectors/yomira.fmd2.webtoons/series/fmd2%3Av1%3Adragon-ball/cover?title=Dragon%20Ball",
-      { headers: { Accept: "application/json" } },
+      { headers: { Accept: "application/json" }, signal: expect.any(AbortSignal) },
     );
   });
 

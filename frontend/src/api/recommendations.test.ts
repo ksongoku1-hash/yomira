@@ -31,3 +31,14 @@ describe("recommendation responses",()=>{
     await expect(getRecommendations()).rejects.toThrow("No se pudo leer la lista de recomendaciones.");
   });
 });
+
+
+it.each(["AniList","MyAnimeList"] as const)("validates the %s provider contract and image host",async(provider)=>{
+  const data={data:[{...payload().data[0],remote_id:provider==="AniList"?"anilist:12":"jikan:12",
+    cover_url:provider==="AniList"?"https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/a.jpg":"https://cdn.myanimelist.net/images/manga/1/2.jpg"}],
+    meta:{...payload().meta,provider,criterion:provider==="AniList"?"trending":"popularity"}};
+  vi.stubGlobal("fetch",vi.fn().mockImplementation(async()=>new Response(JSON.stringify(data))));
+  expect((await getRecommendations(provider)).data[0]?.title).toBe("Solo Leveling");
+  data.data[0]!.cover_url="https://attacker.example/a.jpg";
+  await expect(getRecommendations(provider)).rejects.toThrow();
+});

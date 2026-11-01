@@ -85,3 +85,7 @@ Thumbs.db
 
 /Abrir Yomira.cmd
 
+# Linux packages and downloaded native runtime manager
+/dist-linux/
+/tools/uv
+

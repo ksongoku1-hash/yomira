@@ -70,11 +70,11 @@
 }
 
 .inlineSuccess {
-  color: #81e7ae;
+  color: var(--success, #81e7ae);
 }
 
 .inlineError {
-  color: #ffb4ab;
+  color: var(--error-text, #ffb4ab);
 }
 
 .page {
@@ -170,7 +170,7 @@
 }
 
 .historyError {
-  color: #ffb4ab !important;
+  color: var(--error-text, #ffb4ab) !important;
 }
 
 .emptyState p,
@@ -188,11 +188,11 @@
 .errorState {
   display: grid;
   gap: 0.7rem;
-  border-color: #743f43;
+  border-color: var(--error-border, #743f43);
 }
 
 .errorDetails {
-  color: #ffb4ab !important;
+  color: var(--error-text, #ffb4ab) !important;
   font-size: 0.88rem;
 }
 

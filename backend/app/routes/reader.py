@@ -12,9 +12,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import UUID4, BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
+from app.connectors.mangadex import MANGADEX_METADATA
 from app.connectors.metadata import ConnectorCapability
 from app.domain.reader_progress import ReaderProgress
 from app.errors import ApiErrorEnvelope
+from app.fmd2_bridge import FMD2_METADATA, fmd2_original_series_url
 from app.runtime import RuntimeState
 from app.services.jobs import InvalidChapterSelection
 from app.services.online_reader import OnlineReaderSessionService
@@ -75,6 +77,8 @@ class ReaderDownloadSourceResponse(BaseModel):
     connector_id: str = Field(min_length=1, max_length=512)
     remote_series_id: str = Field(min_length=1, max_length=512)
     chapter_remote_id: str = Field(min_length=1, max_length=512)
+    series_id: UUID | None = None
+    original_url: str | None = None
 
 
 class ReaderDownloadSourceEnvelope(BaseModel):
@@ -83,9 +87,15 @@ class ReaderDownloadSourceEnvelope(BaseModel):
 
 
 @router.get(
-    "/api/v1/reader/{chapter_id}/download-source", response_model=ReaderDownloadSourceEnvelope
+    "/api/v1/reader/{chapter_id}/download-source",
+    response_model=ReaderDownloadSourceEnvelope,
+    response_model_exclude_unset=True,
 )
-def get_reader_download_source(chapter_id: UUID4, request: Request) -> ReaderDownloadSourceEnvelope:
+def get_reader_download_source(
+    chapter_id: UUID4,
+    request: Request,
+    include_recovery: bool = Query(default=False),
+) -> ReaderDownloadSourceEnvelope:
     runtime = cast(RuntimeState, request.app.state.runtime)
     service, registry = runtime.download_job_service, runtime.connector_registry
     if service is None or registry is None:
@@ -111,15 +121,24 @@ def get_reader_download_source(chapter_id: UUID4, request: Request) -> ReaderDow
         or not required.issubset(metadata.capabilities)
     ):
         return ReaderDownloadSourceEnvelope(data=None, meta={})
-    return ReaderDownloadSourceEnvelope(
-        data=ReaderDownloadSourceResponse(
-            chapter_id=UUID(str(chapter_id)),
-            connector_id=source.connector_id,
-            remote_series_id=source.remote_series_id,
-            chapter_remote_id=source.chapter_remote_id,
-        ),
-        meta={},
+    original_url = None
+    if source.connector_id == FMD2_METADATA.connector_id:
+        original_url = fmd2_original_series_url(source.remote_series_id)
+    elif source.connector_id == MANGADEX_METADATA.connector_id:
+        try:
+            original_url = f"https://mangadex.org/title/{UUID(source.remote_series_id)}"
+        except ValueError:
+            pass
+    response = ReaderDownloadSourceResponse(
+        chapter_id=UUID(str(chapter_id)),
+        connector_id=source.connector_id,
+        remote_series_id=source.remote_series_id,
+        chapter_remote_id=source.chapter_remote_id,
     )
+    if include_recovery:
+        response.series_id = source.series_id
+        response.original_url = original_url
+    return ReaderDownloadSourceEnvelope(data=response, meta={})
 
 
 class ReaderSessionResponse(BaseModel):
@@ -325,18 +344,21 @@ class ReaderOpenEnvelope(BaseModel):
 async def open_reader_with_progress(
     chapter_id: UUID4, body: ReaderOpenRequest, request: Request
 ) -> ReaderOpenEnvelope:
-    service = _session_service(request)
     identity = UUID(str(chapter_id))
     try:
-        if isinstance(service, OnlineReaderSessionService):
-            await service.open(identity, restart=body.restart, prepare=body.prepare)
-        elif body.prepare:
-            raise ReaderAssetConflict("This source cannot be prepared in the background.")
-        else:
-            await service.open(identity, restart=body.restart)
-        chapter = service.get_chapter(identity)
+        chapter = _reader_service(request).get_chapter(identity)
+        source = "local" if chapter is not None else "online"
         if chapter is None:
-            raise ReaderAssetNotFound("The online chapter is not ready.")
+            service = _session_service(request)
+            if isinstance(service, OnlineReaderSessionService):
+                await service.open(identity, restart=body.restart, prepare=body.prepare)
+            elif body.prepare:
+                raise ReaderAssetConflict("This source cannot be prepared in the background.")
+            else:
+                await service.open(identity, restart=body.restart)
+            chapter = service.get_chapter(identity)
+            if chapter is None:
+                raise ReaderAssetNotFound("The online chapter is not ready.")
         progress = _reader_progress_service(request).get(identity)
     except ReaderAssetError as error:
         raise _translate_reader_error(error) from None
@@ -347,7 +369,7 @@ async def open_reader_with_progress(
             chapter=ReaderChapterResponse.model_validate(chapter),
             progress=_reader_progress_response(progress) if progress is not None else None,
         ),
-        meta={},
+        meta={"source": source},
     )
 
 
@@ -404,6 +426,7 @@ async def get_reader_chapter(
 ) -> ReaderChapterEnvelope:
     service = _reader_service(request)
     chapter = service.get_chapter(UUID(str(chapter_id)))
+    source = "local" if chapter is not None else "online"
     runtime = cast(RuntimeState, request.app.state.runtime)
     if chapter is None and runtime.reader_session_service is not None:
         chapter = runtime.reader_session_service.get_chapter(UUID(str(chapter_id)))
@@ -414,7 +437,7 @@ async def get_reader_chapter(
         )
     return ReaderChapterEnvelope(
         data=ReaderChapterResponse.model_validate(chapter),
-        meta={},
+        meta={"source": source},
     )
 
 

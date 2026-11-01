@@ -27,9 +27,11 @@ from app.domain.series import Series
 from app.persistence.atomic_file_publisher import ADR_0087_RETRY_POLICY, AtomicFilePublisher
 from app.persistence.disk_budget import DiskBudgetManager
 from app.persistence.migrations.runner import MigrationRunner
+from app.persistence.models.asset import AssetRow
 from app.persistence.models.chapter import ChapterRow
 from app.persistence.models.download_job import DownloadJobRow
 from app.persistence.models.download_job_archive import DownloadJobArchiveRow
+from app.persistence.repositories.chapter_cbz_asset import ChapterCbzAssetRepository
 from app.persistence.windows_paths import DataRootIdentity
 from app.secrets.vault import WindowsDpapiSecretVault
 from app.services.cbz_builder import CBZBuilder
@@ -37,7 +39,8 @@ from app.services.cover_assets import CoverAssetService
 from app.services.library import LibraryService
 from app.services.local_import import LocalImportService
 from app.services.metadata import MetadataService
-from app.services.reader_asset import ReaderAssetLimits, ReaderAssetService
+from app.services.reader_asset import ReaderAssetError, ReaderAssetLimits, ReaderAssetService
+from app.services.reader_progress import ReaderProgressService
 
 
 class _TestLocalImportService(LocalImportService):
@@ -319,6 +322,61 @@ def test_import_is_readable_ordered_enriched_and_idempotent(
         asyncio.run(exercise())
         if original_hash:
             assert hashlib.sha256(original.read_bytes()).hexdigest() == original_hash
+    finally:
+        database.close()
+
+
+def test_same_importer_recovers_a_rejected_cbz_from_the_unchanged_external_original(
+    tmp_path: Path,
+) -> None:
+    database, root, reader, covers, http, importer_factory = _fixture(tmp_path)
+    originals = tmp_path / "originals"
+    originals.mkdir()
+    first, second = _image("red"), _image("green")
+    original = _comic(originals, "cbz", first, second)
+    before = original.read_bytes()
+    importer = importer_factory((originals,))
+
+    async def exercise() -> None:
+        try:
+            await importer.scan_once()
+            await importer.scan_once()
+            series_id = LibraryService(database).list_series(limit=1, offset=0).items[0].series_id
+            chapter = reader.list_chapters_for_series(series_id).items[0]
+            progress = ReaderProgressService(database, reader)
+            saved = progress.save(chapter.chapter_id, 1)
+            repository = ChapterCbzAssetRepository()
+            with database.read_session() as session:
+                linked = repository.get_for_chapter(session, chapter.chapter_id)
+                assert linked is not None
+                old_link, old_asset = linked
+            path = root / old_asset.relative_path
+            corrupted = b"X" + path.read_bytes()[1:]
+            path.write_bytes(corrupted)
+            with pytest.raises(ReaderAssetError, match="hash changed"):
+                reader.open_page(chapter.chapter_id, 1)
+            assert reader.get_chapter(chapter.chapter_id) is None
+            await importer.scan_once()
+            assert importer.status()["errors"] == []
+            assert reader.list_chapters_for_series(series_id).items == (chapter,)
+            assert b"".join(reader.open_page(chapter.chapter_id, 1).iter_chunks()) == first
+            assert b"".join(reader.open_page(chapter.chapter_id, 2).iter_chunks()) == second
+            assert progress.get(chapter.chapter_id) == saved
+            assert path.read_bytes() == corrupted
+            assert original.read_bytes() == before
+            with database.read_session() as session:
+                replacement = repository.get_for_chapter(session, chapter.chapter_id)
+                assert replacement is not None and replacement[1].asset_id != old_asset.asset_id
+                assert session.get(AssetRow, str(old_asset.asset_id)) is not None
+                historical = session.get(DownloadJobRow, str(old_link.download_job_id))
+                assert historical is not None and historical.status == "COMPLETED"
+                assert session.scalar(select(func.count()).select_from(DownloadJobRow)) == 2
+        finally:
+            await covers.close()
+            await http.close()
+
+    try:
+        asyncio.run(exercise())
     finally:
         database.close()
 

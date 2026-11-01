@@ -18,6 +18,7 @@ from app.connectors.fmd2 import (
 )
 from app.connectors.search import ConnectorSearchQuery
 from app.domain.source import SourceHealthStatus
+from app.fmd2_bridge import FMD2_RETIRED_SOURCES
 from app.settings import SettingsValidationError, load_settings
 
 
@@ -278,6 +279,10 @@ def test_fmd2_search_accepts_only_allowlisted_public_source_origins(
     async def exercise() -> None:
         connector = _connector(tmp_path, httpx.MockTransport(handle))
         results = await connector.search(ConnectorSearchQuery("Dragon Ball"))
+        if source_id in FMD2_RETIRED_SOURCES:
+            assert results == ()
+            await connector.close()
+            return
         assert len(results) == 1
         assert results[0].remote_id == manga_ref
         assert results[0].remote_url == f"{source_origin}{remote_path}"
@@ -524,7 +529,9 @@ def test_fmd2_executable_setting_requires_an_absolute_path(
         )
 
 
-@pytest.mark.parametrize("source_id", list(FMD2_PUBLIC_SOURCES))
+@pytest.mark.parametrize(
+    "source_id", [sid for sid in FMD2_PUBLIC_SOURCES if sid not in FMD2_RETIRED_SOURCES]
+)
 def test_compact_chapters_roundtrip_without_reencoding_source_refs(
     tmp_path: Path, source_id: str
 ) -> None:

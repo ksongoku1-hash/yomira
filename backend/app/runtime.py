@@ -25,6 +25,7 @@ from app.services.local_import import LocalImportService
 from app.services.metadata import MetadataService
 from app.services.online_reader import OnlineReaderSessionService
 from app.services.reader_asset import ReaderAssetService
+from app.services.reader_cache_settings import ReaderCacheSettingsService
 from app.services.reader_progress import ReaderProgressService
 from app.services.reader_session import ReaderSessionService
 from app.services.reader_settings import ReaderSettingsService
@@ -61,6 +62,7 @@ class RuntimeState:
     cbr_export_service: CbrExportService | None = None
     reader_progress_service: ReaderProgressService | None = None
     reader_settings_service: ReaderSettingsService | None = None
+    reader_cache_settings_service: ReaderCacheSettingsService | None = None
     recommendations_service: RecommendationsService | None = None
     reader_session_service: ReaderSessionService | OnlineReaderSessionService | None = None
     usb_export_job_service: UsbExportJobService | None = None

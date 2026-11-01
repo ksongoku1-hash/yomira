@@ -262,7 +262,7 @@ def _check_library(runtime: RuntimeState) -> DiagnosticCheckResponse:
         reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
         if (
             not stat.S_ISDIR(info.st_mode)
-            or bool(info.st_file_attributes & reparse_flag)
+            or bool(getattr(info, "st_file_attributes", 0) & reparse_flag)
             or library_path.is_symlink()
         ):
             raise OSError("Library root is not a plain directory")

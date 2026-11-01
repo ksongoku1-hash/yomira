@@ -70,8 +70,8 @@
   padding: 0.3rem 0.7rem;
   border: 1px solid #286b4a;
   border-radius: 999px;
-  background: #102019;
-  color: #9ce6bb;
+  background: var(--success-surface, #102019);
+  color: var(--success, #9ce6bb);
   font-size: 0.8rem;
   font-weight: 700;
 }
@@ -102,7 +102,7 @@
   padding: 0.85rem 1rem;
   border: 1px solid #303941;
   border-radius: 0.65rem;
-  background: #11161b;
+  background: var(--surface-soft, #11161b);
 }
 
 .queueInfo p {
@@ -167,28 +167,28 @@
   align-items: center;
   justify-content: center;
   padding: 0.55rem 0.8rem;
-  border: 1px solid #743f43;
+  border: 1px solid var(--error-border, #743f43);
   border-radius: var(--radius-control);
-  background: #211719;
-  color: #ffb4ab;
+  background: var(--error-surface, #211719);
+  color: var(--error-text, #ffb4ab);
   cursor: pointer;
   font: inherit;
   font-weight: 650;
 }
 
 .cancelButton:hover {
-  border-color: #ffb4ab;
-  background: #301d20;
+  border-color: var(--error-text, #ffb4ab);
+  background: var(--error-hover, #301d20);
 }
 
 .cancelButton:focus-visible {
-  outline: 2px solid #ffb4ab;
+  outline: 2px solid var(--error-text, #ffb4ab);
   outline-offset: 2px;
 }
 
 .cancellationPending {
   margin: 0;
-  color: #f0d79a;
+  color: var(--warning, #f0d79a);
   line-height: 1.45;
 }
 
@@ -199,9 +199,9 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 1rem;
-  border: 1px solid #743f43;
+  border: 1px solid var(--error-border, #743f43);
   border-radius: var(--radius-panel);
-  background: #211719;
+  background: var(--error-surface, #211719);
 }
 
 .errorState h2 {
@@ -212,7 +212,7 @@
 
 .errorState p {
   margin: 0.4rem 0 0;
-  color: #ffb4ab;
+  color: var(--error-text, #ffb4ab);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -227,21 +227,21 @@
   gap: 0.35rem;
   max-width: 28rem;
   padding: 0.7rem;
-  border: 1px solid #743f43;
+  border: 1px solid var(--error-border, #743f43);
   border-radius: 0.6rem;
-  background: #211719;
+  background: var(--error-surface, #211719);
   text-align: left;
 }
 
 .cancellationError h4 {
   margin: 0;
-  color: #ffb4ab;
+  color: var(--error-text, #ffb4ab);
   font-size: 0.9rem;
 }
 
 .cancellationError p {
   margin: 0;
-  color: #ffb4ab;
+  color: var(--error-text, #ffb4ab);
   font-size: 0.82rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -332,7 +332,7 @@
   justify-items: start;
   gap: 0.3rem;
   margin-top: 0.9rem;
-  color: #82909b;
+  color: var(--text-muted, #82909b);
   font-size: 0.76rem;
 }
 
@@ -404,23 +404,23 @@
 }
 
 .statusBadge[data-status="FAILED"] {
-  border-color: #754044;
-  background: #211719;
-  color: #ffb4ab;
+  border-color: var(--error-border, #754044);
+  background: var(--error-surface, #211719);
+  color: var(--error-text, #ffb4ab);
 }
 
 .statusBadge[data-status="COMPLETED"] {
   border-color: #286b4a;
-  background: #102019;
-  color: #9ce6bb;
+  background: var(--success-surface, #102019);
+  color: var(--success, #9ce6bb);
 }
 
 .statusBadge[data-status="DOWNLOADING"],
 .statusBadge[data-status="PACKAGING"],
 .statusBadge[data-status="VERIFYING"] {
   border-color: #385d7e;
-  background: #142131;
-  color: #b6d7f5;
+  background: var(--info-surface, #142131);
+  color: var(--info-text, #b6d7f5);
 }
 
 .priority {
@@ -432,8 +432,8 @@
   padding: 0.6rem 0.75rem;
   border: 1px solid #286b4a;
   border-radius: var(--radius-control);
-  background: #102019;
-  color: #9ce6bb;
+  background: var(--success-surface, #102019);
+  color: var(--success, #9ce6bb);
   line-height: 1.45;
 }
 
@@ -473,7 +473,7 @@
   place-items: center;
   border: 1px solid var(--panel-border);
   border-radius: 0.9rem;
-  background: #102019;
+  background: var(--success-surface, #102019);
   color: var(--accent);
   font-size: 1.5rem;
 }
@@ -524,6 +524,6 @@
 .groupCard > div { display: grid; gap: 0.3rem; min-width: 0; overflow-wrap: anywhere; }
 .jobCard { border-left: 3px solid var(--border-strong); }
 .jobCard[data-status="COMPLETED"] { border-left-color: var(--success); }
-.jobCard[data-status="FAILED"] { border-left-color: #ffb4ab; }
+.jobCard[data-status="FAILED"] { border-left-color: var(--error-text, #ffb4ab); }
 .jobCard[data-status="DOWNLOADING"], .jobCard[data-status="FETCHING_METADATA"] { border-left-color: var(--accent); }
 .jobCard[data-status="QUEUED"], .jobCard[data-status="INTERRUPTED"] { border-left-color: var(--warning); }

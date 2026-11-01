@@ -179,12 +179,12 @@ class ExternalMetadataService:
         if cached is not None and cached[0] > now:
             self._matches.move_to_end(key)
             return cached[1]
+        query, _year = _query_title(title)
+        lookup = await self._connector().lookup(ConnectorSearchQuery(query))
         self._matches[key] = (now + _NEGATIVE_TTL_SECONDS, None)
         self._matches.move_to_end(key)
         if len(self._matches) > _MAX_NEGATIVE_LOOKUPS:
             self._matches.popitem(last=False)
-        query, _year = _query_title(title)
-        lookup = await self._connector().lookup(ConnectorSearchQuery(query))
         matches = tuple(c for c in lookup.candidates if match_candidate(title, c))
         if lookup.total > 100 or len(lookup.candidates) != lookup.total or len(matches) != 1:
             return None

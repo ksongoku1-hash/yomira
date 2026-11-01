@@ -1,3 +1,4 @@
+vi.mock("../api/readerLibrary", async () => (await import("./readerLibrary.test-support")).readerLibraryFixture());
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -5,6 +6,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 
 import type { ReaderSettings } from "../api/client";
 import { ReaderPage } from "./ReaderPage";
+import { readReaderLibrary } from "./readerLibrary";
 
 const CHAPTER_ID = "123e4567-e89b-42d3-a456-426614174051";
 const SECOND_CHAPTER_ID = "223e4567-e89b-42d3-a456-426614174051";
@@ -506,7 +508,7 @@ describe("ReaderPage", () => {
     fireEvent.click(modeButton("Vertical"));
     const verticalRegion = screen.getByRole("region", { name: "Páginas en lectura vertical" });
 
-    await waitFor(() => expect(pendingSignals.size).toBe(2));
+    await waitFor(() => expect([...pendingSignals.keys()]).toEqual([2]));
     const createObjectURL = vi.mocked(URL.createObjectURL);
     const revokeObjectURL = vi.mocked(URL.revokeObjectURL);
     fireEvent.wheel(verticalRegion, { deltaY: 100 });
@@ -514,7 +516,7 @@ describe("ReaderPage", () => {
 
     await screen.findByRole("img", { name: "Capítulo 8, página 500 de 500" });
     expect(pendingSignals.get(2)?.aborted).toBe(true);
-    expect(pendingSignals.get(3)?.aborted).toBe(true);
+    expect(pendingSignals.has(3)).toBe(false);
     await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(3));
     expect(revokeObjectURL).not.toHaveBeenCalled();
     expect(verticalRegion.querySelectorAll("[data-testid='reader-page-slot']").length)
@@ -687,7 +689,8 @@ describe("ReaderPage", () => {
       .toBeInTheDocument();
     expect(screen.getByText("Páginas 3–4 de 5")).toBeInTheDocument();
     expect(progressWrites).toEqual([2, 4, 2]);
-    await waitFor(() => expect(settingsWrites.at(-1)?.mode).toBe("double"));
+    expect(readReaderLibrary().preferences.find((item) => item.seriesId === SERIES_ID)?.mode).toBe("double");
+    expect(settingsWrites).toEqual([]);
   });
 
   it("reverses only the visible spread order in RTL mode", async () => {

@@ -119,6 +119,7 @@ class ReaderDownloadSource:
     connector_version: str
     remote_series_id: str
     chapter_remote_id: str
+    series_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +183,42 @@ class DownloadJobService:
             ),
         )
 
+    def downloaded_reader_chapter(
+        self, connector_id: str, remote_series_id: str, remote_chapter_id: str
+    ) -> ReaderChapterRegistration | None:
+        """Resolve a saved copy by source identity before consulting the remote catalog."""
+        series_reference = (
+            func.lower(SeriesSourceRow.remote_id) == remote_series_id.lower()
+            if connector_id == FMD2_METADATA.connector_id
+            else SeriesSourceRow.remote_id == remote_series_id
+        )
+        with self._database.read_session() as session:
+            identities = session.scalars(
+                select(ChapterSourceRow.chapter_id)
+                .join(SourceRow, SourceRow.source_id == ChapterSourceRow.source_id)
+                .join(ChapterRow, ChapterRow.chapter_id == ChapterSourceRow.chapter_id)
+                .join(
+                    SeriesSourceRow,
+                    (SeriesSourceRow.source_id == SourceRow.source_id)
+                    & (SeriesSourceRow.series_id == ChapterRow.series_id),
+                )
+                .where(
+                    SourceRow.connector_id == connector_id,
+                    series_reference,
+                    ChapterSourceRow.remote_id == remote_chapter_id,
+                )
+                .distinct()
+                .limit(2)
+            ).all()
+            if len(identities) != 1 or not self._chapter_available(session, identities[0]):
+                return None
+            chapter = ChapterCbzAssetRepository().get_reader_chapter(session, UUID(identities[0]))
+            if chapter is None:
+                return None
+            return ReaderChapterRegistration(
+                chapter.series_id, chapter.chapter_id, chapter.display_label
+            )
+
     def reader_download_source(self, chapter_id: UUID) -> ReaderDownloadSource | None:
         """Use the reader's first available source; never guess a different edition."""
         with self._database.read_session() as session:
@@ -211,7 +248,7 @@ class DownloadJobService:
                 except SourceConnectorError:
                     return None
                 series_source_query = series_source_query.where(
-                    SeriesSourceRow.remote_id == manga_ref
+                    func.lower(SeriesSourceRow.remote_id) == manga_ref
                 )
             series_sources = session.scalars(series_source_query.limit(2)).all()
             if len(series_sources) != 1:
@@ -221,7 +258,11 @@ class DownloadJobService:
                 return None
             assert references[0] is not None and references[1] is not None
             return ReaderDownloadSource(
-                source.connector_id, source.connector_version, references[0], references[1]
+                source.connector_id,
+                source.connector_version,
+                references[0],
+                references[1],
+                UUID(chapter.series_id),
             )
 
     def import_library_series(

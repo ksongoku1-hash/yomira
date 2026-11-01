@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import cast
 from urllib.parse import urlsplit
@@ -11,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.connectors.chapter import ConnectorChapter
-from app.connectors.errors import SourceConnectorError
+from app.connectors.errors import SourceConnectorError, SourceConnectorOperation
 from app.connectors.mangadex import MANGADEX_METADATA
 from app.connectors.metadata import ConnectorCapability
 from app.connectors.registry import (
@@ -28,7 +30,7 @@ from app.connectors.search import (
 from app.connectors.series_metadata import ConnectorSeriesMetadata
 from app.domain.download_job import DownloadJobStatus, DownloadPriority
 from app.errors import ApiErrorEnvelope, ErrorCode
-from app.fmd2_bridge import FMD2_METADATA, FMD2_PUBLIC_SOURCES
+from app.fmd2_bridge import FMD2_METADATA, FMD2_PUBLIC_SOURCES, FMD2_RETIRED_SOURCES, Fmd2Connector
 from app.runtime import RuntimeState
 from app.services.jobs import (
     MAX_SELECTED_CHAPTERS,
@@ -42,6 +44,18 @@ logger = logging.getLogger("yomira.connectors")
 router = APIRouter(prefix="/api/v1/connectors", tags=["connectors"])
 MAX_SEARCH_QUERY_LENGTH = 200
 MAX_REMOTE_REFERENCE_LENGTH = 512
+SOURCE_LOOKUP_TIMEOUT_SECONDS = 20
+
+
+@asynccontextmanager
+async def _source_timeout(operation: SourceConnectorOperation) -> AsyncGenerator[None]:
+    try:
+        async with asyncio.timeout(SOURCE_LOOKUP_TIMEOUT_SECONDS):
+            yield
+    except TimeoutError:
+        raise SourceConnectorError(
+            code=ErrorCode.SRC_REQUEST_TIMEOUT, operation=operation
+        ) from None
 
 
 class ConnectorSearchItem(BaseModel):
@@ -247,10 +261,20 @@ async def list_connectors(request: Request) -> ConnectorListEnvelope:
 async def list_public_sources(request: Request) -> PublicSourceEnvelope:
     registry = _connector_registry(request)
     identifiers = set(registry.connector_ids)
+    source_ids = frozenset(FMD2_PUBLIC_SOURCES)
+    if FMD2_METADATA.connector_id in identifiers:
+        connector = _resolve_connector(
+            request, FMD2_METADATA.connector_id, ConnectorCapability.METADATA
+        )
+        if isinstance(connector, Fmd2Connector):
+            async with _source_timeout(SourceConnectorOperation.HEALTH_CHECK):
+                source_ids = await connector.public_source_ids()
     sources = [
         PublicSourceItem(source_id=source_id, name=name, language=language)
         for source_id, (name, _origin, language) in FMD2_PUBLIC_SOURCES.items()
         if FMD2_METADATA.connector_id in identifiers
+        and source_id in source_ids
+        and source_id not in FMD2_RETIRED_SOURCES
     ]
     if MANGADEX_METADATA.connector_id in identifiers:
         sources.append(PublicSourceItem(source_id="mangadex", name="MangaDex", language="es"))
@@ -279,7 +303,8 @@ async def search_connector(
     ),
 ) -> ConnectorSearchEnvelope:
     connector = _resolve_connector(request, connector_id, ConnectorCapability.SEARCH)
-    results = await connector.search(ConnectorSearchQuery(query=query, page_budget=page_budget))
+    async with _source_timeout(SourceConnectorOperation.SEARCH):
+        results = await connector.search(ConnectorSearchQuery(query=query, page_budget=page_budget))
     return ConnectorSearchEnvelope(
         data=[_search_item(result) for result in results],
         meta=ConnectorSearchMeta(connector_id=connector_id, query=query),
@@ -306,32 +331,42 @@ async def get_connector_cover(
     connector = _resolve_connector(request, connector_id, ConnectorCapability.METADATA)
     runtime = cast(RuntimeState, request.app.state.runtime)
     cover_url = None
-    try:
-        metadata = connector.normalize_metadata(await connector.get_series(remote_series_id))
-        cover_url = metadata.cover_url
-        title = metadata.title or title
-    except SourceConnectorError:
-        if title is None or runtime.cover_asset_service is None:
-            raise
-    origins = _connector_registry(request).get_network_origins(connector_id)
-    if cover_url is not None:
-        try:
-            parsed = urlsplit(cover_url)
-            origin = f"{parsed.scheme}://{parsed.netloc}".lower()
-        except ValueError:
-            origin = ""
-            parsed = None
-        if (
-            parsed is None
-            or parsed.scheme != "https"
-            or parsed.username is not None
-            or parsed.password is not None
-            or not parsed.path.startswith("/")
-            or origin not in origins
-        ):
-            cover_url = None
-    if cover_url is None and title and runtime.cover_asset_service is not None:
-        cover_url = await runtime.cover_asset_service.catalog_cover(title)
+    async with _source_timeout(SourceConnectorOperation.GET_SERIES):
+        if isinstance(connector, Fmd2Connector) and title is not None:
+            # Search cards must not fetch whole chapter catalogs for a thumbnail.
+            metadata = connector.cached_metadata(remote_series_id)
+            if metadata is not None:
+                cover_url = metadata.cover_url
+                title = metadata.title or title
+        else:
+            try:
+                metadata = connector.normalize_metadata(
+                    await connector.get_series(remote_series_id)
+                )
+                cover_url = metadata.cover_url
+                title = metadata.title or title
+            except SourceConnectorError:
+                if title is None or runtime.cover_asset_service is None:
+                    raise
+        origins = _connector_registry(request).get_network_origins(connector_id)
+        if cover_url is not None:
+            try:
+                parsed = urlsplit(cover_url)
+                origin = f"{parsed.scheme}://{parsed.netloc}".lower()
+            except ValueError:
+                origin = ""
+                parsed = None
+            if (
+                parsed is None
+                or parsed.scheme != "https"
+                or parsed.username is not None
+                or parsed.password is not None
+                or not parsed.path.startswith("/")
+                or origin not in origins
+            ):
+                cover_url = None
+        if cover_url is None and title and runtime.cover_asset_service is not None:
+            cover_url = await runtime.cover_asset_service.catalog_cover(title)
     return ConnectorCoverEnvelope(
         data=ConnectorCoverItem(cover_url=cover_url),
         meta=ConnectorChapterMeta(connector_id=connector_id, remote_series_id=remote_series_id),
@@ -360,13 +395,14 @@ async def list_connector_chapters(
         connector_id,
         ConnectorCapability.CHAPTER_LIST,
     )
-    if refresh:
-        from app.connectors.mangadex import MangaDexConnector
-        from app.fmd2_bridge import Fmd2Connector
+    async with _source_timeout(SourceConnectorOperation.GET_CHAPTERS):
+        if refresh:
+            from app.connectors.mangadex import MangaDexConnector
+            from app.fmd2_bridge import Fmd2Connector
 
-        if isinstance(connector, (Fmd2Connector, MangaDexConnector)):
-            await connector.invalidate_catalog(remote_series_id)
-    chapters = await connector.get_chapters(remote_series_id)
+            if isinstance(connector, (Fmd2Connector, MangaDexConnector)):
+                await connector.invalidate_catalog(remote_series_id)
+        chapters = await connector.get_chapters(remote_series_id)
     return ConnectorChapterEnvelope(
         data=[_chapter_item(chapter) for chapter in chapters],
         meta=ConnectorChapterMeta(
@@ -470,6 +506,21 @@ async def register_connector_reader_chapter(
     service = runtime.download_job_service
     if service is None:
         raise HTTPException(status_code=503, detail="Chapter registration is not initialized.")
+    downloaded = await asyncio.to_thread(
+        service.downloaded_reader_chapter,
+        connector_id,
+        remote_series_id,
+        selection.chapter_remote_id,
+    )
+    if downloaded is not None:
+        return RegisteredReaderChapterEnvelope(
+            data=RegisteredReaderChapterItem(
+                series_id=downloaded.series_id,
+                chapter_id=downloaded.chapter_id,
+                display_label=downloaded.display_label,
+            ),
+            meta=DownloadJobsMeta(connector_id=connector_id, remote_series_id=remote_series_id),
+        )
     connector, metadata, chapters = await _selection_catalog(
         request, connector_id, remote_series_id
     )

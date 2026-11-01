@@ -21,12 +21,26 @@ _SOURCE_ERROR_MESSAGES = {
     ErrorCode.SRC_CAPABILITY_UNSUPPORTED: "La fuente no admite esta operación.",
     ErrorCode.SRC_CIRCUIT_OPEN: "El conector de la fuente está pausado temporalmente.",
     ErrorCode.SRC_CONNECTOR_FAILED: "La operación del conector falló.",
+    ErrorCode.SRC_CONTENT_UNAVAILABLE: (
+        "La fuente devolvió un aviso en lugar de la página. "
+        "Prueba otra fuente o abre su web original."
+    ),
     ErrorCode.SRC_SCHEMA_CHANGED: "La respuesta de la fuente ya no cumple el contrato.",
+    ErrorCode.SRC_REQUEST_TIMEOUT: (
+        "La fuente tardó demasiado en responder. Prueba otra fuente o vuelve a intentarlo."
+    ),
+    ErrorCode.SRC_SOURCE_UNAVAILABLE: (
+        "Esta fuente ya no está disponible. Busca el título en otra fuente; "
+        "tus descargas y tu progreso se conservan."
+    ),
 }
 _FIXED_RETRYABILITY = {
     ErrorCode.SRC_CAPABILITY_UNSUPPORTED: False,
     ErrorCode.SRC_CIRCUIT_OPEN: True,
     ErrorCode.SRC_SCHEMA_CHANGED: False,
+    ErrorCode.SRC_CONTENT_UNAVAILABLE: False,
+    ErrorCode.SRC_SOURCE_UNAVAILABLE: False,
+    ErrorCode.SRC_REQUEST_TIMEOUT: True,
 }
 
 

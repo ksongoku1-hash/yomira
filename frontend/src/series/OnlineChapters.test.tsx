@@ -28,8 +28,8 @@ function Harness() {
   return <><button type="button" onClick={() => setDownloadOpen(!downloadOpen)}>Descargar</button>
     <OnlineChapters seriesId={seriesId} sources={sources} source={sources.find((s) => s.seriesSourceId === sourceId)!} onSourceChange={setSourceId} downloadOpen={downloadOpen} /></>;
 }
-function open() {
-  return render(<QueryClientProvider client={new QueryClient({defaultOptions: {queries: {retry: false, gcTime: 300_000}}})}>
+function open(client = new QueryClient({defaultOptions: {queries: {retry: false, gcTime: 300_000}}})) {
+  return render(<QueryClientProvider client={client}>
     <MemoryRouter initialEntries={["/series"]}><Routes>
       <Route path="/series" element={<><a href="/library">Biblioteca</a><Harness /></>} />
       <Route path="/reader/:id" element={<Destination />} />
@@ -167,6 +167,29 @@ describe("online chapters from a library series", () => {
     expect(api.getConnectorChapters).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole("button", {name: "Actualizar capítulos"}));
     await waitFor(() => expect(api.getConnectorChapters).toHaveBeenLastCalledWith("yomira.mock", "source-one", true));
+  });
+  it("keeps a valid page when downloading chapters leave the current state filter", async () => {
+    const catalog = chapters(105);
+    vi.mocked(api.getConnectorChapters).mockResolvedValue(catalog);
+    const availability: api.ChapterAvailability = {linked: true, readyRemoteIds: [], readyLabels: [],
+      busyRemoteIds: catalog.data.map((chapter) => chapter.remoteId!)};
+    vi.mocked(api.getChapterAvailability).mockResolvedValue(availability);
+    const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
+    open(client);
+    const states = await screen.findByRole("combobox", {name: "Estado de capítulos"});
+    await waitFor(() => expect(states).toBeEnabled());
+    fireEvent.change(states, {target: {value: "busy"}});
+    fireEvent.click(screen.getByRole("button", {name: "Siguiente"}));
+    const list = screen.getByRole("list", {name: "Capítulos online"});
+    expect(within(list).getAllByRole("listitem")).toHaveLength(5);
+    await act(async () => {
+      client.setQueryData(["chapter-availability", "yomira.mock", "source-one"], {
+        ...availability, busyRemoteIds: availability.busyRemoteIds.slice(0, 100),
+        readyRemoteIds: availability.busyRemoteIds.slice(100),
+      });
+    });
+    await screen.findByText("100 capítulos disponibles. Las páginas se cargan al abrir el capítulo.");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(100);
   });
   it("preserves the current series when registration fails or returns a different edition", async () => {
     vi.mocked(api.registerOnlineReaderChapter).mockRejectedValueOnce(new Error("Fuente sin conexión"))

@@ -41,6 +41,13 @@ from app.secrets.reference import SecretReference
 FMD2_API_ORIGIN = "http://127.0.0.1:18873"
 FMD2_COVER_ORIGIN = "https://swebtoon-phinf.pstatic.net"
 FMD2_SOURCE_ID = "18f636ec7fdf47fabe95d940ad0b548f"
+_CATALOG_BUSY_DELAYS = (0.25, 0.5, 1.0, 2.0, 2.0)
+
+
+class _CatalogBusyError(Exception):
+    """The local engine rejected the request before starting its catalog operation."""
+
+
 FMD2_PUBLIC_SOURCES = {
     FMD2_SOURCE_ID: ("WebToons", "https://www.webtoons.com", "en"),
     "97dcd409f781467eb2da4a8634e5a1d9": (
@@ -71,6 +78,8 @@ FMD2_PUBLIC_SOURCES = {
     "889f027efe74448883db0f3fecf3d279": ("MangaPill", "https://mangapill.com", "en"),
     "a964861afd0f410cb5122df5f50d3e1a": ("ManhuaPlus", "https://manhuaplus.com", "en"),
 }
+# Keep retired identities decodable for existing libraries, but never contact parked domains.
+FMD2_RETIRED_SOURCES = frozenset({"9a0a1298ca044dd9886a3446092f285e"})
 FMD2_SOURCE_COVER_ORIGINS: dict[str, frozenset[str]] = {
     "c67d163c51b24bc498e777e2b0d810d2": frozenset({"https://www.leercapitulo.co"}),
     "5aa6794ceeea4192a63de8296344da3c": frozenset(
@@ -80,7 +89,6 @@ FMD2_SOURCE_COVER_ORIGINS: dict[str, frozenset[str]] = {
     "97dcd409f781467eb2da4a8634e5a1d9": frozenset(
         {"https://capibaratraductor.com", "https://r2.capibaratraductor.com"}
     ),
-    "9a0a1298ca044dd9886a3446092f285e": frozenset({"https://carteldemanhwas.net"}),
     "f31e7a36050c424291c839f0a02d92a4": frozenset({"https://apollcomics.es"}),
     "7103ae6839ea46ec80cdfc2c4b37c803": frozenset(
         {"https://asurascans.com", "https://api.asurascans.com", "https://cdn.asurascans.com"}
@@ -222,6 +230,23 @@ def fmd2_source_display_name(remote_series_reference: str) -> str | None:
     except SourceConnectorError:
         return None
     return FMD2_PUBLIC_SOURCES[source_id][0]
+
+
+def fmd2_original_series_url(remote_series_reference: str) -> str | None:
+    try:
+        source_id, relative = _reference_parts(
+            remote_series_reference, SourceConnectorOperation.GET_SERIES
+        )
+    except SourceConnectorError, ValueError:
+        return None
+    if source_id in FMD2_RETIRED_SOURCES:
+        return None
+    return FMD2_PUBLIC_SOURCES[source_id][1] + relative
+
+
+def _require_active_source(manga_ref: str, operation: SourceConnectorOperation) -> None:
+    if _reference_parts(manga_ref, operation)[0] in FMD2_RETIRED_SOURCES:
+        _raise(ErrorCode.SRC_SOURCE_UNAVAILABLE, operation)
 
 
 def _pack_reference(url: str, source_id: str = FMD2_SOURCE_ID) -> str:
@@ -519,6 +544,13 @@ class Fmd2Connector:
             return False
         return True
 
+    async def public_source_ids(self) -> frozenset[str]:
+        operation = SourceConnectorOperation.HEALTH_CHECK
+        payload = await self._request_json("GET", "/v1/sources", operation)
+        self._validate_sources(payload, operation)
+        sources = cast(list[dict[str, object]], payload["data"])
+        return frozenset(cast(str, source["source_id"]) for source in sources)
+
     async def health_check(self) -> SourceHealthStatus:
         try:
             payload = await self._request_json(
@@ -529,7 +561,8 @@ class Fmd2Connector:
             return SourceHealthStatus.DEGRADED
         sources = cast(list[dict[str, object]], payload["data"])
         if len(sources) != len(FMD2_PUBLIC_SOURCES) or any(
-            source["catalog_ready"] is False for source in sources
+            source["catalog_ready"] is False and source["source_id"] not in FMD2_RETIRED_SOURCES
+            for source in sources
         ):
             return SourceHealthStatus.DEGRADED
         return SourceHealthStatus.HEALTHY
@@ -538,12 +571,13 @@ class Fmd2Connector:
         operation = SourceConnectorOperation.SEARCH
         if type(query) is not ConnectorSearchQuery or not 1 <= len(query.query.strip()) <= 200:
             _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation)
-        payload = await self._request_json(
-            "POST",
-            "/v1/search",
-            operation,
-            {"source_id": "*", "query": query.query.strip(), "limit": 50},
-        )
+        async with self._catalog_lock:
+            payload = await self._request_json(
+                "POST",
+                "/v1/search",
+                operation,
+                {"source_id": "*", "query": query.query.strip(), "limit": 50},
+            )
         data = payload.get("data")
         if not isinstance(data, list):
             _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
@@ -556,6 +590,8 @@ class Fmd2Connector:
             source_id = item.get("source_id")
             if type(source_id) is not str or source_id not in FMD2_PUBLIC_SOURCES:
                 _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
+            if source_id in FMD2_RETIRED_SOURCES:
+                continue
             manga_ref = _reference(item.get("manga_ref"), operation)
             if _reference_parts(manga_ref, operation)[0] != source_id:
                 _raise(ErrorCode.SRC_SCHEMA_CHANGED, operation)
@@ -568,6 +604,15 @@ class Fmd2Connector:
                 )
             )
         return tuple(results)
+
+    def cached_metadata(self, remote_series_reference: str) -> ConnectorSeriesMetadata | None:
+        operation = SourceConnectorOperation.GET_SERIES
+        manga_ref = _reference(remote_series_reference, operation)
+        _require_active_source(manga_ref, operation)
+        cached = self._catalogs.get(manga_ref)
+        if cached is None or time.monotonic() - cached[0] >= 60 or "manga" not in cached[1]:
+            return None
+        return self.normalize_metadata(cached[1]["manga"])
 
     async def get_series(self, remote_series_reference: str) -> object:
         operation = SourceConnectorOperation.GET_SERIES
@@ -591,6 +636,7 @@ class Fmd2Connector:
     async def _catalog_payload(
         self, manga_ref: str, operation: SourceConnectorOperation, required: str
     ) -> dict[str, object]:
+        _require_active_source(manga_ref, operation)
         async with self._catalog_lock:
             cached = self._catalogs.get(manga_ref)
             if cached is not None and time.monotonic() - cached[0] < 60 and required in cached[1]:
@@ -626,7 +672,9 @@ class Fmd2Connector:
         ]
         source_id = manga.get("source_id")
         source_cover_origins = (
-            FMD2_SOURCE_COVER_ORIGINS.get(source_id) if type(source_id) is str else None
+            FMD2_SOURCE_COVER_ORIGINS.get(source_id)
+            if type(source_id) is str and source_id not in FMD2_RETIRED_SOURCES
+            else None
         )
         cover = manga.get("cover_url")
         if source_cover_origins is None:
@@ -765,6 +813,7 @@ class Fmd2Connector:
         if type(session_id) is not UUID or session_id.version != 4:
             raise ValueError("session_id must be a UUIDv4")
         manga, chapter, _ordinal = _unpack_chapter(remote_chapter_reference, operation)
+        _require_active_source(manga, operation)
         if _reference_parts(manga, operation)[0] == "424747b0135c4240a902eb9cfcb11db9":
             # NovelCool's stable chapter references use the module's in-memory catalog.
             await self.get_chapters(manga)
@@ -812,6 +861,7 @@ class Fmd2Connector:
             remote_chapter_reference,
             operation,
         )
+        _require_active_source(manga_ref, operation)
         title = _text(chapter_title, operation, limit=256)
         job_text = str(job_id)
         # Serialize native acquisition; observers must never settle its owner.
@@ -1174,6 +1224,36 @@ class Fmd2Connector:
         ensure_started: bool = True,
         missing_ok: bool = False,
     ) -> dict[str, object]:
+        for attempt in range(len(_CATALOG_BUSY_DELAYS) + 1):
+            if attempt:
+                await asyncio.sleep(_CATALOG_BUSY_DELAYS[attempt - 1])
+            try:
+                return await self._request_json_once(
+                    method,
+                    path,
+                    operation,
+                    payload,
+                    expected_statuses=expected_statuses,
+                    ensure_started=ensure_started,
+                    missing_ok=missing_ok,
+                )
+            except _CatalogBusyError:
+                logging.getLogger("yomira.sources.fmd2").info(
+                    "source.catalog.busy", extra={"operation": operation, "attempt": attempt + 1}
+                )
+        _raise(ErrorCode.SRC_CONNECTOR_FAILED, operation, retryable=True)
+
+    async def _request_json_once(
+        self,
+        method: str,
+        path: str,
+        operation: SourceConnectorOperation,
+        payload: object | None = None,
+        *,
+        expected_statuses: tuple[int, ...] = (200,),
+        ensure_started: bool = True,
+        missing_ok: bool = False,
+    ) -> dict[str, object]:
         if ensure_started:
             await self._ensure_started(operation)
         try:
@@ -1185,6 +1265,27 @@ class Fmd2Connector:
             async with client.stream(method, path, json=payload) as response:
                 was_missing = response.status_code == 404 and missing_ok
                 if response.status_code not in expected_statuses and not was_missing:
+                    catalog_request = (method == "POST" and path == "/v1/search") or (
+                        method == "GET" and path.startswith("/v1/manga/")
+                    )
+                    if (
+                        catalog_request
+                        and response.status_code == 503
+                        and response.headers.get("content-type", "").split(";", 1)[0].lower()
+                        == "application/json"
+                    ):
+                        error_body = bytearray()
+                        async for chunk in response.aiter_bytes(chunk_size=512):
+                            error_body.extend(chunk)
+                            if len(error_body) > 512:
+                                break
+                        if len(error_body) <= 512:
+                            try:
+                                busy = json.loads(error_body) == {"error": {"code": "catalog_busy"}}
+                            except UnicodeDecodeError, ValueError, RecursionError:
+                                busy = False
+                            if busy:
+                                raise _CatalogBusyError
                     logging.getLogger("yomira.sources.fmd2").warning(
                         "source.request.failed",
                         extra={

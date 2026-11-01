@@ -291,7 +291,12 @@ class LocalImportService:
         if self._folder_problem(path):
             raise OSError("library folder unavailable")
         if os.name != "nt":
-            raise NotImplementedError("folder opening requires Windows")
+            import subprocess
+
+            subprocess.Popen(
+                ["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            return
         os.startfile(str(path), "explore")
 
     def status(self) -> dict[str, object]:
@@ -635,16 +640,17 @@ class LocalImportService:
             rows = session.execute(
                 select(ChapterSourceRow.remote_url, AssetRow)
                 .join(SourceRow, SourceRow.source_id == ChapterSourceRow.source_id)
-                .join(
+                .outerjoin(
                     ChapterCbzAssetRow, ChapterCbzAssetRow.chapter_id == ChapterSourceRow.chapter_id
                 )
-                .join(AssetRow, AssetRow.asset_id == ChapterCbzAssetRow.asset_id)
+                .outerjoin(AssetRow, AssetRow.asset_id == ChapterCbzAssetRow.asset_id)
                 .where(SourceRow.connector_id == _LOCAL_SOURCE)
             )
             missing = {
                 reference.split("#", 1)[0]
                 for reference, asset in rows
-                if reference and not self._reader.asset_available(asset_from_row(asset))
+                if reference
+                and (asset is None or not self._reader.asset_available(asset_from_row(asset)))
             }
         self._done = {
             path: value for path, value in self._done.items() if path.as_uri() not in missing

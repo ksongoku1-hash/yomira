@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 from collections.abc import AsyncIterator
 from dataclasses import replace
@@ -27,6 +28,45 @@ from app.services.online_reader import OnlineReaderSessionService
 from app.services.reader_asset import ReaderAssetError, ReaderAssetNotFound
 from app.services.reader_progress import ReaderProgressService
 from app.services.reader_session import HybridReaderChapterLookup
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_source_notice_has_a_clear_error_and_cannot_advance_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: bool
+) -> None:
+    async def exercise() -> None:
+        h, online, _runtime, _closed = await _memory_harness(tmp_path, monkeypatch)
+        monkeypatch.setattr("app.services.image_validation.SOURCE_NOTICE_SHA256",
+                            frozenset({hashlib.sha256(h.body).hexdigest()}))
+
+        class OldCache:
+            def get(self, _namespace: str, _page: int, _count: int) -> tuple[bytes, str]:
+                return h.body, "image/png"
+
+            def put(self, *_args: object) -> None:
+                raise AssertionError("A source notice must not enter the cache")
+
+        if cached:
+            monkeypatch.setattr(online, "_disk_cache", OldCache())
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=h.app),
+                                         base_url="http://testserver") as client:
+                route = f"/api/v1/reader/{h.chapter_id}"
+                assert (await client.post(route + "/session", json={})).status_code == 200
+                response = await client.get(route + "/pages/1")
+                assert response.status_code == 502
+                error = response.json()["error"]
+                assert error["code"] == "SRC_CONTENT_UNAVAILABLE"
+                assert "aviso" in error["message"] and error["retryable"] is False
+                assert online.cache_snapshot() == (0, ())
+                saved = await client.put(route + "/progress", json={"page_index": 0})
+                assert saved.status_code == 422
+                assert (await client.get(route + "/progress")).json()["data"] is None
+        finally:
+            await online.close()
+            await h.close()
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("ambiguous", [False, True])

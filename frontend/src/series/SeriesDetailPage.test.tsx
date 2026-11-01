@@ -99,7 +99,7 @@ it.each([false, true])("continues from persisted progress and chooses the availa
       data: [{series_id: seriesId, display_title: "Mi título local", chapter_id: cbrChapterId,
         display_label: "Capítulo 8", page_index: 9, percentage: "50.00", updated_at: "2026-10-12T00:00:00Z"}], meta: {limit: 20},
     }));
-    if (path.endsWith("/download-source")) return Promise.resolve(response({data: {
+    if (new URL(path, "http://127.0.0.1").pathname === `/api/v1/reader/${cbrChapterId}/download-source`) return Promise.resolve(response({data: {
       chapter_id: cbrChapterId, connector_id: "yomira.mock", remote_series_id: "fixture", chapter_remote_id: "chapter-8",
     }, meta: {}}));
     if (path.endsWith("/availability")) return Promise.resolve(response({data: {

@@ -393,19 +393,25 @@ def test_initialization_failure_closes_newly_created_handle(
     assert path.exists()
 
 
+@pytest.mark.parametrize("target_exists", [True, False], ids=["live", "dangling"])
 def test_exclusive_create_does_not_treat_existing_symlink_as_absent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    target_exists: bool,
 ) -> None:
     target = tmp_path / "real.part"
-    target.write_bytes(b"original")
+    if target_exists:
+        target.write_bytes(b"original")
     link = tmp_path / "linked.part"
     try:
         link.symlink_to(target)
     except OSError as error:
         pytest.skip(f"symlink creation unavailable: {type(error).__name__}")
+    original_link_target = link.readlink()
     real_open = Path.open
+    real_lstat = Path.lstat
     opens = 0
+    probes = 0
     sleeps: list[float] = []
 
     def patched_open(
@@ -415,18 +421,30 @@ def test_exclusive_create_does_not_treat_existing_symlink_as_absent(
         **kwargs: Any,
     ) -> object:
         nonlocal opens
-        if self == link and mode == "x+b":
+        if self == link:
             opens += 1
-            raise _Win32LockError(32)
+            raise AssertionError("Exclusive creation must not open a symlink")
         return real_open(self, mode, *args, **kwargs)
 
+    def patched_lstat(self: Path) -> os.stat_result:
+        nonlocal probes
+        if self == link:
+            probes += 1
+        return real_lstat(self)
+
     monkeypatch.setattr(Path, "open", patched_open)
-    with pytest.raises(_Win32LockError):
+    monkeypatch.setattr(Path, "lstat", patched_lstat)
+    with pytest.raises(FileExistsError):
         _make_stream(link, sleep=sleeps.append)
 
-    assert opens == 1
+    assert probes > 0
+    assert opens == 0
     assert link.is_symlink()
-    assert target.read_bytes() == b"original"
+    assert link.readlink() == original_link_target
+    if target_exists:
+        assert target.read_bytes() == b"original"
+    else:
+        assert not target.exists()
     assert sleeps == []
 
 

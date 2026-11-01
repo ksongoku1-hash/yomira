@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.connectors.chapter import ConnectorChapter
@@ -229,7 +229,7 @@ class ChapterFallbackService:
             series_source = session.scalar(
                 select(SeriesSourceRow).where(
                     SeriesSourceRow.source_id == source.source_id,
-                    SeriesSourceRow.remote_id == manga_ref,
+                    func.lower(SeriesSourceRow.remote_id) == manga_ref,
                     SeriesSourceRow.series_id == chapter.series_id,
                 )
             )
@@ -268,7 +268,7 @@ class ChapterFallbackService:
     ) -> bool:
         assert chapter.remote_id is not None
         manga_ref, website, _ = fmd2_chapter_location(chapter.remote_id)
-        if manga_ref != remote_series_id:
+        if manga_ref != remote_series_id.lower():
             raise SourceConnectorError(
                 code=ErrorCode.SRC_SCHEMA_CHANGED,
                 operation=SourceConnectorOperation.GET_CHAPTERS,
@@ -293,7 +293,7 @@ class ChapterFallbackService:
             series_source = session.scalar(
                 select(SeriesSourceRow).where(
                     SeriesSourceRow.source_id == str(context.source_id),
-                    SeriesSourceRow.remote_id == remote_series_id,
+                    func.lower(SeriesSourceRow.remote_id) == remote_series_id.lower(),
                 )
             )
             if series_source is not None and series_source.series_id != str(context.series_id):

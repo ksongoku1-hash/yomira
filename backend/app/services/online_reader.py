@@ -12,10 +12,12 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
+from app.connectors.errors import SourceConnectorError, SourceConnectorOperation
 from app.connectors.mangadex import MangaDexConnector
 from app.connectors.pages import ConnectorPageReference
 from app.connectors.protocol import OnlinePageProvider
 from app.connectors.registry import RegisteredSourceConnector
+from app.errors import ErrorCode
 from app.fmd2_bridge import FMD2_METADATA, fmd2_chapter_location
 from app.persistence.database import SQLiteDatabase
 from app.persistence.models.chapter import ChapterRow
@@ -23,6 +25,8 @@ from app.persistence.models.chapter_source import ChapterSourceRow
 from app.persistence.models.source import SourceRow
 from app.services.download_transport import DownloadTransport
 from app.services.image_validation import (
+    ImageValidationError,
+    ImageValidationErrorCode,
     ImageValidationPolicy,
     ValidatedImage,
     validate_image_bytes,
@@ -329,6 +333,17 @@ class OnlineReaderSessionService:
         self._chapters.move_to_end(chapter_id)
         return current
 
+    def _validate_page(self, body: bytes, content_type: str) -> ValidatedImage:
+        try:
+            return validate_image_bytes(body, content_type, policy=self._image_policy)
+        except ImageValidationError as error:
+            if error.code is ImageValidationErrorCode.SOURCE_NOTICE:
+                raise SourceConnectorError(
+                    code=ErrorCode.SRC_CONTENT_UNAVAILABLE,
+                    operation=SourceConnectorOperation.GET_PAGES,
+                ) from None
+            raise
+
     async def _read_page(
         self, current: _OnlineChapter, page_number: int
     ) -> tuple[bytes, ValidatedImage, bool]:
@@ -348,7 +363,7 @@ class OnlineReaderSessionService:
             try:
                 image = await _owned_io(
                     asyncio.to_thread(
-                        validate_image_bytes, disk[0], disk[1], policy=self._image_policy
+                        self._validate_page, disk[0], disk[1]
                     )
                 )
                 return disk[0], image, False
@@ -363,7 +378,7 @@ class OnlineReaderSessionService:
         )
         image = await _owned_io(
             asyncio.to_thread(
-                validate_image_bytes, result.body, result.content_type, policy=self._image_policy
+                self._validate_page, result.body, result.content_type
             )
         )
         return result.body, image, True
@@ -420,7 +435,7 @@ class OnlineReaderSessionService:
                         )
                     await self._remember_page(current, page_number, body, image, fresh)
                 return body, image
-            except ReaderAssetError, asyncio.CancelledError:
+            except ReaderAssetError, SourceConnectorError, asyncio.CancelledError:
                 raise
             except Exception:
                 raise ReaderAssetError("The page could not be retrieved and verified.") from None
@@ -455,7 +470,7 @@ class OnlineReaderSessionService:
                 body, image, fresh = await self._read_page(current, page_number)
                 await self._remember_page(current, page_number, body, image, fresh)
                 return CachedReaderPageStream(body, image.mime, image.sha256, release)
-            except ReaderAssetError, asyncio.CancelledError:
+            except ReaderAssetError, SourceConnectorError, asyncio.CancelledError:
                 release()
                 raise
             except Exception:

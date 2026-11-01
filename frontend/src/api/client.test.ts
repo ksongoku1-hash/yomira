@@ -1040,6 +1040,26 @@ describe("typed local API client", () => {
     });
   });
 
+  it.each(["local", "online"])("uses the server's %s source for metadata and online opening", async (source) => {
+    const chapterId = "123e4567-e89b-42d3-a456-426614174051";
+    const chapter = { chapter_id: chapterId, series_id: "123e4567-e89b-42d3-a456-426614174050",
+      display_label: "Capítulo 1", page_count: 5 };
+    fetchMock.mockResolvedValueOnce(mockResponse({ data: chapter, meta: { source } }));
+    await expect(getReaderChapter(chapterId)).resolves.toMatchObject({ chapterId, source });
+    fetchMock.mockResolvedValueOnce(mockResponse({ data: { chapter, progress: null }, meta: { source } }));
+    await expect(openOnlineReader(chapterId)).resolves.toMatchObject({ chapter: { chapterId, source } });
+  });
+
+  it.each(["downloaded", "", null, 1])("rejects an invalid reader source %j", async (source) => {
+    const chapterId = "123e4567-e89b-42d3-a456-426614174051";
+    const chapter = { chapter_id: chapterId, series_id: "123e4567-e89b-42d3-a456-426614174050",
+      display_label: "Capítulo 1", page_count: 5 };
+    fetchMock.mockResolvedValueOnce(mockResponse({ data: chapter, meta: { source } }));
+    await expect(getReaderChapter(chapterId)).rejects.toMatchObject({ name: "ApiError" });
+    fetchMock.mockResolvedValueOnce(mockResponse({ data: { chapter, progress: null }, meta: { source } }));
+    await expect(openOnlineReader(chapterId)).rejects.toMatchObject({ name: "ApiError" });
+  });
+
   it("loads a bounded page of verified reader chapters for one series", async () => {
     const seriesId = "123e4567-e89b-42d3-a456-426614174050";
     const chapterId = "123e4567-e89b-42d3-a456-426614174051";

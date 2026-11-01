@@ -32,6 +32,8 @@ En un directorio de motor nuevo puedes crear `userdata/settings.json` con:
 
 Si ese archivo ya existe, cambia únicamente `general.MinimizeOnStart` a `true` con FMD cerrado. Es la opción propia de FMD para iniciar sin ventana. Yomira configura el token aleatorio y el puerto de su API al lanzar el proceso; no guardes ni publiques ese token.
 
+Mientras el motor sirve la API privada de Yomira, sus actualizadores propios de programa y módulos no se ejecutan. Las versiones verificadas se distribuyen con las actualizaciones de Yomira para conservar la compatibilidad de los adaptadores. Esto no desactiva el actualizador de la aplicación.
+
 Finalmente, usa `scripts/start-yomira.ps1 -FmdExecutable` para indicar el ejecutable. El ZIP portable ya contiene el motor compilado y un lanzador; no necesita instalar Lazarus, Python ni Node para probarlo. La compilación desde fuentes en un Windows sin herramientas previas aún no está certificada.
 
 ## Módulo NovelCool del lector

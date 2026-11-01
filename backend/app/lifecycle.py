@@ -1,4 +1,5 @@
 import logging
+import os
 import stat
 import time
 from collections.abc import AsyncGenerator
@@ -55,6 +56,7 @@ from app.services.metadata import MetadataService
 from app.services.online_image_cache import OnlineImageCache
 from app.services.online_reader import OnlineReaderSessionService
 from app.services.reader_asset import ReaderAssetError, ReaderAssetLimits, ReaderAssetService
+from app.services.reader_cache_settings import ReaderCacheSettingsError, ReaderCacheSettingsService
 from app.services.reader_progress import ReaderProgressService
 from app.services.reader_session import HybridReaderChapterLookup, ReaderSessionService
 from app.services.reader_settings import ReaderSettingsService
@@ -501,12 +503,18 @@ async def initialize_runtime(app: FastAPI) -> None:
         await legacy_reader_cache.retire_cache()
     except (ReaderAssetError, OSError) as error:
         logger.warning("reader.cache_recovery_blocked", extra={"cause_type": type(error).__name__})
+    image_cache = OnlineImageCache(database, disk_budget_manager)
+    runtime.reader_cache_settings_service = ReaderCacheSettingsService(database, image_cache)
+    try:
+        runtime.reader_cache_settings_service.restore()
+    except ReaderCacheSettingsError as error:
+        logger.warning("reader.cache_settings_blocked", extra={"cause_type": type(error).__name__})
     runtime.reader_session_service = OnlineReaderSessionService(
         database,
         source_pages=SourcePageService(runtime.connector_registry),
         transport=runtime.download_transport,
         image_policy=reader_image_policy,
-        disk_cache=OnlineImageCache(database, disk_budget_manager),
+        disk_cache=image_cache,
     )
     hybrid_lookup = HybridReaderChapterLookup(
         runtime.reader_asset_service, runtime.reader_session_service
@@ -570,8 +578,14 @@ async def initialize_runtime(app: FastAPI) -> None:
             runtime.resource_monitor is not None and runtime.resource_monitor.admission_allowed
         ),
     )
+    if os.name == "nt":
+        resource_sampler = WindowsResourceSampler()
+    else:
+        from app.platform.linux.resources import LinuxResourceSampler
+
+        resource_sampler = LinuxResourceSampler((data_root, settings.library_root))
     runtime.resource_monitor = ResourceMonitorService(
-        WindowsResourceSampler(),
+        resource_sampler,
         runtime.backpressure_manager,
         active_jobs=lambda: (
             runtime.download_dispatcher.active_job_snapshots
@@ -675,6 +689,7 @@ async def shutdown_runtime(app: FastAPI) -> None:
     runtime.cbr_export_service = None
     runtime.reader_progress_service = None
     runtime.reader_settings_service = None
+    runtime.reader_cache_settings_service = None
     runtime.usb_export_job_service = None
     runtime.download_worker = None
     runtime.download_transport = None
@@ -781,6 +796,7 @@ async def application_lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
         logger.info("system.startup_complete")
         app.state.updater.start()
+        await app.state.mobile_access.start()
     finally:
         if startup_trace_token is not None:
             reset_trace_id(startup_trace_token)
@@ -789,6 +805,7 @@ async def application_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         yield
     finally:
         runtime.ready = False
+        await app.state.mobile_access.close()
         await app.state.updater.close()
         shutdown_trace_token = None
         if current_trace_id() is None:

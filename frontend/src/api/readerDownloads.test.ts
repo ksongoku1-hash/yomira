@@ -18,6 +18,21 @@ function jobs(ids: string[]) {
 }
 afterEach(() => vi.unstubAllGlobals());
 describe("reader download contracts", () => {
+  it("accepts recovery links while keeping older server responses compatible", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ data: { chapter_id: chapterId,
+      connector_id: "yomira.mock", remote_series_id: "fixture", chapter_remote_id: "chapter-1",
+      series_id: chapterId, original_url: "https://mangadex.org/title/example" }, meta: {} })));
+    await expect(getReaderDownloadSource(chapterId)).resolves.toMatchObject({
+      seriesId: chapterId, originalUrl: "https://mangadex.org/title/example",
+    });
+  });
+  it.each(["javascript:alert(1)", "http://example.org/", "https://user:secret@example.org/",
+    "https://[invalid", "https://example.org/\nother"])("rejects unsafe recovery link %s", async (originalUrl) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ data: { chapter_id: chapterId,
+      connector_id: "yomira.mock", remote_series_id: "fixture", chapter_remote_id: "chapter-1",
+      series_id: chapterId, original_url: originalUrl }, meta: {} })));
+    await expect(getReaderDownloadSource(chapterId)).rejects.toThrow();
+  });
   it("reads canonical source references and accepts a local chapter without a source", async () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ data: { chapter_id: chapterId,
       connector_id: "yomira.mock", remote_series_id: "fixture", chapter_remote_id: "chapter-1" }, meta: {} }))

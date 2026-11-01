@@ -11,18 +11,30 @@ interface Request {
 }
 const waiting: Request[] = [];
 let running = 0;
+let runningPreloads = 0;
 
 function drain() {
   while (running < 2 && waiting.length > 0) {
     const urgent = waiting.findIndex((request) => request.priority === "visible");
+    // Leave a slot for visible pages instead of filling both with slow preloads.
+    if (urgent < 0 && runningPreloads > 0) break;
     const request = waiting.splice(urgent < 0 ? 0 : urgent, 1)[0]!;
     request.signal?.removeEventListener("abort", request.abort);
     running++;
+    if (request.priority === "preload") runningPreloads++;
     void request.start().then(request.resolve, request.reject).finally(() => {
       running--;
+      if (request.priority === "preload") runningPreloads--;
       drain();
     });
   }
+}
+
+export function prioritizeReaderPage(signal: AbortSignal): void {
+  const request = waiting.find((pending) => pending.signal === signal);
+  if (request === undefined) return;
+  request.priority = "visible";
+  drain();
 }
 
 export function requestReaderPage(

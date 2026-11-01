@@ -12,6 +12,9 @@ from app.tracing import activate_trace_id, reset_trace_id
     [
         ("SRC_CAPABILITY_UNSUPPORTED", False),
         ("SRC_SCHEMA_CHANGED", False),
+        ("SRC_CONTENT_UNAVAILABLE", False),
+        ("SRC_SOURCE_UNAVAILABLE", False),
+        ("SRC_REQUEST_TIMEOUT", True),
         ("SRC_CIRCUIT_OPEN", True),
     ],
 )

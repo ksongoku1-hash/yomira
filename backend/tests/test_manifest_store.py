@@ -3688,7 +3688,9 @@ def test_manifest_save_rejects_reparse_points_under_manifest_directory(
     assert not any(path.is_file() for path in outside.rglob("*"))
 
 
-def test_manifest_save_rejects_a_reparse_point_at_the_target(tmp_path: Path) -> None:
+def test_manifest_save_rejects_a_reparse_point_at_the_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data_root = tmp_path / "data-root"
     outside = tmp_path / "outside.json"
     data_root.mkdir()
@@ -3700,10 +3702,54 @@ def test_manifest_save_rejects_a_reparse_point_at_the_target(tmp_path: Path) -> 
     except (NotImplementedError, OSError) as error:
         pytest.skip(f"file symlinks are unavailable: {type(error).__name__}")
 
+    original_link_target = target.readlink()
+    store = _manifest_store(data_root)
+    manifest = _manifest("opaque-page")
+    current_bytes = manifest_to_bytes(_empty_manifest(job_id=JOB_ID))
+    new_bytes = manifest_to_bytes(manifest)
+    real_open = Path.open
+    real_lstat = Path.lstat
+    opens = 0
+    probes = 0
+
+    def patched_open(
+        self: Path, mode: str = "r", *args: Any, **kwargs: Any
+    ) -> object:
+        nonlocal opens
+        if self in {target, outside}:
+            opens += 1
+            raise AssertionError("Manifest preflight must not open the symlink or its target")
+        return real_open(self, mode, *args, **kwargs)
+
+    def patched_lstat(self: Path) -> os.stat_result:
+        nonlocal probes
+        if self == target:
+            probes += 1
+        return real_lstat(self)
+
+    monkeypatch.setattr(Path, "open", patched_open)
+    monkeypatch.setattr(Path, "lstat", patched_lstat)
     with pytest.raises(ManifestStoreError) as raised:
-        _save_with_reservation(_manifest_store(data_root), _manifest("opaque-page"))
+        # The legacy helper reads existing targets before production preflight.
+        with store.lock_job(JOB_ID):
+            reservation = store.reserve_write(
+                job_id=JOB_ID,
+                expected_current_generation=0,
+                current_sha256=hashlib.sha256(current_bytes).hexdigest(),
+                current_size_bytes=len(current_bytes),
+                new_sha256=hashlib.sha256(new_bytes).hexdigest(),
+                new_size_bytes=len(new_bytes),
+            )
+            store.save(manifest, reservation=reservation)
 
     assert raised.value.code is ErrorCode.DL_TEMPORARY_PATH_UNAVAILABLE
+    assert raised.value.stage == "manifest_snapshot"
+    assert probes > 0
+    assert opens == 0
+    assert target.is_symlink()
+    assert target.readlink() == original_link_target
+    assert not (target.parent / ".recovery").exists()
+    monkeypatch.undo()
     assert outside.read_bytes() == b"preserve-outside-target"
 
 

@@ -16,7 +16,7 @@ from typing import BinaryIO, Literal, TypeGuard, cast
 from uuid import UUID
 from xml.etree import ElementTree as ET
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,7 @@ from app.persistence.database import SQLiteDatabase
 from app.persistence.mappers.asset import asset_to_row
 from app.persistence.mappers.timestamps import datetime_to_epoch_us
 from app.persistence.models.chapter import ChapterRow
+from app.persistence.models.chapter_cbz_asset import ChapterCbzAssetRow
 from app.persistence.models.chapter_source import ChapterSourceRow
 from app.persistence.models.download_job import DownloadJobRow
 from app.persistence.models.download_manifest_state import DownloadManifestStateRow
@@ -68,6 +69,10 @@ class ReaderAssetNotFound(ReaderAssetError):
 
 class ReaderAssetConflict(ReaderAssetError):
     """A chapter already has a different immutable CBZ link."""
+
+
+class _ReaderAssetHashMismatch(ReaderAssetError):
+    """A fully read, unchanged file differs from its verified content hash."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,7 +374,12 @@ class ReaderAssetService:
         self._validate_uuid4(chapter_id, "chapter_id")
         with self._database.read_session() as session:
             record = self._repository.get_reader_chapter(session, chapter_id)
-        return self._public_chapter(record) if record is not None else None
+            if record is None:
+                return None
+            linked = self._repository.get_for_chapter(session, chapter_id)
+        if linked is None or not self.asset_available(linked[1]):
+            return None
+        return self._public_chapter(record)
 
     def get_ready_chapter_records_by_ids(
         self,
@@ -407,12 +417,7 @@ class ReaderAssetService:
         if page.page_size_bytes > self._limits.max_page_bytes:
             raise ReaderAssetError("The page exceeds the approved V1 size limit.")
 
-        stream = self._open_verified_asset(
-            page.asset.relative_path,
-            expected_sha256=page.asset.sha256,
-            expected_size_bytes=page.asset.size_bytes,
-            root_identity=self._library_root_identity,
-        )
+        stream = self._open_indexed_cbz(chapter_id, page.asset)
         archive: zipfile.ZipFile | None = None
         try:
             archive = zipfile.ZipFile(stream, mode="r")
@@ -481,12 +486,7 @@ class ReaderAssetService:
         ):
             raise ReaderAssetError("The indexed chapter pages are incomplete or inconsistent.")
 
-        stream = self._open_verified_asset(
-            first_page.asset.relative_path,
-            expected_sha256=first_page.asset.sha256,
-            expected_size_bytes=first_page.asset.size_bytes,
-            root_identity=self._library_root_identity,
-        )
+        stream = self._open_indexed_cbz(chapter_id, first_page.asset)
         archive: zipfile.ZipFile | None = None
         try:
             archive = zipfile.ZipFile(stream, mode="r")
@@ -763,6 +763,24 @@ class ReaderAssetService:
         except OSError, ValueError, ReaderAssetError:
             return False
 
+    def _open_indexed_cbz(self, chapter_id: UUID, asset: Asset) -> BinaryIO:
+        try:
+            return self._open_verified_asset(
+                asset.relative_path,
+                expected_sha256=asset.sha256,
+                expected_size_bytes=asset.size_bytes,
+                root_identity=self._library_root_identity,
+            )
+        except _ReaderAssetHashMismatch:
+            with self._database.write_session() as session:
+                session.execute(
+                    delete(ChapterCbzAssetRow).where(
+                        ChapterCbzAssetRow.chapter_id == str(chapter_id),
+                        ChapterCbzAssetRow.asset_id == str(asset.asset_id),
+                    )
+                )
+            raise
+
     def _open_verified_asset(
         self,
         relative_path: str,
@@ -805,9 +823,6 @@ class ReaderAssetService:
                             raise ReaderAssetError(
                                 "The indexed asset exceeds the approved V1 size limit."
                             )
-                    if byte_count != expected_size_bytes or digest.hexdigest() != expected_sha256:
-                        stream.close()
-                        raise ReaderAssetError("The indexed asset hash or size changed.")
                     after = os.fstat(stream.fileno())
                     if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
                         descriptor_info.st_size,
@@ -816,6 +831,13 @@ class ReaderAssetService:
                     ):
                         stream.close()
                         raise ReaderAssetError("The indexed asset changed during verification.")
+                    if byte_count != expected_size_bytes:
+                        stream.close()
+                        raise ReaderAssetError("The indexed asset size changed.")
+                    if digest.hexdigest() != expected_sha256:
+                        identity.assert_current()
+                        stream.close()
+                        raise _ReaderAssetHashMismatch("The indexed asset hash changed.")
                     self._verified_files[key] = time.monotonic() + 30
                 self._verified_files.move_to_end(key)
                 if len(self._verified_files) > 256:

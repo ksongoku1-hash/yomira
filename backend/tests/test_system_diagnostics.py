@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Generator
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -196,3 +198,30 @@ def test_diagnostics_image_probe_uses_in_memory_webp_round_trip() -> None:
         decoded.load()
         assert decoded.format == "WEBP"
         assert decoded.size == (1, 1)
+
+
+def test_library_diagnostic_accepts_stat_without_windows_attributes(
+    diagnostic_app: tuple[FastAPI, SQLiteDatabase],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_app, _ = diagnostic_app
+    runtime = cast(RuntimeState, target_app.state.runtime)
+    identity = runtime.library_root_identity
+    assert identity is not None
+    original_lstat = Path.lstat
+
+    def posix_lstat(path: Path) -> os.stat_result:
+        info = original_lstat(path)
+        if path == identity.canonical_path:
+            return cast(os.stat_result, SimpleNamespace(st_mode=info.st_mode))
+        return info
+
+    def assert_current(_identity: DataRootIdentity) -> None:
+        pass
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "lstat", posix_lstat)
+        patch.setattr(DataRootIdentity, "assert_current", assert_current)
+        response = _request("/api/v1/system/diagnostics", target_app)
+    check = next(check for check in response.json()["checks"] if check["id"] == "library")
+    assert check["status"] == "ok"

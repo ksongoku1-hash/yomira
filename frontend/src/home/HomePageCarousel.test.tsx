@@ -35,24 +35,34 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); useAppearanceStore.setState({simpleGraphics: false}); });
 
 describe("featured reading", () => {
+  it.each(["no history", "only finished chapters"])("hides the resume action with %s", async (kind) => {
+    vi.mocked(api.getRecentReaderProgress).mockResolvedValue({
+      ...progress, data: kind === "no history" ? [] : progress.data.map((item) => ({...item, percentage: "100.00"})),
+    });
+    openHome();
+    await screen.findByRole("heading", {level: 2, name: "Alfa"});
+    expect(screen.queryByRole("link", {name: "Continuar leyendo"})).not.toBeInTheDocument();
+    expect(screen.getByRole("link", {name: "Mi biblioteca"})).toHaveAttribute("href", "/library");
+  });
+
   it("rotates every eight seconds, pauses on interaction and lets the reader choose an exact slide", async () => {
     const view = openHome();
-    await screen.findByRole("heading", {level: 1, name: "Alfa"});
+    await screen.findByRole("heading", {level: 2, name: "Alfa"});
     fireEvent.click(screen.getByRole("button", {name: "Pausar destacados"}));
     vi.useFakeTimers();
     fireEvent.click(screen.getByRole("button", {name: "Reanudar destacados"}));
     act(() => vi.advanceTimersByTime(7999));
-    expect(screen.getByRole("heading", {level: 1, name: "Alfa"})).toBeInTheDocument();
+    expect(screen.getByRole("heading", {level: 2, name: "Alfa"})).toBeInTheDocument();
     act(() => vi.advanceTimersByTime(1));
-    expect(screen.getByRole("heading", {level: 1, name: "Beta"})).toBeInTheDocument();
+    expect(screen.getByRole("heading", {level: 2, name: "Beta"})).toBeInTheDocument();
     const hero = screen.getByRole("region", {name: "Obras destacadas"});
     fireEvent.mouseEnter(hero);
     act(() => vi.advanceTimersByTime(24000));
-    expect(screen.getByRole("heading", {level: 1, name: "Beta"})).toBeInTheDocument();
+    expect(screen.getByRole("heading", {level: 2, name: "Beta"})).toBeInTheDocument();
     fireEvent.mouseLeave(hero);
     fireEvent.focus(screen.getByRole("button", {name: "Destacado siguiente"}));
     act(() => vi.advanceTimersByTime(16000));
-    expect(screen.getByRole("heading", {level: 1, name: "Beta"})).toBeInTheDocument();
+    expect(screen.getByRole("heading", {level: 2, name: "Beta"})).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", {name: "Ver destacado: Alfa"}));
     expect(screen.getByRole("link", {name: "Continuar lectura: Capítulo 2"})).toHaveAttribute("href", `/reader/${chapterId}`);
     expect(screen.getByRole("link", {name: "Elegir capítulo de Alfa"})).toHaveAttribute("href", `/series/${alphaId}#chapters`);
@@ -64,12 +74,12 @@ describe("featured reading", () => {
     if (preference === "reduced motion") vi.stubGlobal("matchMedia", vi.fn(() => ({matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn()})));
     else useAppearanceStore.setState({simpleGraphics: true});
     openHome();
-    await screen.findByRole("heading", {level: 1, name: "Alfa"});
+    await screen.findByRole("heading", {level: 2, name: "Alfa"});
     vi.useFakeTimers();
     act(() => vi.advanceTimersByTime(40000));
-    expect(screen.getByRole("heading", {level: 1, name: "Alfa"})).toBeInTheDocument();
+    expect(screen.getByRole("heading", {level: 2, name: "Alfa"})).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", {name: "Destacado siguiente"}));
-    expect(screen.getByRole("heading", {level: 1, name: "Beta"})).toBeInTheDocument();
+    expect(screen.getByRole("heading", {level: 2, name: "Beta"})).toBeInTheDocument();
   });
 
   it("keeps cached library and the exact reading position visible while the local service recovers", async () => {
@@ -87,10 +97,14 @@ describe("featured reading", () => {
 
   it("uses stored genres for suggestions and never presents sample rankings or new chapters", async () => {
     openHome();
-    await screen.findByRole("heading", {level: 1, name: "Alfa"});
+    await screen.findByRole("heading", {level: 2, name: "Alfa"});
     expect(screen.getByRole("region",{name:"Populares online"})).toBeInTheDocument();
-    expect(screen.getByText("No hay novedades verificadas de capítulos")).toBeInTheDocument();
+    expect(screen.queryByText("No hay novedades verificadas de capítulos")).not.toBeInTheDocument();
     const discoveries = screen.getByRole("region", {name: "Descubre algo nuevo"});
+    expect(screen.getAllByRole("heading", {level: 1})).toHaveLength(1);
+    expect(screen.getByRole("heading", {level: 1})).toHaveTextContent("Descubre tu próxima historia");
+    expect(discoveries.compareDocumentPosition(screen.getByRole("region", {name: "Continuar leyendo"})) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("link", {name: "Continuar leyendo"})).toHaveAttribute("href", "#recent-progress-title");
     fireEvent.click(within(discoveries).getByRole("button", {name: "Misterio"}));
     expect(within(discoveries).getByText("Popular en MangaDex")).toBeInTheDocument();
     expect(within(discoveries).getByRole("link", {name: "Beta"})).toHaveAttribute("href", "/search?q=Beta");

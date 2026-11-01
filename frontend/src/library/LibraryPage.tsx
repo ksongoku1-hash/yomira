@@ -15,6 +15,7 @@ import styles from "./LibraryPage.module.css";
 import { SeriesCover } from "./SeriesCover";
 import { publicationStatus } from "./publicationStatus";
 import { ActionIcon } from "../app/ActionIcon";
+import { isMobileConnection } from "../settings/MobileAccessPanel";
 
 const PAGE_SIZE = 100;
 const READING_FILTERS: { label: string; value: "all" | LibraryReadingStatus }[] = [
@@ -66,12 +67,12 @@ function LibraryErrorState({ error, onRetry }: { error: unknown; onRetry: () => 
   );
 }
 
-function SeriesCard({ series, readingFilter, returnTo }: { series: LibrarySeriesSummary; readingFilter: "all" | LibraryReadingStatus; returnTo: string }) {
+function SeriesCard({ series, readingFilter, returnTo, coverRetry }: { series: LibrarySeriesSummary; readingFilter: "all" | LibraryReadingStatus; returnTo: string; coverRetry: number }) {
   return (
     <li className={styles.seriesItem}>
       <article aria-labelledby={`series-${series.seriesId}`} className={styles.seriesCard}>
         <Link className={styles.coverLink} aria-label={`Abrir ${series.displayTitle}`} to={`/series/${series.seriesId}`} state={{from: returnTo}}>
-          <SeriesCover series={series} />
+          <SeriesCover series={series} retryKey={coverRetry} />
         </Link>
         <div className={styles.cardDetails}>
           {readingFilter !== "all" ? <span className={styles.readingBadge}>
@@ -238,7 +239,8 @@ function LibraryPageContent() {
   const currentPage = page === undefined ? 0 : Math.floor(page.meta.offset / page.meta.limit) + 1;
 
   const manualRefresh = useMutation({ mutationFn: () => query.refetch() });
-  const refresh = () => manualRefresh.mutate();
+  const [coverRetry, setCoverRetry] = useState(0);
+  const refresh = () => { setCoverRetry((value) => value + 1); manualRefresh.mutate(); };
   const loadingPage = query.isPending || query.isPlaceholderData;
 
   return (
@@ -399,7 +401,7 @@ function LibraryPageContent() {
           {page.data.length ? (
             <ul aria-label="Series de la biblioteca" className={compact ? `${styles.seriesGrid} ${styles.compactList}` : styles.seriesGrid}>
               {page.data.map((series) => (
-                <SeriesCard key={series.seriesId} series={series} readingFilter={readingFilter} returnTo={returnTo} />
+                <SeriesCard key={series.seriesId} series={series} readingFilter={readingFilter} returnTo={returnTo} coverRetry={coverRetry} />
               ))}
             </ul>
           ) : (
@@ -443,7 +445,7 @@ function LibraryPageContent() {
           ) : null}
         </>
       ) : null}
-      {page ? <LocalImportPanel compact /> : null}
+      {page && !isMobileConnection ? <LocalImportPanel compact /> : null}
     </section>
   );
 }

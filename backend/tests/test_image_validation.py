@@ -46,6 +46,25 @@ def _image_bytes(image_format: str, size: tuple[int, int] = (8, 12)) -> bytes:
     return output.getvalue()
 
 
+@pytest.mark.parametrize("on_disk", [False, True])
+def test_verified_source_notice_is_rejected_without_modifying_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    policy: ImageValidationPolicy, on_disk: bool,
+) -> None:
+    body = _image_bytes("PNG")
+    digest = hashlib.sha256(body).hexdigest()
+    monkeypatch.setattr(image_validation, "SOURCE_NOTICE_SHA256", frozenset({digest}))
+    path = tmp_path / "notice.png"
+    path.write_bytes(body)
+    with pytest.raises(ImageValidationError) as failed:
+        if on_disk:
+            validate_image_file(path, "image/png", policy=policy)
+        else:
+            validate_image_bytes(body, "image/png", policy=policy)
+    assert failed.value.code is ImageValidationErrorCode.SOURCE_NOTICE
+    assert path.read_bytes() == body
+
+
 @pytest.mark.parametrize(
     "image_format,mime",
     [

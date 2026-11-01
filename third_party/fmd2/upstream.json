@@ -1,16 +1,16 @@
 {
   "repository": "https://github.com/dazedcat19/FMD2.git",
   "commit": "ad3a5b632375a5712065373027b0e8cc98a56b60",
-  "patch_sha256": "c51758e83beb7a2485539a7a03a0b43ba4a373806b8da625073937e0a934b865",
-  "api_source_sha256": "552ac4afe9c478e3d512e4381901198628b3f1aa2d875d0f31a8e69045f0d7d2",
-  "reference_executable_sha256": "f288450da8018ae20e755d0b7985f5926d7de60cdcfce95fd858faddff2105ea",
+  "patch_sha256": "26dec649fb9bcc28475c769c0c997721c651dbba2976172ecb0a6910da444550",
+  "api_source_sha256": "05484c8703293c82b15c353d863c40f6c04bcc5ee2477022c6316fe91030fc41",
+  "reference_executable_sha256": "da71b790cedec49eb55d05fcc8f5178bcba6b924cfaaf2faf23d6c84a5ba560a",
   "lazarus_reference_version": "4.6",
   "build_mode": "Win64",
-  "previous_reference_executable_sha256": "1b752fa2c45e1ed7d144b977d391db54e35755d577dddb54559dcccc8a7c3927",
-  "release_fix": "0.1.12: verified H2c online reader in RAM and preserved legacy downloads",
+  "previous_reference_executable_sha256": "f98d4a017809343a8d7da65188644dc824c74eb4e233172591f8cf73c1d0239d",
+  "release_fix": "0.1.17: verified downloads, reader repair, host-managed engine updates and public source inventory",
   "readiness_source_sha256": "05c26c7dccc7f2235aa610707cef6557e5c77c88ff6ead0383fb93de3cfd92c3",
-  "development_executable_sha256": "f288450da8018ae20e755d0b7985f5926d7de60cdcfce95fd858faddff2105ea",
-  "development_change": "2026-10-23: read-only catalog readiness, retryable unavailable catalogs and partial global search",
+  "development_executable_sha256": "da71b790cedec49eb55d05fcc8f5178bcba6b924cfaaf2faf23d6c84a5ba560a",
+  "development_change": "2026-10-30: responsive searches, verified host-managed engine updates and live public-source inventory",
   "novelcool_source_sha256": "e2974620a9e4411f5a7292214ef72869585bc44328f40336a851dcd7bfa8c8a9",
   "additional_modules_sha256": {
     "InfraFandub": "e0de23bb98eef9777b9a51e7eaeef9d1e9e81a822da020a661c7ce97d47911a4",
@@ -23,7 +23,10 @@
     "RagnarokScan": "3f545b13e5ccf1100479023887475e621994ad4b94ecfe0b9d3db8bd0ee43f65",
     "TaurusManga": "ee5e14380a049e91f29430e654aa763589d3496aa1756c17775d3798eae2dd27",
     "UchuujinScans": "80d6543e9f6813c7d94edcbb4ef280d0cae024d98fa4808ce4e14bded1a24ea1",
-    "WeebCentral": "5f8ef34f4e7650fcc0d91f423ccce593f1a7a734740c7589ef31f61db922767e"
+    "WeebCentral": "5f8ef34f4e7650fcc0d91f423ccce593f1a7a734740c7589ef31f61db922767e",
+    "ApollComics": "cb150db4ce0181ea175c20796e46a754f7e366642fdeab084aa08ad801cd70cb",
+    "ManhwaWeb": "cd52eeff560e0b6a8a607215d690a8099782d8c41646aaf62e4d32bd2130825a",
+    "CapibaraTraductor": "8824b7c4970eddda5d7f6fb8301dab3d8ddc6fadad74d29d05a01a6ded92554b"
   },
   "public_catalogs_sha256": {
     "0611830535274dfa9f0d879dc1968fdb": "65d12c33bbd9af0083a1558ace467557c8f98b9eae10af67420ac66abe71d2bd",

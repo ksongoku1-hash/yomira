@@ -29,6 +29,9 @@ def test_native_inventory_and_modules_match_the_core() -> None:
     assert count is not None and int(count[1]) == len(FMD2_PUBLIC_SOURCES)
     pin = json.loads((SUPPORT / "upstream.json").read_text(encoding="utf-8"))
     assert (
+        hashlib.sha256((SUPPORT / "yomira.patch").read_bytes()).hexdigest() == pin["patch_sha256"]
+    )
+    assert (
         hashlib.sha256((SUPPORT / "baseunits/uYomiraApi.pas").read_bytes()).hexdigest()
         == pin["api_source_sha256"]
     )

@@ -4,3 +4,4 @@
 /third_party/fmd2/baseunits/uYomiraPageReadiness.pas -text
 /third_party/fmd2/lua/**/*.lua -text
 /third_party/fmd2/catalogs/*.db binary
+*.sh text eol=lf

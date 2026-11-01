@@ -21,7 +21,7 @@ describe("appearance preferences", () => {
     const { useAppearanceStore } = await import("./appearanceStore");
     useAppearanceStore.getState().update({ intensity: 25, enabled: false });
     expect(JSON.parse(localStorage.getItem("yomira.appearance.v1")!))
-      .toEqual({ intensity: 25, enabled: false, simpleGraphics: false });
+      .toEqual({ intensity: 25, enabled: false, simpleGraphics: false, theme: "tinta" });
     vi.resetModules();
     const fresh = await import("./appearanceStore");
     expect(fresh.useAppearanceStore.getState()).toMatchObject({ intensity: 25, enabled: false });
@@ -50,5 +50,21 @@ describe("appearance preferences", () => {
     const { useAppearanceStore } = await import("./appearanceStore");
     useAppearanceStore.getState().update({ enabled: false });
     expect(useAppearanceStore.getState()).toMatchObject({ enabled: false, storageError: true });
+  });
+
+  it("restores the chosen theme without losing the older appearance preferences", async () => {
+    localStorage.setItem("yomira.appearance.v1", JSON.stringify({ enabled: false, intensity: 35 }));
+    const { useAppearanceStore } = await import("./appearanceStore");
+    expect(useAppearanceStore.getState().theme).toBe("tinta");
+    useAppearanceStore.getState().update({ theme: "papel" });
+    vi.resetModules();
+    const fresh = await import("./appearanceStore");
+    expect(fresh.useAppearanceStore.getState()).toMatchObject({ theme: "papel", intensity: 35, enabled: false });
+  });
+
+  it("ignores unknown saved themes while retaining valid preferences", async () => {
+    localStorage.setItem("yomira.appearance.v1", JSON.stringify({ enabled: false, intensity: 35, theme: "unknown" }));
+    const { useAppearanceStore } = await import("./appearanceStore");
+    expect(useAppearanceStore.getState()).toMatchObject({ theme: "tinta", intensity: 35, enabled: false });
   });
 });

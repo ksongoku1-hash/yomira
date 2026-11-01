@@ -686,8 +686,21 @@ index a7e300e..bb450a0 100644
 -end
 \ No newline at end of file
 +end
+diff --git a/mangadownloader/forms/frmLuaModulesUpdater.pas b/mangadownloader/forms/frmLuaModulesUpdater.pas
+index 77895ed..e15b1a1 100644
+--- a/mangadownloader/forms/frmLuaModulesUpdater.pas
++++ b/mangadownloader/forms/frmLuaModulesUpdater.pas
+@@ -951,6 +951,8 @@ end;
+ 
+ procedure TLuaModulesUpdaterForm.btCheckUpdateClick(Sender: TObject);
+ begin
++  // Yomira updates its verified engine and modules through its own installer.
++  if GetEnvironmentVariable('YOMIRA_FMD2_API_TOKEN') <> '' then Exit;
+   if ThreadCheck = nil then
+   begin
+     ThreadCheck := TCheckUpdateThread.Create(Self);
 diff --git a/mangadownloader/forms/frmMain.pas b/mangadownloader/forms/frmMain.pas
-index f75fd8e..be08b9f 100644
+index f75fd8e..8a57d98 100644
 --- a/mangadownloader/forms/frmMain.pas
 +++ b/mangadownloader/forms/frmMain.pas
 @@ -1029,7 +1029,8 @@ uses
@@ -717,3 +730,12 @@ index f75fd8e..be08b9f 100644
  
    DoBackupToday;
  
+@@ -3070,6 +3074,8 @@ end;
+ 
+ procedure TMainForm.btCheckLatestVersionClick(Sender: TObject);
+ begin
++  // The host owns updates while this process serves Yomira's private API.
++  if GetEnvironmentVariable('YOMIRA_FMD2_API_TOKEN') <> '' then Exit;
+   if Assigned(CheckUpdateThread) or Assigned(SelfUpdaterThread) then
+   begin
+     CenteredMessageDlg(Self, RS_DlgUpdaterIsRunning, mtInformation, [mbOk], 0)

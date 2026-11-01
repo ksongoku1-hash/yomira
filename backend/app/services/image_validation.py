@@ -27,6 +27,10 @@ from app.persistence.filesystem_retry import (
 from app.tracing import create_trace_id, current_trace_id
 
 logger = logging.getLogger("yomira.image_validation")
+# shortcut: only reviewed replacement banners are recognized; add hashes after confirming new ones.
+SOURCE_NOTICE_SHA256 = frozenset({
+    "bccdf04850f7cf2f4b712c2d03947070237f72ec6cf603343d070bf884664c15",
+})
 
 
 class ImageValidationErrorCode(StrEnum):
@@ -41,6 +45,7 @@ class ImageValidationErrorCode(StrEnum):
     PIXEL_LIMIT = "IMG_PIXEL_LIMIT"
     SIGNATURE_INVALID = "IMG_SIGNATURE_INVALID"
     SOURCE_CHANGED = "IMG_SOURCE_CHANGED"
+    SOURCE_NOTICE = "IMG_SOURCE_NOTICE"
     TRUNCATED = "IMG_TRUNCATED"
 
 
@@ -391,6 +396,8 @@ def _validate_image_stream(
     ):
         _raise(ImageValidationErrorCode.SOURCE_CHANGED)
 
+    if sha256 in SOURCE_NOTICE_SHA256:
+        _raise(ImageValidationErrorCode.SOURCE_NOTICE)
     return ValidatedImage(
         format=actual_format,
         width=width,
@@ -417,12 +424,15 @@ def validate_image_bytes(
         actual_format, width, height = _decode_and_validate(
             stream, signature_format=signature_format, policy=policy
         )
+    sha256 = hashlib.sha256(body).hexdigest()
+    if sha256 in SOURCE_NOTICE_SHA256:
+        _raise(ImageValidationErrorCode.SOURCE_NOTICE)
     return ValidatedImage(
         format=actual_format,
         width=width,
         height=height,
         size_bytes=len(body),
-        sha256=hashlib.sha256(body).hexdigest(),
+        sha256=sha256,
         mime=_FORMAT_TO_MIME[actual_format],
     )
 

@@ -15,6 +15,7 @@ import {
   registerOnlineReaderChapter,
   type DownloadPriority,
   type ConnectorDescriptor,
+  type ConnectorCoverResponse,
   type ConnectorSearchResponse,
   type ConnectorSearchResult,
 } from "../api/client";
@@ -165,14 +166,18 @@ function SearchResultSource({
   const title = displayTitle;
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const readOnlineMutation = useMutation({
     mutationFn: (chapterRemoteId: string) => registerOnlineReaderChapter(
       connectorId, result.remoteId ?? "", chapterRemoteId,
     ),
     retry: false,
-    onSuccess: ({ chapterId, seriesId }) => navigate(`/reader/${chapterId}?online=1`, {
-      state: { originatingSeriesId: seriesId },
-    }),
+    onSuccess: ({ chapterId, seriesId }) => {
+      if (mounted.current) navigate(`/reader/${chapterId}?online=1`, {
+        state: { originatingSeriesId: seriesId },
+      });
+    },
   });
   const [rangeStartId, setRangeStartId] = useState("");
   const [rangeEndId, setRangeEndId] = useState("");
@@ -668,7 +673,7 @@ export function SearchResultCard({
   expandedKey: string | null;
   onToggleSource: (sourceKey: string) => void;
 }) {
-  const [coverFailed, setCoverFailed] = useState(false);
+  const [failedCoverUrl, setFailedCoverUrl] = useState<string | null>(null);
   const coverFrameRef = useRef<HTMLDivElement | null>(null);
   const [coverVisible, setCoverVisible] = useState(false);
   const coverTitle = `Portada de ${group.title}`;
@@ -695,14 +700,16 @@ export function SearchResultCard({
   }, [group.coverUrl, coverConnectorId, coverRemoteId]);
   const coverQuery = useQuery({
     queryKey: ["connector-cover", coverConnectorId, coverRemoteId, group.title],
-    queryFn: () => getConnectorCover(
+    queryFn: ({ signal }) => getConnectorCover(
       coverConnectorId ?? "", coverRemoteId ?? "",
       group.title.length <= 200 ? group.title : undefined,
+      signal,
     ),
-    enabled: group.coverUrl === null && coverVisible &&
+    enabled: group.coverUrl === null && coverVisible && group.title.length <= 200 &&
       coverConnectorId !== undefined && coverRemoteId !== undefined,
     retry: false,
-    staleTime: Infinity,
+    staleTime: (query) => query.state.data?.data.coverUrl ? Infinity : 0,
+    refetchOnWindowFocus: false,
   });
   const coverUrl = group.coverUrl ?? coverQuery.data?.data.coverUrl ?? null;
   const coverLoading = group.coverUrl === null && coverQuery.isFetching;
@@ -711,11 +718,11 @@ export function SearchResultCard({
     <li className={styles.resultItem}>
       <article className={styles.resultCard}>
         <div aria-label={coverTitle} className={styles.coverFrame} ref={coverFrameRef}>
-          {coverUrl !== null && !coverFailed ? (
+          {coverUrl !== null && coverUrl !== failedCoverUrl ? (
             <img
               alt={coverTitle}
               loading="lazy"
-              onError={() => setCoverFailed(true)}
+              onError={() => setFailedCoverUrl(coverUrl)}
               referrerPolicy="no-referrer"
               src={coverUrl}
             />
@@ -752,6 +759,7 @@ export function SearchResultCard({
 }
 
 export function SearchPage() {
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const prefilledQuery = searchParams.get("q") ?? "";
   const [inputValue, setInputValue] = useState(prefilledQuery);
@@ -800,11 +808,14 @@ export function SearchPage() {
         ),
         enabled: submittedQuery !== null,
         retry: false,
+        staleTime: 60_000,
+        refetchOnWindowFocus: false,
       };
     }),
   });
   const isSearchPending = submittedQuery !== null &&
     connectorSearchQueries.some((query) => query.isPending || query.isFetching);
+  const isCurrentInputPending = isSearchPending && inputValue === submittedQuery;
   const searchOutcomes = capableConnectors.map((connector, index) => ({
     connector,
     query: connectorSearchQueries[index],
@@ -854,6 +865,14 @@ export function SearchPage() {
       return;
     }
     setValidationError(null);
+    if (query === submittedQuery) {
+      for (const search of connectorSearchQueries) void search.refetch();
+      void queryClient.invalidateQueries({
+        queryKey: ["connector-cover"],
+        predicate: (cached) => cached.isActive() && (cached.state.status === "error" ||
+          (cached.state.data as ConnectorCoverResponse | undefined)?.data.coverUrl === null),
+      });
+    }
     setSubmittedQuery(query);
   }
 
@@ -907,10 +926,10 @@ export function SearchPage() {
         </div>
         <button
           className={styles.primaryButton}
-          disabled={capableConnectors.length === 0 || isSearchPending}
+          disabled={capableConnectors.length === 0 || isCurrentInputPending}
           type="submit"
         >
-          {isSearchPending ? "Buscando…" : "Buscar"}
+          {isCurrentInputPending ? "Buscando…" : "Buscar"}
         </button>
       </form>
 

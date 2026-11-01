@@ -7,7 +7,174 @@ import pytest
 from test_fmd2_connector import _connector, _fmd_reference  # pyright: ignore[reportPrivateUsage]
 
 from app.connectors.errors import SourceConnectorError
+from app.connectors.search import ConnectorSearchQuery
+from app.errors import ErrorCode
 from app.fmd2_bridge import FMD2_SOURCE_ID
+
+
+@pytest.mark.parametrize("order", ["search-first", "catalog-first", "two-searches"])
+def test_search_and_catalog_requests_share_the_engine_gate(tmp_path: Path, order: str) -> None:
+    async def exercise() -> None:
+        busy = False
+        requests: list[str] = []
+        reference = _fmd_reference("/en/fixture/list")
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal busy
+            requests.append(request.url.path)
+            if busy:
+                return httpx.Response(503, json={"error": {"code": "catalog_busy"}})
+            busy = True
+            try:
+                await asyncio.sleep(0)
+                return httpx.Response(
+                    200, json={"data": []} if request.url.path == "/v1/search"
+                    else _catalog(reference),
+                )
+            finally:
+                busy = False
+
+        connector = _connector(tmp_path, httpx.MockTransport(handler))
+        try:
+            search = connector.search(ConnectorSearchQuery("Fixture"))
+            other = connector.search(ConnectorSearchQuery("Another")) if order == "two-searches" \
+                else connector.get_series(reference)
+            results = await asyncio.gather(
+                *(other, search) if order == "catalog-first" else (search, other)
+            )
+            assert len(results) == 2 and len(requests) == 2
+        finally:
+            await connector.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("catalog", [False, True])
+@pytest.mark.parametrize("remains_busy", [False, True])
+def test_local_catalog_busy_is_retried_with_a_fixed_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remains_busy: bool, catalog: bool
+) -> None:
+    monkeypatch.setattr("app.fmd2_bridge._CATALOG_BUSY_DELAYS", (0.0, 0.0))
+    attempts = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if remains_busy or attempts < 3:
+            return httpx.Response(503, json={"error": {"code": "catalog_busy"}})
+        return httpx.Response(200, json=_catalog(_fmd_reference("/en/fixture/list"))
+                              if catalog else {"data": []})
+
+    async def exercise() -> None:
+        connector = _connector(tmp_path, httpx.MockTransport(handler))
+        try:
+            operation = connector.get_series(_fmd_reference("/en/fixture/list")) if catalog \
+                else connector.search(ConnectorSearchQuery("Fixture"))
+            if remains_busy:
+                with pytest.raises(SourceConnectorError) as caught:
+                    await operation
+                assert caught.value.code is ErrorCode.SRC_CONNECTOR_FAILED
+                assert caught.value.retryable is True
+            else:
+                result = await operation
+                if catalog:
+                    assert cast(dict[str, object], result)["title"] == "Fixture"
+                else:
+                    assert result == ()
+            assert attempts == 3
+        finally:
+            await connector.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("failure", ["not-ready", "upstream", "html", "oversized", "malformed"])
+def test_catalog_retries_only_the_exact_local_busy_response(tmp_path: Path, failure: str) -> None:
+    attempts = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if failure == "html":
+            return httpx.Response(503, text="<html>catalog_busy</html>")
+        if failure == "oversized":
+            return httpx.Response(503, json={"error": {"code": "catalog_busy"}, "data": "x" * 2048})
+        if failure == "malformed":
+            return httpx.Response(503, content=b"{", headers={"content-type": "application/json"})
+        code = "catalog_not_ready" if failure == "not-ready" else "catalog_busy"
+        return httpx.Response(
+            503 if failure == "not-ready" else 502,
+            json={"error": {"code": code}},
+        )
+
+    async def exercise() -> None:
+        connector = _connector(tmp_path, httpx.MockTransport(handler))
+        try:
+            with pytest.raises(SourceConnectorError) as caught:
+                await connector.search(ConnectorSearchQuery("Fixture"))
+            assert caught.value.code is ErrorCode.SRC_CONNECTOR_FAILED
+            assert attempts == 1
+        finally:
+            await connector.close()
+
+    asyncio.run(exercise())
+
+
+def test_canceling_busy_wait_releases_the_catalog_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.fmd2_bridge._CATALOG_BUSY_DELAYS", (60.0,))
+
+    async def exercise() -> None:
+        entered = asyncio.Event()
+        attempts = 0
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                entered.set()
+                return httpx.Response(503, json={"error": {"code": "catalog_busy"}})
+            return httpx.Response(200, json={"data": []})
+
+        connector = _connector(tmp_path, httpx.MockTransport(handler))
+        try:
+            task = asyncio.create_task(connector.search(ConnectorSearchQuery("Fixture")))
+            await entered.wait()
+            await asyncio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert await connector.search(ConnectorSearchQuery("Another")) == ()
+            assert attempts == 2
+        finally:
+            await connector.close()
+
+    asyncio.run(exercise())
+
+
+def test_busy_response_never_repeats_reader_session_creation(tmp_path: Path) -> None:
+    attempts = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(503, json={"error": {"code": "catalog_busy"}})
+
+    async def exercise() -> None:
+        from uuid import uuid4
+
+        from test_fmd2_connector import _chapter_reference  # pyright: ignore[reportPrivateUsage]
+
+        connector = _connector(tmp_path, httpx.MockTransport(handler))
+        try:
+            with pytest.raises(SourceConnectorError):
+                await connector.open_online_pages(uuid4(), _chapter_reference())
+            assert attempts == 1
+        finally:
+            await connector.close()
+
+    asyncio.run(exercise())
 
 
 def _catalog(reference: str, *, invalid: bool = False) -> dict[str, object]:

@@ -28,7 +28,10 @@ from app.routes.connectors import router as connectors_router
 from app.routes.jobs import cancel_router as download_cancellation_router
 from app.routes.jobs import router as jobs_router
 from app.routes.library import router as library_router
+from app.routes.mobile import router as mobile_router
 from app.routes.reader import router as reader_router
+from app.routes.reader_cache import router as reader_cache_router
+from app.routes.reader_library import router as reader_library_router
 from app.routes.recommendations import router as recommendations_router
 from app.routes.settings import router as settings_router
 from app.routes.system import router as system_router
@@ -40,6 +43,7 @@ from app.services.app_updates import AppUpdater
 from app.services.cbr_builder import CbrExportFailure
 from app.services.cover_assets import CoverAssetError
 from app.services.jobs import AmbiguousLibrarySeries
+from app.services.mobile_access import AUTH_SCOPE, MobileAccess
 from app.settings import Settings, SettingsValidationError, load_settings
 from app.tracing import (
     TRACE_ID_HEADER,
@@ -286,6 +290,8 @@ async def _cover_error_handler(request: Request, exception: Exception) -> JSONRe
 
 
 def _trusted_local_request(request: Request, settings: Settings) -> bool:
+    if request.scope.get(AUTH_SCOPE) is True:
+        return True
     hosts = {"localhost", "127.0.0.1", "::1", settings.api_host}
     if settings.app_env == "test":
         hosts.add("testserver")
@@ -353,6 +359,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved_settings
     app.state.updater = AppUpdater(resolved_settings.data_root)
+    app.state.mobile_access = MobileAccess(app)
     runtime = RuntimeState()
     runtime.secret_vault = WindowsDpapiSecretVault(resolved_settings.data_root)
     if resolved_settings.app_env == "test" and resolved_settings.fmd2_executable is None:
@@ -403,9 +410,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     app.include_router(system_router)
+    app.include_router(mobile_router)
     app.include_router(updates_router)
     app.include_router(library_router)
+    app.include_router(reader_library_router)
     app.include_router(reader_router)
+    app.include_router(reader_cache_router)
     app.include_router(recommendations_router)
     app.include_router(cbr_exports_router)
     app.include_router(settings_router)
