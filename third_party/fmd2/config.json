@@ -1,0 +1,5 @@
+{
+  "config": {
+    "db_url": "https://raw.githubusercontent.com/dazedcat19/FMD2-DB/master/7z/<website>.7z"
+  }
+}

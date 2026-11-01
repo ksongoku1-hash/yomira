@@ -4,6 +4,7 @@
   "patch_sha256": "26dec649fb9bcc28475c769c0c997721c651dbba2976172ecb0a6910da444550",
   "api_source_sha256": "05484c8703293c82b15c353d863c40f6c04bcc5ee2477022c6316fe91030fc41",
   "reference_executable_sha256": "da71b790cedec49eb55d05fcc8f5178bcba6b924cfaaf2faf23d6c84a5ba560a",
+  "catalog_configuration_sha256": "a20c0824bf5817be67520eae4080e7779e067a5872c2b6d45303f1ca3236eb0a",
   "lazarus_reference_version": "4.6",
   "build_mode": "Win64",
   "previous_reference_executable_sha256": "f98d4a017809343a8d7da65188644dc824c74eb4e233172591f8cf73c1d0239d",

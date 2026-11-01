@@ -20,7 +20,11 @@ from uuid import UUID
 
 import httpx
 import pytest
-from mock_manga_server import MockMangaServer, MockScenario
+from mock_manga_server import (
+    MockMangaServer,
+    MockScenario,
+    _MockRequestHandler,  # pyright: ignore[reportPrivateUsage]
+)
 from PIL import Image
 from sqlalchemy.orm import Session
 from support.sqlite import open_test_database, reopen_test_database
@@ -91,6 +95,48 @@ def test_queued_job_downloads_packages_indexes_and_survives_database_restart(
     tmp_path: Path,
 ) -> None:
     asyncio.run(_exercise_download(tmp_path, enable_disk_budget=True))
+
+
+def test_transient_page_http_failure_retries_to_a_readable_completed_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_write = _MockRequestHandler._write_response  # pyright: ignore[reportPrivateUsage]
+    original_publish = PageManifestWriter.publish_snapshot
+    snapshots: list[tuple[DownloadPage, ...]] = []
+    page_requests = 0
+
+    def respond(
+        handler: _MockRequestHandler,
+        status: int,
+        content_type: str,
+        body: bytes,
+        **kwargs: Any,
+    ) -> None:
+        nonlocal page_requests
+        if handler.path == "/api/v1/pages/mock-chapter-1/page-2":
+            page_requests += 1
+            if page_requests == 1:
+                original_write(handler, 503, "text/plain", b"temporarily unavailable")
+                return
+        original_write(handler, status, content_type, body, **kwargs)
+
+    def publish(writer: PageManifestWriter, job_id: UUID, pages: tuple[DownloadPage, ...]) -> Any:
+        result = original_publish(writer, job_id, pages)
+        snapshots.append(pages)
+        return result
+
+    monkeypatch.setattr(_MockRequestHandler, "_write_response", respond)
+    monkeypatch.setattr(PageManifestWriter, "publish_snapshot", publish)
+    asyncio.run(_exercise_download(tmp_path))
+    assert page_requests == 2
+    retried_page = next(
+        page for page in snapshots[-1] if page.remote_reference == "mock-chapter-1/page-2"
+    )
+    assert retried_page.attempts == 2
+    assert all(page.status == "VALIDATED" for page in snapshots[-1])
+    with zipfile.ZipFile(next(tmp_path.rglob("*.cbz"))) as archive:
+        assert archive.testzip() is None
 
 
 def test_worker_reserves_two_paths_in_one_durable_snapshot_before_requests(

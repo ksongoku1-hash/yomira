@@ -12,7 +12,7 @@ fi
 if [[ -f "$root/SHA256SUMS" ]]; then (cd -- "$root" && sha256sum --quiet -c SHA256SUMS); fi
 data_home=${XDG_DATA_HOME:-$HOME/.local/share}
 if [[ $data_home != /* ]]; then data_home=$HOME/.local/share; fi
-target=$data_home/yomira-app/0.1.17-linux-preview
+target=$data_home/yomira-app/0.1.18-linux-preview
 if [[ $root != "$target" ]]; then
   mkdir -p -- "$target"
   cp -a -- "$root/." "$target/"

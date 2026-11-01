@@ -7,6 +7,8 @@ $target = [IO.Path]::GetFullPath($Destination)
 if (Test-Path -LiteralPath $target) { throw 'Elige una carpeta nueva; no se sobrescribe código existente.' }
 $parent = Split-Path -Parent $target
 if (-not (Test-Path -LiteralPath $parent -PathType Container)) { throw 'La carpeta superior debe existir.' }
+$catalogConfiguration = Join-Path $support 'config.json'
+if ((Get-FileHash -LiteralPath $catalogConfiguration -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pin.catalog_configuration_sha256) { throw 'La configuración pública de catálogos no coincide con su hash.' }
 $patch = Join-Path $support 'yomira.patch'
 if ((Get-FileHash -LiteralPath $patch -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pin.patch_sha256) { throw 'El parche no coincide con su hash.' }
 $api = Join-Path $support 'baseunits/uYomiraApi.pas'
@@ -45,6 +47,7 @@ if ($LASTEXITCODE -ne 0) { throw 'No se pudo aplicar el parche.' }
 Copy-Item -LiteralPath $api -Destination (Join-Path $target 'baseunits/uYomiraApi.pas')
 Copy-Item -LiteralPath $readiness -Destination (Join-Path $target 'baseunits/uYomiraPageReadiness.pas')
 Copy-Item -LiteralPath $novelcool -Destination (Join-Path $target 'lua/templates/NovelCool.lua')
+Copy-Item -LiteralPath $catalogConfiguration -Destination (Join-Path $target 'config.json')
 foreach ($moduleName in @($pin.additional_modules_sha256.PSObject.Properties.Name)) {
     if ($moduleName -notmatch "^[A-Za-z][A-Za-z0-9]{0,79}$") { throw "Invalid module name." }
     Copy-Item -LiteralPath (Join-Path $support "lua/modules/$moduleName.lua") -Destination (Join-Path $target "lua/modules/$moduleName.lua")

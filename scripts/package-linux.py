@@ -7,7 +7,7 @@ import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-NAME = "Yomira-0.1.17-Linux-x86_64-preview"
+NAME = "Yomira-0.1.18-Linux-x86_64-preview"
 
 
 def package() -> Path:

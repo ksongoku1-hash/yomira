@@ -1,12 +1,14 @@
-YOMIRA 0.1.17 — LECTOR HIBRIDO PARA WINDOWS 10/11 X64
+YOMIRA 0.1.18 — LECTOR HIBRIDO PARA WINDOWS 10/11 X64
 
-Version 0.1.17 distribuida desde GitHub Releases.
+Version 0.1.18 distribuida desde GitHub Releases.
+Corrige la configuracion publica del motor que faltaba en los paquetes limpios
+e impedia obtener el catalogo de MangaOni. No utiliza configuracion personal.
 
-INSTALAR: abre Yomira-Setup-0.1.17.exe. Cierra la version anterior antes
+INSTALAR: abre Yomira-Setup-0.1.18.exe. Cierra la version anterior antes
 de actualizar. Conserva una copia de recuperacion de tus datos y progreso.
 El programa y la biblioteca se guardan en carpetas separadas.
 
-VERSION PORTATIL: extrae TODO Yomira-Windows-x64-0.1.17.zip y abre
+VERSION PORTATIL: extrae TODO Yomira-Windows-x64-0.1.18.zip y abre
 Yomira.exe. No lo ejecutes dentro del ZIP. Se incluyen el motor y licencias;
 no necesitas instalar Python, Node.js ni FMD por separado.
 
@@ -40,8 +42,9 @@ la posicion. Si cambia su cantidad de paginas, el lector detiene la reapertura
 para proteger el progreso guardado.
 
 La recuperacion tras un cierre inesperado del motor se verifica en Windows
-con una fuente ficticia. Quedan pendientes fuentes externas y una prueba del
-instalador en un Windows limpio. Las fuentes pueden cambiar o dejar de responder;
+con una fuente ficticia. En esta revision se comprobaron dos descargas reales
+de Asura y Taurus. Falta una prueba del instalador en un Windows limpio.
+Las fuentes pueden cambiar o dejar de responder;
 utiliza unicamente accesos autorizados y respeta sus limites.
 
 ACTUALIZACIONES: la version instalada busca versiones estables en GitHub y descarga

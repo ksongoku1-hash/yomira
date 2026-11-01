@@ -28,8 +28,9 @@ from app.services.reader_asset import ReaderAssetError
 
 
 @pytest.mark.parametrize("operation", ["page", "export"])
-def test_hash_mismatch_allows_a_verified_replacement_without_losing_history_or_progress(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+@pytest.mark.parametrize("damage", ["hash-mismatch", "missing-file"])
+def test_unavailable_archive_allows_a_verified_replacement_without_losing_history_or_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, damage: str
 ) -> None:
     async def exercise() -> None:
         h, online, runtime, _closed = await _memory_harness(tmp_path, monkeypatch)
@@ -56,15 +57,20 @@ def test_hash_mismatch_allows_a_verified_replacement_without_losing_history_or_p
                 old_asset = linked[1]
             path = h.database.data_root_identity.canonical_path / old_asset.relative_path
             corrupted = b"X" + path.read_bytes()[1:]
-            path.write_bytes(corrupted)
-            with pytest.raises(ReaderAssetError, match="hash changed"):
+            if damage == "missing-file":
+                path.unlink()
+            else:
+                path.write_bytes(corrupted)
+            message = "unavailable" if damage == "missing-file" else "hash changed"
+            with pytest.raises(ReaderAssetError, match=message):
                 if operation == "page":
                     reader.open_page(h.chapter_id, 1)
                 else:
                     next(reader.iter_verified_chapter_pages(h.chapter_id))
             assert reader.get_chapter(h.chapter_id) is None
             with h.database.read_session() as session:
-                assert repository.get_for_chapter(session, h.chapter_id) is None
+                if damage == "hash-mismatch":
+                    assert repository.get_for_chapter(session, h.chapter_id) is None
                 assert session.get(AssetRow, str(old_asset.asset_id)) is not None
                 historical_job = session.get(DownloadJobRow, str(original.job.job_id))
                 assert historical_job is not None and historical_job.status == "COMPLETED"
@@ -77,6 +83,8 @@ def test_hash_mismatch_allows_a_verified_replacement_without_losing_history_or_p
             )[0]
             assert replacement.created and replacement.job.job_id != original.job.job_id
             assert replacement.chapter_id == h.chapter_id
+            with h.database.read_session() as session:
+                assert repository.get_for_chapter(session, h.chapter_id) is None
             identity = h.database.data_root_identity
             publisher = AtomicFilePublisher(
                 data_root_identity=identity,
@@ -107,8 +115,15 @@ def test_hash_mismatch_allows_a_verified_replacement_without_losing_history_or_p
             assert result.job.status is DownloadJobStatus.COMPLETED
             stream = reader.open_page(h.chapter_id, 1)
             assert b"".join(stream.iter_chunks()) == h.body
-            assert path.read_bytes() == corrupted
+            if damage == "missing-file":
+                assert not path.exists()
+            else:
+                assert path.read_bytes() == corrupted
             assert progress.get(h.chapter_id) == saved
+            with h.database.read_session() as session:
+                assert session.get(AssetRow, str(old_asset.asset_id)) is not None
+                historical_job = session.get(DownloadJobRow, str(original.job.job_id))
+                assert historical_job is not None and historical_job.status == "COMPLETED"
         finally:
             await online.close()
             await h.close()

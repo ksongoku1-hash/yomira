@@ -21,6 +21,10 @@ $provenance = Get-Content (Join-Path $repository 'third_party/fmd2/upstream.json
 if ((Get-FileHash -LiteralPath $motor -Algorithm SHA256).Hash.ToLowerInvariant() -ne $provenance.reference_executable_sha256) {
     throw 'The FMD executable does not match the verified release.'
 }
+$catalogConfiguration = Join-Path $repository 'third_party/fmd2/config.json'
+if ((Get-FileHash -LiteralPath $catalogConfiguration -Algorithm SHA256).Hash.ToLowerInvariant() -ne $provenance.catalog_configuration_sha256) {
+    throw 'The public catalog configuration does not match the verified source.'
+}
 foreach ($required in @('Motor/licenses', 'Licencias')) {
     if (-not (Test-Path -LiteralPath (Join-Path $distribution $required) -PathType Container)) {
         throw "Missing redistribution licenses: $required"
@@ -51,6 +55,7 @@ $bundle = Join-Path $output 'bundle/Yomira'
 foreach ($folder in @('Motor', 'Licencias')) {
     Copy-Item -LiteralPath (Join-Path $distribution $folder) -Destination $bundle -Recurse
 }
+Copy-Item -LiteralPath $catalogConfiguration -Destination (Join-Path $bundle 'Motor/config.json')
 Copy-Item -LiteralPath $novelcool -Destination (Join-Path $bundle 'Motor/lua/templates/NovelCool.lua')
 foreach ($moduleName in @($provenance.additional_modules_sha256.PSObject.Properties.Name)) {
     if ($moduleName -notmatch "^[A-Za-z][A-Za-z0-9]{0,79}$") { throw "Invalid module name." }

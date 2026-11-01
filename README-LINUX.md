@@ -1,17 +1,19 @@
-# Yomira 0.1.17 para Arch Linux y SteamOS — versión de prueba
+# Yomira 0.1.18 para Arch Linux y SteamOS — versión de prueba
 
 Este paquete contiene la adaptación **nativa de Python y la interfaz web** para Linux x86_64.
 No ejecuta el programa de Windows mediante Wine. Está preparado para probarse en Arch y en el
 **modo Escritorio de Steam Deck**. El arranque, los adaptadores de almacenamiento y la importación
 superaron pruebas automatizadas en un contenedor Arch durante la primera entrega. La versión
-0.1.17 corrige el archivo de migraciones que faltaba en el paquete y los diagnósticos de biblioteca.
+0.1.17 corrigió el archivo de migraciones que faltaba en el paquete y los diagnósticos de biblioteca.
+0.1.18 mantiene esas correcciones y alinea la numeración con Windows; la corrección de
+configuración de FMD de esta entrega no afecta al motor nativo de Linux.
 Falta certificar la instalación y el uso en hardware físico Arch o Steam Deck.
 No lo consideres una versión estable ni una sustitución de tu biblioteca actual de Windows.
 
 ## Instalación
 
 1. En Steam Deck, cambia al modo Escritorio.
-2. Extrae `Yomira-0.1.17-Linux-x86_64-preview.tar.gz` en una carpeta.
+2. Extrae `Yomira-0.1.18-Linux-x86_64-preview.tar.gz` en una carpeta.
 3. Abre una terminal dentro de esa carpeta y ejecuta:
 
    ```bash
@@ -28,7 +30,7 @@ distribución oficial de Astral. No se utiliza `sudo`, no se modifica la partici
 no se desactiva el modo de solo lectura de SteamOS y no se añaden servicios del sistema.
 Se instala únicamente un servicio **del usuario** y dos accesos de aplicaciones.
 
-El instalador copia la aplicación a `~/.local/share/yomira-app/0.1.17-linux-preview`, por lo que
+El instalador copia la aplicación a `~/.local/share/yomira-app/0.1.18-linux-preview`, por lo que
 puedes borrar la carpeta extraída de Descargas después. Si cambiaste `XDG_DATA_HOME`, se respeta
 esa ubicación. Para reinstalar, cierra primero Yomira; el instalador se niega a reemplazarla mientras
 su servicio esté activo.

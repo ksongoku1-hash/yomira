@@ -58,6 +58,6 @@ jobs:
         run: .venv/bin/python scripts/package-linux.py
       - uses: actions/upload-artifact@v4
         with:
-          name: Yomira-0.1.17-Linux-x86_64-preview
+          name: Yomira-0.1.18-Linux-x86_64-preview
           path: dist-linux/*
           if-no-files-found: error

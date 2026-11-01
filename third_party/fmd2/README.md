@@ -14,6 +14,8 @@ powershell -ExecutionPolicy Bypass -File scripts/restore-fmd-source.ps1 -Destina
 
 El script recupera la revisión exacta, sus submódulos, aplica el parche y copia la unidad de la API. No copia bibliotecas, cuentas, tareas, tokens o preferencias del usuario.
 
+Desde el 2026-11-01, `config.json` conserva únicamente la URL pública de los catálogos FMD2-DB. Su SHA-256 está fijado en `upstream.json`: la recuperación de fuentes lo copia a la raíz del motor y el empaquetado lo copia siempre a `Motor/config.json`, aunque la distribución de entrada no incluya configuración. Esta plantilla permite descargar un catálogo público faltante sin depender de ajustes de un perfil anterior.
+
 ## Compilar y preparar el motor
 
 La compilación local de referencia utilizó Lazarus 4.6, modo `Win64`. Instala los paquetes que pide el README de FMD2 y registra sus archivos `.lpk` en un perfil de Lazarus. Los paquetes adicionales y sus versiones aún no están automatizados ni fijados por esta primera preparación.
