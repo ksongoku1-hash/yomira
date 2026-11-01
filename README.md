@@ -6,7 +6,7 @@ La versión de prueba 0.1.17 corrige la apertura de capítulos descargados sin c
 
 ## Linux: Arch / SteamOS (versión de prueba)
 
-Se ha preparado un port nativo experimental para Linux x86_64, orientado al modo Escritorio de Steam Deck. Consulta [la guía Linux](README-LINUX.md) para instalarlo en la carpeta del usuario y conocer las funciones incluidas y los límites. La validación en un Linux real sigue pendiente; todavía no tiene paridad con el motor FMD ni con MTP de Windows.
+Se ha preparado un port nativo experimental para Linux x86_64, orientado al modo Escritorio de Steam Deck. Consulta [la guía Linux](README-LINUX.md) para instalarlo en la carpeta del usuario y conocer las funciones incluidas y los límites. La versión 0.1.17 superó 57 pruebas nativas en un contenedor Arch; falta certificar hardware Arch/SteamOS. Todavía no tiene paridad con el motor FMD ni con MTP de Windows.
 
 ## Descargar Yomira 0.1.17
 
