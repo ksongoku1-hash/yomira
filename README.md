@@ -69,6 +69,8 @@ Las rutas predeterminadas son user-data/libraries/Mangas para la biblioteca y us
 
 Pruebas:
 
+La [revisión de herramientas del 1 de noviembre](docs/DEPENDENCIAS_20261101.md) corrigió los avisos conocidos de desarrollo. El flujo de Arch comprueba la auditoría de dependencias y el análisis de código antes de construir.
+
     Push-Location backend
     ..\runtime\python-3.14.7\python.exe -m pytest
     Pop-Location
