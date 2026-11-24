@@ -156,6 +156,44 @@ def _make_asset() -> Asset:
     )
 
 
+def test_twenty_gib_epub_has_durable_export_history_without_raising_cbr_limit(
+    tmp_path: Path,
+) -> None:
+    database = _make_database(tmp_path)
+    asset = Asset.new_local(
+        AssetType.EXPORT_COPY,
+        f"EPUB/{uuid4()}/Manga.epub",
+        TEST_HASH,
+        20 * 1024**3,
+        created_at=NOW,
+        verified_at=NOW,
+    )
+    with database.write_session() as session:
+        session.add(asset_to_row(asset))
+    service = UsbExportJobService(
+        database=database,
+        exporter=SimulatedUsbExporter(database, tmp_path / "reader"),
+        clock=lambda: NOW,
+    )
+    try:
+        job = service.export_asset(
+            asset.asset_id, target_id="test-usb-01", idempotency_key="large-epub"
+        )
+        assert job.status == ExportJobStatus.EXPORTED and job.expected_size_bytes == 20 * 1024**3
+        assert service.list_jobs(limit=100, offset=0).items[0] == job
+        with database.write_session() as session:
+            row = session.get(AssetRow, str(asset.asset_id))
+            assert row is not None
+            row.asset_type = "CBR"
+            row.relative_path = "exports/cbr/Manga.cbr"
+        with pytest.raises(ExportAssetUnavailable):
+            service.export_asset(
+                asset.asset_id, target_id="test-usb-01", idempotency_key="large-cbr"
+            )
+    finally:
+        database.shutdown()
+
+
 def _make_database(tmp_path: Path) -> SQLiteDatabase:
     database = open_test_database(tmp_path)
     report = MigrationRunner(database, tmp_path / "backups").upgrade_to_head()

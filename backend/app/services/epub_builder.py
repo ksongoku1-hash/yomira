@@ -25,12 +25,14 @@ from PIL import Image
 
 from app.domain.asset import validate_relative_path
 from app.persistence.disk_budget import MINIMUM_RESERVED_BYTES, DiskBudgetManager
+from app.persistence.filesystem_retry import WIN32_TRANSIENT_LOCK_ERRORS, retry_filesystem_operation
 from app.persistence.storage_gate import SharedStorageGate, is_disk_full_os_error
 from app.persistence.windows_paths import DataRootIdentity
 from app.services.cbr_builder import CbrExportService
 from app.services.cbz_builder import _SizeBoundedZipStream  # pyright: ignore[reportPrivateUsage]
 from app.services.image_validation import ImageValidationPolicy, validate_image_bytes
 from app.services.reader_asset import V1_MAX_PAGE_BYTES, ReaderAssetService
+from app.tracing import create_trace_id
 
 MAX_EPUB_BYTES = 64 * 1024**3
 MAX_EPUB_PAGES = 100_000
@@ -358,8 +360,34 @@ class EpubBuilder:
                 count,
                 fingerprint,
             )
-            with self._gate.mutation():
-                os.replace(temporary_path, destination_path)
+
+            def unchanged() -> bool:
+                current = self._path(destination_path)
+                candidate = self._path(temporary_path)
+                return (
+                    (None if previous is None else self._snapshot(previous))
+                    == (None if current is None else self._snapshot(current))
+                    and candidate is not None
+                    and self._snapshot(candidate) == self._snapshot(written)
+                )
+
+            def publish() -> None:
+                self._cancel(cancelled)
+                if not unchanged():
+                    raise EpubBuildError("destination_changed")
+                with self._gate.mutation():
+                    os.replace(temporary_path, destination_path)
+
+            retry_filesystem_operation(
+                publish,
+                unchanged=unchanged,
+                component="epub_builder",
+                stage="publish",
+                trace_id=create_trace_id(),
+                job_id=str(operation_id),
+                # Windows also reports ACCESS_DENIED when replacing an open book.
+                retryable_winerrors=WIN32_TRANSIENT_LOCK_ERRORS | {5},
+            )
             published = True
             return result
         except EpubBuildError:

@@ -484,7 +484,7 @@ def test_download_page_migration_and_schema_history_are_append_only(tmp_path: Pa
             report.current_revision,
             report.current_revision,
         )
-        assert len(revisions) == 24
+        assert len(revisions) == 25
 
         with database.write_session() as session:
             with pytest.raises(IntegrityError, match="append-only"):

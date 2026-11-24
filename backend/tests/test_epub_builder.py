@@ -58,6 +58,66 @@ _NS = {
 _FINGERPRINT = "a" * 64
 
 
+@pytest.mark.parametrize("changed_during_wait", [False, True])
+def test_publication_retries_only_unchanged_files_after_windows_lock(
+    fixture: Fixture,
+    monkeypatch: pytest.MonkeyPatch,
+    changed_during_wait: bool,
+) -> None:
+    from app.persistence import filesystem_retry
+
+    fixture.build()
+    original_replace = os.replace
+    attempts: list[Path] = []
+
+    def locked(source: Path, destination: Path) -> None:
+        if source == fixture.temporary:
+            attempts.append(source)
+            if len(attempts) == 1:
+                error = PermissionError("Simulated Win32 sharing violation")
+                error.winerror = 32
+                raise error
+        original_replace(source, destination)
+
+    def after_wait(_delay: float) -> None:
+        if changed_during_wait:
+            fixture.output.write_bytes(b"concurrent user book")
+
+    monkeypatch.setattr(epub_builder.os, "replace", locked)
+    monkeypatch.setattr(filesystem_retry.time, "sleep", after_wait)
+    if changed_during_wait:
+        with pytest.raises(EpubBuildError):
+            fixture.build(fingerprint="b" * 64)
+        assert len(attempts) == 1 and fixture.output.read_bytes() == b"concurrent user book"
+    else:
+        fixture.build(fingerprint="b" * 64)
+        assert len(attempts) == 2
+        with zipfile.ZipFile(fixture.output) as book:
+            assert book.testzip() is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Native Windows file sharing")
+def test_windows_open_reader_handle_is_retried_after_it_closes(
+    fixture: Fixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.persistence import filesystem_retry
+
+    fixture.build()
+    with fixture.output.open("rb") as reader:
+        waits: list[float] = []
+
+        def release_reader(delay: float) -> None:
+            waits.append(delay)
+            reader.close()
+
+        monkeypatch.setattr(filesystem_retry.time, "sleep", release_reader)
+        fixture.build(fingerprint="b" * 64)
+    assert waits == [0.1]
+    with zipfile.ZipFile(fixture.output) as book:
+        assert book.testzip() is None
+
+
 def test_update_reuses_verified_conversion_and_rechecks_original_pages(
     fixture: Fixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -115,7 +175,8 @@ def test_corrupt_reused_image_is_reconverted(
 
 
 def test_reuse_rejects_wrong_pixels_even_when_conversion_index_matches(
-    fixture: Fixture, monkeypatch: pytest.MonkeyPatch,
+    fixture: Fixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture.build()
     with zipfile.ZipFile(fixture.output) as book:

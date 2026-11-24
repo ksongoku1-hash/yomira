@@ -52,6 +52,7 @@ def test_application_factory_builds_independent_fastapi_instances() -> None:
         "/api/v1/usb-exports/targets",
         "/api/v1/usb-exports/pages",
         "/api/v1/usb-exports/chapters/{chapter_id}",
+        "/api/v1/usb-exports/epub/{series_id}/asset",
         "/api/v1/cbr-exports",
         "/api/v1/series/{series_id}",
         "/api/v1/series/{series_id}/cover",
