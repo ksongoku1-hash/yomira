@@ -68,7 +68,7 @@ export function OnlineRecommendations({kind, enabled = true, readingTitles = [],
     {personal && genres.length ? <div className={styles.progressFilters} role="group" aria-label="Géneros de recomendaciones online">
       {["",...genres].map((value)=><button key={value} type="button" aria-pressed={value===genre} onClick={()=>{setGenre(value);setLimit(personal?8:12);}}>{value||"Todos"}</button>)}</div> : null}
     {items.length ? <ul className={`${styles.cardRow} ${styles.shelf}`}>{items.map(({item,rank,match})=><li data-motion-card className={styles.workItem} key={item.remoteId}><article>
-      <div className={styles.workCover}><Link className={styles.seriesLink} to={`/search?q=${encodeURIComponent(item.title)}`} aria-label={`Buscar fuentes de ${item.title}`}>
+      <div className={styles.workCover}><Link className={styles.seriesLink} data-motion-surface="cover" to={`/search?q=${encodeURIComponent(item.title)}`} aria-label={`Buscar fuentes de ${item.title}`}>
         <Cover item={item} /></Link><span className={styles.discoveryRank}>#{rank}</span></div>
       <Link className={styles.itemTitle} title={item.title} to={`/search?q=${encodeURIComponent(item.title)}`}>{item.title}</Link>
       <span className={styles.itemMetadata}>{item.genres.slice(0,2).map(genreLabel).join(" · ") || `Popular en ${provider}`}</span>

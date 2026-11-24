@@ -460,7 +460,7 @@ class LocalImportService:
                     name
                     for name in subdirs
                     if not name.startswith(".")
-                    and not (parent == root and name.casefold() in {"chapters", "exports"})
+                    and not (parent == root and name.casefold() in {"chapters", "exports", "epub"})
                     and _plain(parent / name)
                 ),
                 key=_natural,

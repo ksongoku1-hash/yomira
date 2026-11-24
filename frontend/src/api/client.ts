@@ -372,6 +372,17 @@ export interface CbrExportResult {
   sha256: string;
 }
 
+export interface SeriesEpubStatus {
+  status: "not_created" | "building" | "ready" | "outdated" | "failed";
+  filename: string | null;
+  chapterCount: number;
+  pageCount: number;
+  completedPages: number;
+  sizeBytes: number | null;
+  error: string | null;
+  hasFile: boolean;
+}
+
 export interface CreatedDownloadJobs {
   data: DownloadJobCreation[];
   meta: { connectorId: string; remoteSeriesId: string };
@@ -1314,6 +1325,43 @@ export async function createCbrExport(
     throw invalidCbrExportResponse(response);
   }
   return result;
+}
+
+function seriesEpubPath(seriesId: string): string {
+  if (!UUID_V4_PATTERN.test(seriesId)) throw new RangeError("seriesId must be a UUID v4");
+  return `/series/${encodeURIComponent(seriesId)}/epub`;
+}
+
+async function requestSeriesEpub(seriesId: string, method: "GET" | "POST"): Promise<SeriesEpubStatus> {
+  const { payload, response } = await requestJson(seriesEpubPath(seriesId), { method });
+  const invalid = () => new ApiError({ code: null, message: "No se pudo leer el estado del EPUB.",
+    retryable: false, status: response.status, traceId: response.headers.get("X-Trace-ID") });
+  if (response.status !== (method === "POST" ? 202 : 200) || !isRecord(payload) ||
+    !hasExactKeys(payload, ["data"]) || !isRecord(payload.data)) throw invalid();
+  const value = payload.data;
+  const status = (["not_created", "building", "ready", "outdated", "failed"] as const).find((item) => item === value.status);
+  if (status === undefined || !hasExactKeys(value, ["status", "filename", "chapter_count", "page_count", "completed_pages", "size_bytes", "error", "has_file"]) ||
+    !isOptionalString(value.filename) || (value.filename !== null &&
+      (!value.filename || value.filename.length > 255 || /[/\\]/.test(value.filename) || value.filename.split("").some((character) => character < " ") || !value.filename.toLowerCase().endsWith(".epub"))) ||
+    typeof value.chapter_count !== "number" || !Number.isSafeInteger(value.chapter_count) || value.chapter_count < 0 ||
+    typeof value.page_count !== "number" || !Number.isSafeInteger(value.page_count) || value.page_count < 0 ||
+    typeof value.completed_pages !== "number" || !Number.isSafeInteger(value.completed_pages) || value.completed_pages < 0 || value.completed_pages > value.page_count ||
+    (value.size_bytes !== null && (typeof value.size_bytes !== "number" || !Number.isSafeInteger(value.size_bytes) || value.size_bytes < 0)) ||
+    !isOptionalString(value.error) || typeof value.has_file !== "boolean") throw invalid();
+  return { status, filename: value.filename, chapterCount: value.chapter_count, pageCount: value.page_count,
+    completedPages: value.completed_pages, sizeBytes: value.size_bytes, error: value.error, hasFile: value.has_file };
+}
+
+export function getSeriesEpubStatus(seriesId: string): Promise<SeriesEpubStatus> {
+  return requestSeriesEpub(seriesId, "GET");
+}
+
+export function createSeriesEpub(seriesId: string): Promise<SeriesEpubStatus> {
+  return requestSeriesEpub(seriesId, "POST");
+}
+
+export function getSeriesEpubFileUrl(seriesId: string): string {
+  return API_BASE_URL + seriesEpubPath(seriesId) + "/file";
 }
 
 export async function createUsbAssetExport(

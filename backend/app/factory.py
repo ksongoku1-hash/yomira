@@ -33,6 +33,7 @@ from app.routes.reader import router as reader_router
 from app.routes.reader_cache import router as reader_cache_router
 from app.routes.reader_library import router as reader_library_router
 from app.routes.recommendations import router as recommendations_router
+from app.routes.series_epub import router as series_epub_router
 from app.routes.settings import router as settings_router
 from app.routes.system import router as system_router
 from app.routes.updates import router as updates_router
@@ -418,6 +419,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(reader_cache_router)
     app.include_router(recommendations_router)
     app.include_router(cbr_exports_router)
+    app.include_router(series_epub_router)
     app.include_router(settings_router)
     app.include_router(connectors_router)
     app.include_router(jobs_router)

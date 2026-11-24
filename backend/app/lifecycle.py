@@ -42,6 +42,7 @@ from app.services.download_transport import (
     NetworkOrigin,
 )
 from app.services.download_worker import DownloadWorker
+from app.services.epub_builder import EpubBuilder
 from app.services.export_jobs import UsbExportJobService
 from app.services.fmd2_catalog_refresh import (
     FMD2_CATALOG_ORIGINS,
@@ -62,6 +63,7 @@ from app.services.reader_session import HybridReaderChapterLookup, ReaderSession
 from app.services.reader_settings import ReaderSettingsService
 from app.services.recommendations import RecommendationsService
 from app.services.resource_monitor import ResourceMonitorService
+from app.services.series_epub import SeriesEpubService
 from app.services.source_pages import SourcePageService
 from app.services.startup_self_test import run_startup_self_tests
 from app.services.usb_export import UsbExportService, WindowsRemovableDriveProvider
@@ -533,6 +535,18 @@ async def initialize_runtime(app: FastAPI) -> None:
         publisher=library_file_publisher,
     )
     runtime.cbr_export_service.recover_stale_staging()
+    runtime.series_epub_service = SeriesEpubService(
+        database=database,
+        reader=runtime.reader_asset_service,
+        library=runtime.library_service,
+        library_root_identity=library_root_identity,
+        builder=EpubBuilder(
+            reader=runtime.reader_asset_service,
+            disk_budget=disk_budget_manager,
+            library_root_identity=library_root_identity,
+            storage_gate=database.storage_gate,
+        ),
+    )
     cbz_builder = CBZBuilder(
         publisher=library_file_publisher,
         max_archive_bytes=MAX_CBZ_BYTES_V1,
@@ -623,6 +637,9 @@ async def shutdown_runtime(app: FastAPI) -> None:
         # Close admission before stopping the monitor so no new job slips into
         # the queue while runtime dependencies are being dismantled.
         dispatcher.request_stop()
+    if runtime.series_epub_service is not None:
+        await runtime.series_epub_service.close()
+        runtime.series_epub_service = None
     if runtime.reader_session_service is not None:
         await runtime.reader_session_service.close()
         runtime.reader_session_service = None

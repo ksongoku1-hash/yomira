@@ -839,19 +839,8 @@ describe("App", () => {
       `/series/${syntheticSeriesId(1)}`,
     );
     const poster = screen.getByRole("link", { name: "Abrir ficha destacada de Berserk" });
-    vi.spyOn(poster, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 200, 300));
-    vi.stubGlobal("PointerEvent", class extends MouseEvent {
-      pointerType: string;
-      constructor(type: string, init: PointerEventInit) { super(type, init); this.pointerType = init.pointerType ?? ""; }
-    });
-    fireEvent.pointerMove(poster, { pointerType: "touch", clientX: 200, clientY: 0 });
-    expect(poster.style.getPropertyValue("--tilt-x")).toBe("");
-    fireEvent.pointerMove(poster, { pointerType: "mouse", clientX: 200, clientY: 0 });
-    expect(poster.style.getPropertyValue("--tilt-x")).toBe("8deg");
-    expect(poster.style.getPropertyValue("--tilt-y")).toBe("8deg");
-    fireEvent.pointerLeave(poster);
-    expect(poster.style.getPropertyValue("--tilt-x")).toBe("");
-    expect(poster.style.getPropertyValue("--tilt-y")).toBe("");
+    expect(poster).toHaveAttribute("data-motion-surface", "cover");
+    expect(screen.getByRole("link", { name: "Abrir ficha de Berserk" })).toHaveAttribute("data-motion-surface", "cover");
     expect(screen.getByText("Capítulo 8 · Página 5 · 50.00 %")).toBeInTheDocument();
     expect(screen.getByRole("progressbar", {name: "Progreso de Capítulo 8"})).toHaveAttribute("value", "50");
     expect(screen.getByRole("progressbar", {name: "Progreso de Capítulo 8"})).toHaveAttribute("max", "100");

@@ -326,6 +326,31 @@ def test_import_is_readable_ordered_enriched_and_idempotent(
         database.close()
 
 
+def test_generated_epub_folder_is_not_imported_back_into_the_library(tmp_path: Path) -> None:
+    database, root, _reader, covers, http, importer_factory = _fixture(tmp_path)
+    importer = importer_factory()
+    generated = root / "EPUB"
+    generated.mkdir()
+    original = _comic(generated, "epub", _image("red"), _image("green"))
+    before = original.read_bytes()
+
+    async def exercise() -> None:
+        try:
+            await importer.scan_once()
+            await importer.scan_once()
+            assert LibraryService(database).list_series(limit=100, offset=0).total == 0
+            assert importer.status()["errors"] == []
+            assert original.read_bytes() == before
+        finally:
+            await covers.close()
+            await http.close()
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        database.close()
+
+
 def test_same_importer_recovers_a_rejected_cbz_from_the_unchanged_external_original(
     tmp_path: Path,
 ) -> None:

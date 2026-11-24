@@ -31,6 +31,7 @@ from app.services.reader_session import ReaderSessionService
 from app.services.reader_settings import ReaderSettingsService
 from app.services.recommendations import RecommendationsService
 from app.services.resource_monitor import ResourceMonitorService
+from app.services.series_epub import SeriesEpubService
 
 
 @dataclass(slots=True)
@@ -60,6 +61,7 @@ class RuntimeState:
     resource_monitor: ResourceMonitorService | None = None
     reader_asset_service: ReaderAssetService | None = None
     cbr_export_service: CbrExportService | None = None
+    series_epub_service: SeriesEpubService | None = None
     reader_progress_service: ReaderProgressService | None = None
     reader_settings_service: ReaderSettingsService | None = None
     reader_cache_settings_service: ReaderCacheSettingsService | None = None

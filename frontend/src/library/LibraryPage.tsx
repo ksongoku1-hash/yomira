@@ -69,9 +69,9 @@ function LibraryErrorState({ error, onRetry }: { error: unknown; onRetry: () => 
 
 function SeriesCard({ series, readingFilter, returnTo, coverRetry }: { series: LibrarySeriesSummary; readingFilter: "all" | LibraryReadingStatus; returnTo: string; coverRetry: number }) {
   return (
-    <li className={styles.seriesItem}>
+    <li className={styles.seriesItem} data-motion-card>
       <article aria-labelledby={`series-${series.seriesId}`} className={styles.seriesCard}>
-        <Link className={styles.coverLink} aria-label={`Abrir ${series.displayTitle}`} to={`/series/${series.seriesId}`} state={{from: returnTo}}>
+        <Link className={styles.coverLink} data-motion-surface="cover" aria-label={`Abrir ${series.displayTitle}`} to={`/series/${series.seriesId}`} state={{from: returnTo}}>
           <SeriesCover series={series} retryKey={coverRetry} />
         </Link>
         <div className={styles.cardDetails}>

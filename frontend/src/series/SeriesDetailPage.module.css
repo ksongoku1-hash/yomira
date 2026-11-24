@@ -663,6 +663,10 @@
 .contextMenu > summary::-webkit-details-marker { display: none; }
 .menuContent { position: absolute; right: 0; top: 3rem; z-index: 10; display: grid; gap: 0.4rem; width: min(20rem, 70vw); padding: 0.65rem; border: 1px solid var(--border-strong); border-radius: 0.75rem; background: var(--surface); box-shadow: 0 8px 24px #0005; }
 .contextMenu:not([open]) .menuContent { display: none; }
+@keyframes actionsUnfold { from { opacity: 0; transform: perspective(600px) rotateX(-7deg) translateY(-6px); } }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  :global([data-simple-graphics="false"]) .contextMenu[open] .menuContent { transform-origin: top right; animation: actionsUnfold 220ms ease-out; }
+}
 .menuContent .secondaryButton { justify-content: start; text-align: left; font-size: 0.85rem; font-weight: 500; }
 .chapterState { color: var(--accent); font-size: 0.75rem; }
 .chapterList { gap: 0.25rem; }

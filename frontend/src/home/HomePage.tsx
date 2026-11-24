@@ -52,7 +52,7 @@ function LoadingCards({ label, reading = false }: { label: string; reading?: boo
 function WorkCard({ series, reason }: { series: LibrarySeriesSummary; reason?: string }) {
   return <li className={styles.workItem} data-motion-card><article>
     <div className={styles.workCover}>
-      <Link aria-label={`Abrir ficha de ${series.displayTitle}`} className={styles.seriesLink} to={`/series/${series.seriesId}`}>
+      <Link aria-label={`Abrir ficha de ${series.displayTitle}`} className={styles.seriesLink} data-motion-surface="cover" to={`/series/${series.seriesId}`}>
         <SeriesCover series={series} className={styles.recentCover} variant="medium" />
       </Link>
       <div className={styles.quickActions}>
@@ -156,7 +156,7 @@ export function HomePage() {
       {filteredProgress.length ? <ul className={styles.continueList}>{filteredProgress.map((item) => <li key={item.chapterId} className={styles.recentItem} data-motion-card>
         <article className={styles.progressItem}>
           <span className={styles.cardProgress} aria-hidden="true"><ProgressPercentage value={Math.round(Number(item.percentage))} animate={!simpleGraphics && !reducedMotion} /><small>%</small></span>
-          <Link aria-label={`Abrir ${item.seriesDisplayTitle}`} className={styles.progressChapterLink}
+          <Link aria-label={`Abrir ${item.seriesDisplayTitle}`} className={styles.progressChapterLink} data-motion-surface="cover"
             to={Number(item.percentage) >= 100 ? `/series/${item.seriesId}` : `/reader/${item.chapterId}`} state={{ originatingSeriesId: item.seriesId }}><ProgressCover progress={item} /></Link>
           <div className={styles.progressInfo}>
             <Link className={styles.progressSeriesLink} aria-label={`Ver serie ${item.seriesDisplayTitle}`} to={`/series/${item.seriesId}`}>{item.seriesDisplayTitle}</Link>
@@ -177,7 +177,7 @@ export function HomePage() {
       </li>)}</ul> : null}
     </section>
 
-    <section className={styles.welcome} aria-label="Obras destacadas" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+    <section className={styles.welcome} data-motion-surface="hero" aria-label="Obras destacadas" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
       onFocusCapture={() => setFocused(true)} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false); }}>
       {featured ? <div className={styles.heroSlide} key={featured.id}>
         <IllustratedBackdrop source={backgroundSource} />
@@ -203,15 +203,7 @@ export function HomePage() {
             {progress ? <Link className={styles.squareAction} aria-label={`Elegir capítulo de ${featured.title}`} title="Elegir capítulo" to={`/series/${featured.id}#chapters`}><ActionIcon name="chapters" /></Link> : null}
           </div>
         </div>
-        <Link className={styles.heroPoster}
-          onPointerMove={(event) => {
-            if (event.pointerType !== "mouse" || simpleGraphics || reducedMotion) return;
-            const bounds = event.currentTarget.getBoundingClientRect();
-            if (!bounds.width || !bounds.height) return;
-            event.currentTarget.style.setProperty("--tilt-x", `${-(event.clientY - bounds.top - bounds.height / 2) / bounds.height * 16}deg`);
-            event.currentTarget.style.setProperty("--tilt-y", `${(event.clientX - bounds.left - bounds.width / 2) / bounds.width * 16}deg`);
-          }}
-          onPointerLeave={(event) => { event.currentTarget.style.removeProperty("--tilt-x"); event.currentTarget.style.removeProperty("--tilt-y"); }}
+        <Link className={styles.heroPoster} data-motion-surface="cover"
           aria-label={`Abrir ficha destacada de ${featured.title}`} to={`/series/${featured.id}`}>
           <span aria-hidden="true">{progress ? <ProgressCover progress={progress} /> : <SeriesCover series={featured.series!} variant="large" />}</span>
         </Link>

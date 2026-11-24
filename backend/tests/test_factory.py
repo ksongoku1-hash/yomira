@@ -55,6 +55,8 @@ def test_application_factory_builds_independent_fastapi_instances() -> None:
         "/api/v1/cbr-exports",
         "/api/v1/series/{series_id}",
         "/api/v1/series/{series_id}/cover",
+        "/api/v1/series/{series_id}/epub",
+        "/api/v1/series/{series_id}/epub/file",
         "/api/v1/series/{series_id}/metadata/refresh",
         "/api/v1/series/{series_id}/metadata/external-candidates",
         "/api/v1/series/{series_id}/metadata/external",

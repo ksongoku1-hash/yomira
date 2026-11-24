@@ -380,6 +380,11 @@
   gap: 0.5rem;
 }
 
+@keyframes sourceUnfold { from { opacity: 0; transform: translateY(-6px); } }
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  :global([data-simple-graphics="false"]) .sourceDetail { animation: sourceUnfold 220ms ease-out; }
+}
+
 .chapterPanel {
   display: grid;
   gap: 0.6rem;
