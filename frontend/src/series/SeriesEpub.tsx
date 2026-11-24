@@ -1,10 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, createSeriesEpub, getSeriesEpubFileUrl, getSeriesEpubStatus } from "../api/client";
 import { ActionIcon } from "../app/ActionIcon";
+import { useState } from "react";
+import { EpubUsbExport } from "./EpubUsbExport";
 import styles from "./SeriesDetailPage.module.css";
 
 export function SeriesEpub({ seriesId, localChapterCount }: { seriesId: string; localChapterCount: number }) {
   const client = useQueryClient();
+  const [sending, setSending] = useState(false);
   const queryKey = ["series-epub", seriesId, localChapterCount] as const;
   const query = useQuery({ queryKey, queryFn: () => getSeriesEpubStatus(seriesId), retry: false,
     refetchInterval: (current) => current.state.status !== "error" && current.state.data?.status === "building" ? 2_000 : false });
@@ -27,6 +30,7 @@ export function SeriesEpub({ seriesId, localChapterCount }: { seriesId: string; 
       {book.status === "ready" ? <p role="status">EPUB listo: {book.chapterCount} capítulos · {book.pageCount} páginas.</p> :
         <p>El EPUB anterior sigue disponible mientras preparas su actualización.</p>}
       <a className={styles.secondaryButton} href={getSeriesEpubFileUrl(seriesId)} download><ActionIcon name="download" />Guardar EPUB</a>
+      <EpubUsbExport key={seriesId} seriesId={seriesId} disabled={busy} onBusyChange={setSending} />
     </div> : null}
     {busy ? <div className={styles.cbrResult}>
       <p role="status">{book?.status === "building" && book.pageCount > 0 ? `Creando EPUB… ${book.completedPages} de ${book.pageCount} páginas.` : "Preparando capítulos del EPUB…"}</p>
@@ -39,7 +43,7 @@ export function SeriesEpub({ seriesId, localChapterCount }: { seriesId: string; 
       <p role="status">No se pudo consultar el EPUB. Puedes volver a comprobarlo.</p>
       <button type="button" className={styles.secondaryButton} disabled={query.isFetching} onClick={() => void query.refetch()}>Comprobar EPUB</button>
     </div> : null}
-    <button type="button" className={styles.secondaryButton} disabled={localChapterCount < 1 || busy || query.isPending || query.isError}
+    <button type="button" className={styles.secondaryButton} disabled={localChapterCount < 1 || busy || sending || query.isPending || query.isError}
       onClick={() => build.mutate()}><ActionIcon name="device" />{busy ? "Creando EPUB…" : book?.hasFile ? "Actualizar EPUB" : "Crear EPUB"}</button>
   </section>;
 }

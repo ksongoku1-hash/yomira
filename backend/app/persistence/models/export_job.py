@@ -64,7 +64,7 @@ class ExportJobRow(PersistenceBase):
         ),
         CheckConstraint(
             "typeof(expected_size_bytes) = 'integer' "
-            "AND expected_size_bytes BETWEEN 1 AND 8589934592",
+            "AND expected_size_bytes BETWEEN 1 AND 68719476736",
             name="expected_size_bounded_integer",
         ),
         CheckConstraint(

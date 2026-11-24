@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import re
 import stat
 import struct
 import zipfile
-from collections.abc import Buffer, Callable, Iterator
-from contextlib import closing
+from collections.abc import Buffer, Callable, Generator, Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -306,7 +307,10 @@ class EpubBuilder:
                     disk_budget_manager=self._budget,
                     job_id=operation_id,
                 )
-                with zipfile.ZipFile(cast(BinaryIO, output), "w", allowZip64=True) as archive:
+                with (
+                    self._reusable(destination_path, series_id, previous) as reusable,
+                    zipfile.ZipFile(cast(BinaryIO, output), "w", allowZip64=True) as archive,
+                ):
                     expected = self._write(
                         archive,
                         series_id,
@@ -320,6 +324,7 @@ class EpubBuilder:
                         cancelled,
                         operation_id,
                         destination_path.parent,
+                        reusable,
                     )
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -379,6 +384,99 @@ class EpubBuilder:
             if reserved and closed:
                 self._budget.release_bounded_operation(operation_id)
 
+    @contextmanager
+    def _reusable(
+        self, path: Path, series_id: UUID, expected: os.stat_result | None
+    ) -> Generator[tuple[zipfile.ZipFile | None, dict[str, tuple[str, str]]]]:
+        archive: zipfile.ZipFile | None = None
+        index: dict[str, tuple[str, str]] = {}
+        try:
+            if expected is not None:
+                archive = zipfile.ZipFile(path)
+                if self._snapshot(path.lstat()) != self._snapshot(expected):
+                    raise ValueError("Previous EPUB changed")
+                member = archive.getinfo("EPUB/package.opf")
+                if member.file_size > 64 * 1024**2:
+                    raise ValueError("Previous EPUB metadata is too large")
+                payload = archive.read(member)
+                if b"<!DOCTYPE" in payload.upper() or b"<!ENTITY" in payload.upper():
+                    raise ValueError("Previous EPUB contains XML entities")
+                metadata = ET.fromstring(payload).find(f"{{{_OPF}}}metadata")
+                if (
+                    metadata is None
+                    or metadata.findtext("{http://purl.org/dc/elements/1.1/}identifier")
+                    != f"urn:uuid:{series_id}"
+                ):
+                    raise ValueError("Previous EPUB belongs to another series")
+                raw = next(
+                    (
+                        node.text
+                        for node in metadata.findall(f"{{{_OPF}}}meta")
+                        if node.get("property") == "yomira:converted-pages-v1"
+                    ),
+                    None,
+                )
+                values: object = json.loads(raw) if raw else {}
+                if not isinstance(values, dict):
+                    raise ValueError("Previous EPUB conversion index is invalid")
+                entries = cast(dict[object, object], values)
+                if len(entries) > MAX_EPUB_PAGES:
+                    raise ValueError("Previous EPUB conversion index is too large")
+                for source_sha, raw_entry in entries.items():
+                    if not isinstance(raw_entry, list):
+                        raise ValueError("Previous EPUB conversion entry is invalid")
+                    entry = cast(list[object], raw_entry)
+                    if (
+                        not isinstance(source_sha, str)
+                        or not _SHA256.fullmatch(source_sha)
+                        or len(entry) != 2
+                        or not isinstance(entry[0], str)
+                        or not isinstance(entry[1], str)
+                        or not re.fullmatch(r"EPUB/images/p[0-9]{6}\.png", entry[0])
+                        or not _SHA256.fullmatch(entry[1])
+                    ):
+                        raise ValueError("Previous EPUB conversion entry is invalid")
+                    index[source_sha] = entry[0], entry[1]
+        except OSError, ValueError, KeyError, zipfile.BadZipFile, ET.ParseError:
+            index.clear()
+        try:
+            yield archive, index
+        finally:
+            if archive is not None:
+                archive.close()
+
+    @staticmethod
+    def _reuse_png(
+        reusable: tuple[zipfile.ZipFile | None, dict[str, tuple[str, str]]],
+        source_sha: str,
+        original: bytes,
+    ) -> bytes | None:
+        archive, index = reusable
+        entry = index.get(source_sha)
+        if archive is None or entry is None:
+            return None
+        try:
+            member = archive.getinfo(entry[0])
+            if not 0 < member.file_size <= V1_MAX_PAGE_BYTES:
+                return None
+            content = archive.read(member)
+            if hashlib.sha256(content).hexdigest() != entry[1]:
+                return None
+            with (
+                Image.open(io.BytesIO(original), formats=("WEBP",)) as source,
+                Image.open(io.BytesIO(content), formats=("PNG",)) as cached,
+                source.convert("RGBA") as source_pixels,
+                cached.convert("RGBA") as cached_pixels,
+            ):
+                if source.size != cached.size or (
+                    CbrExportService._hash_rgba_pixels(source_pixels)  # pyright: ignore[reportPrivateUsage]
+                    != CbrExportService._hash_rgba_pixels(cached_pixels)  # pyright: ignore[reportPrivateUsage]
+                ):
+                    return None
+            return content
+        except OSError, ValueError, KeyError, zipfile.BadZipFile:
+            return None
+
     def _write(
         self,
         archive: zipfile.ZipFile,
@@ -393,8 +491,10 @@ class EpubBuilder:
         cancelled: Callable[[], bool] | None,
         operation_id: UUID,
         output_directory: Path,
+        reusable: tuple[zipfile.ZipFile | None, dict[str, tuple[str, str]]],
     ) -> dict[str, tuple[int, str]]:
         expected: dict[str, tuple[int, str]] = {}
+        conversions: dict[str, tuple[str, str]] = {}
 
         def write(name: str, content: bytes, *, image: bool = False) -> None:
             archive.writestr(self._info(name, len(content), image=image), content)
@@ -444,7 +544,9 @@ class EpubBuilder:
                     image_bytes += len(content)
                     mime = verified.mime
                     if mime == "image/webp":
-                        converted = _webp_to_png(content)
+                        converted = self._reuse_png(reusable, verified.sha256, content)
+                        if converted is None:
+                            converted = _webp_to_png(content)
                         extra = max(0, len(converted) - len(content))
                         if extra:
                             self._cancel(cancelled)
@@ -454,6 +556,11 @@ class EpubBuilder:
                         content, mime = converted, "image/png"
                     page = _Page(len(pages) + 1, mime)
                     write("EPUB/" + page.image, content, image=True)
+                    if verified.mime == "image/webp":
+                        conversions[verified.sha256] = (
+                            "EPUB/" + page.image,
+                            hashlib.sha256(content).hexdigest(),
+                        )
                     pages.append(page)
                     del content
                     if on_progress is not None:
@@ -481,6 +588,7 @@ class EpubBuilder:
                 pages,
                 fingerprint,
                 modified,
+                json.dumps(conversions, separators=(",", ":")),
             ),
         )
         return expected
@@ -504,9 +612,7 @@ class EpubBuilder:
         for index, page in enumerate(pages, 1):
             heading = f"{label} · Página {index}"
             cover = ' epub:type="cover"' if page.ordinal == 1 else ""
-            yield (
-                f'<img{cover} src="../{page.image}" alt={quoteattr(heading)}/>'
-            ).encode()
+            yield (f'<img{cover} src="../{page.image}" alt={quoteattr(heading)}/>').encode()
         yield b"</body></html>"
 
     @staticmethod
@@ -563,6 +669,7 @@ class EpubBuilder:
         pages: list[_Page],
         fingerprint: str,
         modified: str,
+        conversions: str,
     ) -> Iterator[bytes]:
         yield (
             '<?xml version="1.0" encoding="utf-8"?>'
@@ -581,6 +688,7 @@ class EpubBuilder:
             ("yomira:fingerprint", fingerprint),
             ("yomira:chapter-count", str(len(chapters))),
             ("yomira:page-count", str(len(pages))),
+            ("yomira:converted-pages-v1", conversions),
         ):
             yield _element("meta", value, property=name)
         yield b"</metadata><manifest>"

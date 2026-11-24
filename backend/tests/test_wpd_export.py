@@ -194,6 +194,43 @@ class _MemoryWpdBackend:
         yield _MemoryWpdSession(self)
 
 
+@pytest.mark.parametrize("owned", [True, False])
+def test_epub_wpd_update_keeps_foreign_books_and_verifies_replacement(
+    tmp_path: Path, owned: bool
+) -> None:
+    root = tmp_path / "library"
+    folder = root / "EPUB" / str(uuid4())
+    folder.mkdir(parents=True)
+    path = folder / "Manga.epub"
+    content = b"updated EPUB book"
+    path.write_bytes(content)
+    asset = Asset.new_local(
+        AssetType.EXPORT_COPY,
+        path.relative_to(root).as_posix(),
+        hashlib.sha256(content).hexdigest(),
+        len(content),
+        verified_at=datetime.now(UTC),
+    )
+    backend = _MemoryWpdBackend(_target())
+    old = b"old EPUB book"
+    backend.files["old"] = _MemoryFile("old", path.name, old)
+    service = _export_service(root, backend)
+    expected = hashlib.sha256(old).hexdigest() if owned else "0" * 64
+    if owned:
+        assert (
+            service.export_asset(
+                asset, target_id=backend.target.target_id, replace_sha256=expected
+            ).status
+            == "EXPORTED"
+        )
+        assert [(f.name, f.content) for f in backend.files.values()] == [(path.name, content)]
+        assert service.export_asset(asset, target_id=backend.target.target_id).status == "SKIPPED"
+    else:
+        with pytest.raises(ExportFailure):
+            service.export_asset(asset, target_id=backend.target.target_id, replace_sha256=expected)
+        assert backend.files["old"].content == old and len(backend.files) == 1
+
+
 def _target() -> ExportTarget:
     return ExportTarget(
         target_id="wpd:opaque-device-target",

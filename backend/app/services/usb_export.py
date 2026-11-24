@@ -35,6 +35,13 @@ logger = logging.getLogger("yomira.usb_export")
 DRIVE_REMOVABLE = 2
 DRIVE_FIXED = 3
 MAX_EXPORT_BYTES = 8 * 1024 * 1024 * 1024
+MAX_EPUB_EXPORT_BYTES = 64 * 1024**3
+
+
+def export_size_limit(asset: Asset) -> int:
+    return MAX_EPUB_EXPORT_BYTES if asset.is_epub_export else MAX_EXPORT_BYTES
+
+
 COPY_CHUNK_BYTES = 1024 * 1024
 _FILE_ATTRIBUTE_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
 _DISK_FULL_WINERRORS = frozenset({39, 112})
@@ -114,6 +121,7 @@ class PortableDeviceExporter(Protocol):
         target: ExportTarget,
         export_id: UUID,
         trace_id: str,
+        replace_sha256: str | None = None,
     ) -> Literal["EXPORTED", "SKIPPED"]: ...
 
 
@@ -241,6 +249,7 @@ class UsbExportService:
         self._clock = clock
 
         """Expose only removable destinations; errors are logged without paths."""
+
     def progress_for_trace(self, trace_id: str) -> dict[str, object] | None:
         callback = getattr(self._portable_exporter, "progress_for_trace", None)
         return cast(dict[str, object] | None, callback(trace_id)) if callable(callback) else None
@@ -269,7 +278,15 @@ class UsbExportService:
                 cause_type=type(error).__name__,
             ) from None
 
-    def export_asset(self, asset: Asset, *, target_id: str) -> ExportResult:
+    def export_asset(
+        self, asset: Asset, *, target_id: str, replace_sha256: str | None = None
+    ) -> ExportResult:
+        if replace_sha256 is not None and (
+            not asset.is_epub_export
+            or len(replace_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in replace_sha256)
+        ):
+            raise ValueError("Replacement requires an owned EPUB and its previous SHA-256")
         trace_id = current_trace_id() or create_trace_id()
         export_id = uuid4()
         staging_name: str | None = None
@@ -291,7 +308,7 @@ class UsbExportService:
                     trace_id=trace_id,
                     retryable=False,
                 )
-            if asset.size_bytes > MAX_EXPORT_BYTES:
+            if asset.size_bytes > export_size_limit(asset):
                 self._raise(
                     ErrorCode.EXP_SOURCE_INVALID,
                     "source_size_limit",
@@ -306,6 +323,7 @@ class UsbExportService:
                     target=target,
                     export_id=export_id,
                     trace_id=trace_id,
+                    **({"replace_sha256": replace_sha256} if replace_sha256 is not None else {}),
                 )
                 self._log_success(
                     status=status,
@@ -344,7 +362,7 @@ class UsbExportService:
             destination = target.mount_path / Path(asset.relative_path).name
             existing = self._existing_destination_digest(
                 destination,
-                expected_size=asset.size_bytes,
+                expected_size=asset.size_bytes if replace_sha256 is None else None,
                 trace_id=trace_id,
             )
             if existing is not None:
@@ -385,12 +403,13 @@ class UsbExportService:
                         size_bytes=asset.size_bytes,
                         trace_id=trace_id,
                     )
-                self._raise(
-                    ErrorCode.EXP_DESTINATION_CONFLICT,
-                    "destination_conflict",
-                    trace_id=trace_id,
-                    retryable=False,
-                )
+                if replace_sha256 is None or existing_hash != replace_sha256:
+                    self._raise(
+                        ErrorCode.EXP_DESTINATION_CONFLICT,
+                        "destination_conflict",
+                        trace_id=trace_id,
+                        retryable=False,
+                    )
 
             current_target = self._assert_target_current(
                 target,
@@ -457,8 +476,44 @@ class UsbExportService:
                 sleep=self._sleep,
                 clock=self._clock,
             )
+            backup = target.mount_path / f".yomira-{export_id.hex}.previous"
+            moved_previous = False
             try:
-                publisher.publish_no_replace(staging, destination)
+                if existing is not None:
+                    current = self._existing_destination_digest(
+                        destination, expected_size=None, trace_id=trace_id
+                    )
+                    if current is None or current != existing or current[1] != replace_sha256:
+                        self._raise(
+                            ErrorCode.EXP_DESTINATION_CONFLICT,
+                            "destination_changed",
+                            trace_id=trace_id,
+                            retryable=False,
+                        )
+                    publisher.publish_no_replace(destination, backup)
+                    moved_previous = True
+                try:
+                    publisher.publish_no_replace(staging, destination)
+                except BaseException:
+                    if moved_previous and not destination.exists():
+                        publisher.publish_no_replace(backup, destination)
+                    raise
+                if moved_previous:
+                    final = self._existing_destination_digest(
+                        destination, expected_size=asset.size_bytes, trace_id=trace_id
+                    )
+                    old = self._existing_destination_digest(
+                        backup, expected_size=None, trace_id=trace_id
+                    )
+                    if final != (asset.size_bytes, asset.sha256) or old != existing:
+                        self._raise(
+                            ErrorCode.EXP_HASH_MISMATCH,
+                            "verify_replacement",
+                            trace_id=trace_id,
+                            retryable=False,
+                        )
+                    identity.assert_current()
+                    backup.unlink()
             except AtomicFilePublishError as error:
                 code = (
                     ErrorCode.EXP_DESTINATION_CONFLICT
@@ -529,7 +584,7 @@ class UsbExportService:
 
     def _verified_source_path(self, asset: Asset, *, trace_id: str) -> Path:
         if (
-            asset.asset_type not in {AssetType.CBZ, AssetType.CBR}
+            (asset.asset_type not in {AssetType.CBZ, AssetType.CBR} and not asset.is_epub_export)
             or asset.verified_at is None
             or asset.size_bytes <= 0
         ):
@@ -794,7 +849,7 @@ class UsbExportService:
         self,
         destination: Path,
         *,
-        expected_size: int,
+        expected_size: int | None,
         trace_id: str,
     ) -> tuple[int, str] | None:
         try:
@@ -817,7 +872,9 @@ class UsbExportService:
                 trace_id=trace_id,
                 retryable=False,
             )
-        if info.st_size != expected_size or info.st_size > MAX_EXPORT_BYTES:
+        if (
+            expected_size is not None and info.st_size != expected_size
+        ) or info.st_size > MAX_EPUB_EXPORT_BYTES:
             return info.st_size, ""
         return self._hash_plain_file(
             destination,

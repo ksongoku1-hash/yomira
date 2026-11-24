@@ -58,6 +58,84 @@ _NS = {
 _FINGERPRINT = "a" * 64
 
 
+def test_update_reuses_verified_conversion_and_rechecks_original_pages(
+    fixture: Fixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[bytes] = []
+    convert = epub_builder._webp_to_png  # pyright: ignore[reportPrivateUsage]
+
+    def converted(body: bytes) -> bytes:
+        calls.append(body)
+        return convert(body)
+
+    monkeypatch.setattr(epub_builder, "_webp_to_png", converted)
+    fixture.build()
+    assert calls == [fixture.bodies[-1]]
+    with zipfile.ZipFile(fixture.output) as book:
+        original_png = book.read("EPUB/images/p000003.png")
+    fixture.build(title="Título actualizado", fingerprint="b" * 64)
+    assert len(calls) == 1
+    with zipfile.ZipFile(fixture.output) as book:
+        assert book.testzip() is None
+        assert book.read("EPUB/images/p000003.png") == original_png
+        assert b"actualizado" in book.read("EPUB/package.opf")
+    fixture.source_paths[-1].write_bytes(b"damaged source")
+    previous = fixture.output.read_bytes()
+    with pytest.raises(EpubBuildError):
+        fixture.build(fingerprint="c" * 64)
+    assert fixture.output.read_bytes() == previous
+
+
+def test_corrupt_reused_image_is_reconverted(
+    fixture: Fixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture.build()
+    with zipfile.ZipFile(fixture.output) as book:
+        resources = [(info, book.read(info)) for info in book.infolist()]
+    with zipfile.ZipFile(fixture.output, "w") as book:
+        for info, content in resources:
+            book.writestr(
+                info, b"broken PNG" if info.filename == "EPUB/images/p000003.png" else content
+            )
+    calls: list[bytes] = []
+    convert = epub_builder._webp_to_png  # pyright: ignore[reportPrivateUsage]
+
+    def converted(body: bytes) -> bytes:
+        calls.append(body)
+        return convert(body)
+
+    monkeypatch.setattr(epub_builder, "_webp_to_png", converted)
+    fixture.build(fingerprint="b" * 64)
+    assert calls == [fixture.bodies[-1]]
+    with zipfile.ZipFile(fixture.output) as book:
+        assert book.testzip() is None
+        assert book.read("EPUB/images/p000003.png").startswith(b"\x89PNG")
+
+
+def test_reuse_rejects_wrong_pixels_even_when_conversion_index_matches(
+    fixture: Fixture, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture.build()
+    with zipfile.ZipFile(fixture.output) as book:
+        resources = [(info, book.read(info)) for info in book.infolist()]
+        expected_png = book.read("EPUB/images/p000003.png")
+    wrong_png = fixture.bodies[0]
+    old_hash = hashlib.sha256(expected_png).hexdigest().encode()
+    wrong_hash = hashlib.sha256(wrong_png).hexdigest().encode()
+    with zipfile.ZipFile(fixture.output, "w") as book:
+        for info, content in resources:
+            if info.filename == "EPUB/images/p000003.png":
+                content = wrong_png
+            elif info.filename == "EPUB/package.opf":
+                content = content.replace(old_hash, wrong_hash)
+            book.writestr(info, content)
+    fixture.build(fingerprint="b" * 64)
+    with zipfile.ZipFile(fixture.output) as book:
+        assert book.read("EPUB/images/p000003.png") == expected_png
+
+
 @dataclass
 class Fixture:
     database: SQLiteDatabase
@@ -299,8 +377,9 @@ def test_build_preserves_original_images_metadata_order_and_importable_spine(
             assert [image.get("src") for image in page_images] == [
                 "../" + images[ordinal - 1].removeprefix("EPUB/") for ordinal in expected_pages
             ]
-            assert all(image.get("width") is None and image.get("height") is None
-                       for image in page_images)
+            assert all(
+                image.get("width") is None and image.get("height") is None for image in page_images
+            )
             style = document.findtext("x:head/x:style", namespaces=_NS) or ""
             assert "page-break-before:always" in style
 

@@ -611,7 +611,7 @@ const usbExportStatuses = new Set<UsbExportStatus>([
   "FAILED",
   "INTERRUPTED",
 ]);
-const MAX_USB_EXPORT_BYTES = 8_589_934_592;
+const MAX_USB_EXPORT_BYTES = 68_719_476_736;
 
 function parseUsbExportTarget(value: unknown): UsbExportTarget | null {
   if (
@@ -1362,6 +1362,18 @@ export function createSeriesEpub(seriesId: string): Promise<SeriesEpubStatus> {
 
 export function getSeriesEpubFileUrl(seriesId: string): string {
   return API_BASE_URL + seriesEpubPath(seriesId) + "/file";
+}
+
+export async function prepareSeriesEpubUsbAsset(seriesId: string): Promise<string> {
+  if (!UUID_V4_PATTERN.test(seriesId)) throw new RangeError("seriesId must be a UUID v4");
+  const { payload, response } = await requestJson(`/usb-exports/epub/${encodeURIComponent(seriesId)}/asset`, { method: "POST" });
+  if (!isRecord(payload) || !hasExactKeys(payload, ["data"]) || !isRecord(payload.data) ||
+      !hasExactKeys(payload.data, ["asset_id"]) || typeof payload.data.asset_id !== "string" ||
+      !UUID_V4_PATTERN.test(payload.data.asset_id)) {
+    throw new ApiError({ code: null, message: "No se pudo comprobar el EPUB para su envío.",
+      retryable: true, status: response.status, traceId: response.headers.get("X-Trace-ID") });
+  }
+  return payload.data.asset_id;
 }
 
 export async function createUsbAssetExport(

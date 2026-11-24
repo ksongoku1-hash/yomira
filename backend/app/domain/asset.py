@@ -84,6 +84,22 @@ class Asset:
                 normalise_utc(self.verified_at, "verified_at"),
             )
 
+    @property
+    def is_epub_export(self) -> bool:
+        parts = self.relative_path.split("/")
+        if self.asset_type != AssetType.EXPORT_COPY or len(parts) != 3:
+            return False
+        try:
+            series_id = UUID(parts[1])
+        except ValueError:
+            return False
+        return (
+            parts[0] == "EPUB"
+            and series_id.version == 4
+            and str(series_id) == parts[1]
+            and parts[2].endswith(".epub")
+        )
+
     @classmethod
     def new_local(
         cls,

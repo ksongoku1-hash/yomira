@@ -34,3 +34,20 @@ Se comprueban el orden, integridad, referencias del índice, cancelación, error
 de escritura y conservación del libro anterior. La conversión de WebP verifica
 los píxeles de salida. El generador usa el bloqueo y presupuesto compartidos de
 almacenamiento y comprueba el espacio libre antes de escribir.
+
+## Actualización y envío (0.1.19)
+
+El EPUB incorpora un registro acotado de conversiones WebP. Al actualizar, el
+constructor verifica el original descargado y los píxeles de la conversión previa
+antes de reutilizarla. Un recurso corrupto se convierte otra vez. Los libros sin
+este registro se procesan normalmente; no hay una segunda caché permanente.
+
+En Windows, «Enviar al lector» usa el historial y la verificación USB existentes.
+Solo reemplaza una versión anterior identificada por su SHA-256 en un envío
+verificado del mismo manga al mismo destino. La publicación reserva y comprueba
+la nueva copia antes de retirar la anterior. Los conflictos con archivos ajenos
+se rechazan. Un corte durante la promoción puede dejar una copia `.previous` de
+recuperación; no se borra a ciegas. El historial admite EPUB hasta 64 GiB.
+
+La migración 0025 conserva el historial existente y amplía su límite de tamaño;
+se rechaza volver a una versión del esquema que no pueda conservar libros grandes.

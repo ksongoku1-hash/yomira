@@ -26,8 +26,11 @@ from app.persistence.mappers.chapter_cbz_asset import chapter_cbz_asset_to_row
 from app.persistence.models.chapter_cbz_asset import ChapterCbzAssetRow
 from app.persistence.repositories.chapter_cbz_asset import ChapterCbzAssetRepository
 from app.routes.series_epub import router
+from app.routes.usb_exports import router as usb_router
 from app.services.epub_builder import EpubBuildCancelled, EpubBuilder
+from app.services.export_jobs import UsbExportJobService
 from app.services.series_epub import SeriesEpubService
+from app.services.usb_export import ExportTarget, UsbExportService
 
 
 def _service(fixture: _Fixture) -> SeriesEpubService:
@@ -54,7 +57,71 @@ def _app(service: SeriesEpubService) -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     app.state.runtime = SimpleNamespace(series_epub_service=service)
     app.include_router(router)
+    app.include_router(usb_router)
     return app
+
+
+def test_epub_create_send_update_and_repeat_use_verified_usb_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _fixture(tmp_path)
+    service = _service(fixture)
+    root = tmp_path / "reader"
+    root.mkdir()
+    target = ExportTarget("test-reader", root, "Reader fixture", "exFAT", 10**9, 10**9)
+
+    class Provider:
+        def list_targets(self) -> tuple[ExportTarget, ...]:
+            return (target,)
+
+    provider = Provider()
+    exporter = UsbExportService(target_provider=provider, library_root=tmp_path)
+    app = _app(service)
+    app.state.runtime.usb_export_job_service = UsbExportJobService(
+        database=fixture.database, exporter=exporter
+    )
+    route = f"/api/v1/series/{fixture.series.series_id}/epub"
+    prepare = f"/api/v1/usb-exports/epub/{fixture.series.series_id}/asset"
+    try:
+        with TestClient(app) as context:
+            client: Any = context
+            assert client.post(prepare).status_code == 404
+            client.post(route)
+            assert _wait(client, route)["status"] == "ready"
+            first = client.get(route + "/file").content
+            # A repeated update with no changes does not rewrite the book.
+            client.post(route)
+            assert _wait(client, route)["status"] == "ready"
+            assert client.get(route + "/file").content == first
+            asset = client.post(prepare).json()["data"]["asset_id"]
+            assert client.post(prepare).json()["data"]["asset_id"] == asset
+
+            def send(asset_id: str, key: str) -> dict[str, Any]:
+                response = client.post(
+                    "/api/v1/usb-exports",
+                    json={"asset_id": asset_id, "target_id": target.target_id},
+                    headers={"Idempotency-Key": key},
+                )
+                assert response.status_code == 200, response.text
+                return response.json()["data"]
+
+            assert send(asset, "first")["status"] == "EXPORTED"
+            assert send(asset, "same")["status"] == "SKIPPED"
+            monkeypatch.setattr(epub_service, "EPUB_FORMAT_VERSION", "updated-format-test")
+            client.post(route)
+            assert _wait(client, route)["status"] == "ready"
+            updated = client.get(route + "/file").content
+            assert updated != first
+            new_asset = client.post(prepare).json()["data"]["asset_id"]
+            assert new_asset != asset
+            result = send(new_asset, "update")
+            assert result["status"] == "EXPORTED"
+            assert (root / result["destination_name"]).read_bytes() == updated
+            assert len(list(root.iterdir())) == 1
+            assert client.get("/api/v1/usb-exports").json()["meta"]["total"] == 3
+    finally:
+        fixture.database.close()
 
 
 def _wait(client: Any, route: str) -> dict[str, Any]:
@@ -132,6 +199,7 @@ def test_failed_rebuild_keeps_previous_epub_downloadable(
                 raise OSError("simulated full disk")
 
             monkeypatch.setattr(EpubBuilder, "build", fail)
+            monkeypatch.setattr(epub_service, "EPUB_FORMAT_VERSION", "new-format-for-failure-test")
             assert client.post(route).status_code == 202
             state = _wait(client, route)
             assert state["status"] == "failed" and state["has_file"] is True

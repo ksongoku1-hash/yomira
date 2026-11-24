@@ -4,6 +4,8 @@ import base64
 import binascii
 import json
 import re
+import zipfile
+from xml.etree import ElementTree as ET
 from datetime import datetime
 from typing import cast
 from uuid import UUID
@@ -61,8 +63,8 @@ class UsbExportTargetsEnvelope(BaseModel):
 
 class UsbExportProgress(BaseModel):
     stage: str = Field(min_length=1, max_length=64)
-    processed_bytes: int = Field(ge=0, le=8 * 1024**3)
-    total_bytes: int = Field(ge=1, le=8 * 1024**3)
+    processed_bytes: int = Field(ge=0, le=64 * 1024**3)
+    total_bytes: int = Field(ge=1, le=64 * 1024**3)
 
 
 class UsbExportItem(BaseModel):
@@ -124,6 +126,22 @@ def _export_service(request: Request) -> UsbExportJobService:
             detail="USB export service is not initialized.",
         )
     return service
+
+
+@router.post("/epub/{series_id}/asset")
+def prepare_epub_usb_asset(series_id: UUID4, request: Request) -> dict[str, object]:
+    service = cast(RuntimeState, request.app.state.runtime).series_epub_service
+    if service is None:
+        raise HTTPException(503, "El servicio EPUB no está disponible.")
+    try:
+        asset = service.export_asset(UUID(str(series_id)))
+    except LookupError as error:
+        raise HTTPException(404, str(error)) from None
+    except OSError, ValueError, KeyError, zipfile.BadZipFile, ET.ParseError:
+        raise HTTPException(
+            409, "No se pudo comprobar el EPUB. Espera a que termine su creación y reintenta."
+        ) from None
+    return {"data": {"asset_id": str(asset.asset_id)}}
 
 
 @router.get(

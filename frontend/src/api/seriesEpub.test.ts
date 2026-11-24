@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { ApiError, createSeriesEpub, getSeriesEpubFileUrl, getSeriesEpubStatus } from "./client";
+import { ApiError, createSeriesEpub, getSeriesEpubFileUrl, getSeriesEpubStatus, prepareSeriesEpubUsbAsset } from "./client";
 
 const seriesId = "123e4567-e89b-42d3-a456-426614174000";
 const state = { status: "ready", filename: "Mi manga.epub", chapter_count: 103, page_count: 20_000,
@@ -9,6 +9,20 @@ function response(data: unknown, status = 200): Response {
   return { status, ok: status >= 200 && status < 300, headers: new Headers(), json: async () => ({ data }) } as Response;
 }
 afterEach(() => vi.unstubAllGlobals());
+
+it("prepares a verified EPUB for USB and rejects an invalid asset response", async () => {
+  const assetId = "123e4567-e89b-42d3-a456-426614174001";
+  const fetch = vi.fn().mockResolvedValueOnce(response({ asset_id: assetId }))
+    .mockResolvedValueOnce(response({ asset_id: "../untrusted" }));
+  vi.stubGlobal("fetch", fetch);
+  expect(await prepareSeriesEpubUsbAsset(seriesId)).toBe(assetId);
+  expect(fetch).toHaveBeenCalledWith(`/api/v1/usb-exports/epub/${seriesId}/asset`, {
+    method: "POST", headers: { Accept: "application/json" },
+  });
+  await expect(prepareSeriesEpubUsbAsset(seriesId)).rejects.toBeInstanceOf(ApiError);
+  await expect(prepareSeriesEpubUsbAsset("invalid")).rejects.toBeInstanceOf(RangeError);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
 
 it("reads the whole manga state without imposing chapter-export size limits", async () => {
   const fetch = vi.fn().mockResolvedValue(response(state)); vi.stubGlobal("fetch", fetch);

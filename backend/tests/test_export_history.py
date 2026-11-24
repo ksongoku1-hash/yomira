@@ -56,6 +56,7 @@ def test_history_exposes_live_progress_only_for_active_export(
         asset.asset_id, target_id="test-usb-01", idempotency_key="live-progress"
     )
     service.mark_exporting(job.export_id)
+
     def live_progress(trace: str) -> dict[str, str | int]:
         return {
             "stage": "copy",
@@ -120,7 +121,9 @@ class SimulatedUsbExporter:
     def list_targets(self) -> tuple[ExportTarget, ...]:
         return self.targets
 
-    def export_asset(self, asset: Asset, *, target_id: str) -> ExportResult:
+    def export_asset(
+        self, asset: Asset, *, target_id: str, replace_sha256: str | None = None
+    ) -> ExportResult:
         with self.database.read_session() as session:
             row = session.scalar(
                 select(ExportJobRow).where(ExportJobRow.asset_id == str(asset.asset_id))
@@ -156,7 +159,7 @@ def _make_asset() -> Asset:
 def _make_database(tmp_path: Path) -> SQLiteDatabase:
     database = open_test_database(tmp_path)
     report = MigrationRunner(database, tmp_path / "backups").upgrade_to_head()
-    assert report.current_revision == "0024_reader_sessions"
+    assert report.current_revision == "0025_epub_export_size"
     return database
 
 
@@ -201,7 +204,7 @@ def test_whole_manga_export_over_2_gib_has_durable_bounded_history(tmp_path: Pat
             with database.write_session() as session:
                 row = session.get(ExportJobRow, str(job.export_id))
                 assert row is not None
-                row.expected_size_bytes = 8 * 1024 * 1024 * 1024 + 1
+                row.expected_size_bytes = 64 * 1024**3 + 1
     finally:
         database.shutdown()
 
@@ -305,7 +308,7 @@ def test_migration_creates_bounded_export_job_table_and_verified_backup(
     database = open_test_database(tmp_path)
     try:
         report = MigrationRunner(database, tmp_path / "backups").upgrade_to_head()
-        assert report.current_revision == "0024_reader_sessions"
+        assert report.current_revision == "0025_epub_export_size"
         assert report.backup_path is not None and report.backup_path.is_file()
 
         with database.read_session() as session:

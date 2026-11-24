@@ -13,6 +13,7 @@ import threading
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 from uuid import UUID, uuid4
@@ -20,9 +21,11 @@ from xml.etree import ElementTree as ET
 
 from sqlalchemy import func, select
 
+from app.domain.asset import Asset, AssetType
 from app.domain.series import Series
 from app.persistence.database import SQLiteDatabase
 from app.persistence.managed_directories import ensure_managed_directory
+from app.persistence.mappers.asset import asset_from_row, asset_to_row
 from app.persistence.models.asset import AssetRow
 from app.persistence.models.chapter_cbz_asset import ChapterCbzAssetRow
 from app.persistence.models.download_page import DownloadPageRow
@@ -290,6 +293,9 @@ class SeriesEpubService:
             raise RuntimeError("La aplicación se está cerrando.")
         if not snapshot.chapters:
             raise ValueError("Descarga al menos un capítulo antes de crear el EPUB.")
+        status = await asyncio.to_thread(self.status, series_id)
+        if status["status"] == "ready":
+            return status
         if series_id not in self._tasks:
             self._states[series_id] = _Preparation(
                 chapter_count=len(snapshot.chapters),
@@ -385,6 +391,59 @@ class SeriesEpubService:
             raise LookupError("Crea primero el EPUB de este manga.")
         stream = self._open(book[0])
         return stream, book[0].name, os.fstat(stream.fileno()).st_size
+
+    def export_asset(self, series_id: UUID) -> Asset:
+        if (state := self._states.get(series_id)) and state.building:
+            raise ValueError("Espera a que termine la actualización del EPUB.")
+        stream, _, size = self.open_download(series_id)
+        digest = hashlib.sha256()
+        with stream:
+            before = os.fstat(stream.fileno())
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+            after = os.fstat(stream.fileno())
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise ValueError("El EPUB cambió durante la comprobación. Reintenta el envío.")
+        path = self._file(series_id)
+        if path is None:
+            raise LookupError("Crea primero el EPUB de este manga.")
+        current = self._assert_path(path, file=True)
+        if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise ValueError("El EPUB cambió durante la comprobación. Reintenta el envío.")
+        relative = path.relative_to(self._identity.canonical_path).as_posix()
+        with self._database.write_session() as session:
+            row = session.scalar(
+                select(AssetRow)
+                .where(
+                    AssetRow.asset_type == AssetType.EXPORT_COPY.value,
+                    AssetRow.relative_path == relative,
+                    AssetRow.sha256 == digest.hexdigest(),
+                    AssetRow.size_bytes == size,
+                    AssetRow.verified_at_us.is_not(None),
+                )
+                .limit(1)
+            )
+            if row is not None:
+                return asset_from_row(row)
+            asset = Asset.new_local(
+                AssetType.EXPORT_COPY,
+                relative,
+                digest.hexdigest(),
+                size,
+                verified_at=datetime.now(UTC),
+            )
+            session.add(asset_to_row(asset))
+        return asset
 
     async def close(self) -> None:
         self._closing.set()

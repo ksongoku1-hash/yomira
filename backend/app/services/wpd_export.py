@@ -19,9 +19,10 @@ from app.domain.asset import Asset
 from app.errors import ErrorCode
 from app.services.usb_export import (
     COPY_CHUNK_BYTES,
-    MAX_EXPORT_BYTES,
+    MAX_EPUB_EXPORT_BYTES,
     ExportFailure,
     ExportTarget,
+    export_size_limit,
 )
 from app.tracing import create_trace_id
 
@@ -130,15 +131,22 @@ class WpdExportService:
         target: ExportTarget,
         export_id: UUID,
         trace_id: str,
+        replace_sha256: str | None = None,
     ) -> ExportStatus:
         """Copy, read back, then rename. Every uncertain mutation fails closed."""
+        if replace_sha256 is not None and (
+            not asset.is_epub_export
+            or len(replace_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in replace_sha256)
+        ):
+            raise ValueError("Replacement requires an owned EPUB and its previous SHA-256")
         stage = "preflight"
         self._progress_size = asset.size_bytes
         staging_name: str | None = None
         try:
             current_target = self._resolve_target(target.target_id, trace_id=trace_id)
             self._validate_portable_target(current_target, trace_id=trace_id)
-            if asset.size_bytes <= 0 or asset.size_bytes > MAX_EXPORT_BYTES:
+            if asset.size_bytes <= 0 or asset.size_bytes > export_size_limit(asset):
                 self._raise(
                     ErrorCode.EXP_SOURCE_INVALID,
                     "source_size_limit",
@@ -203,12 +211,14 @@ class WpdExportService:
                             stage="verify_source",
                         )
                         return "SKIPPED"
-                    self._raise(
-                        ErrorCode.EXP_DESTINATION_CONFLICT,
-                        "destination_conflict",
-                        trace_id=trace_id,
-                        retryable=False,
-                    )
+                    if replace_sha256 is None or existing_hash != replace_sha256:
+                        self._raise(
+                            ErrorCode.EXP_DESTINATION_CONFLICT,
+                            "destination_conflict",
+                            trace_id=trace_id,
+                            retryable=False,
+                        )
+                previous = existing[0] if existing else None
 
                 stage = "resume_staging"
                 staged = self._named_files(
@@ -358,10 +368,20 @@ class WpdExportService:
                     trace_id=trace_id,
                     stage=stage,
                 )
-                if existing:
+                if (previous is None and existing) or (
+                    previous is not None
+                    and (
+                        len(existing) != 1
+                        or existing[0].object_id != previous.object_id
+                        or self._hash_remote_file(
+                            session, existing[0], trace_id=trace_id, stage="destination_verify"
+                        )[1]
+                        != replace_sha256
+                    )
+                ):
                     self._raise(
                         ErrorCode.EXP_DESTINATION_CONFLICT,
-                        "destination_conflict",
+                        "destination_changed",
                         trace_id=trace_id,
                         retryable=False,
                         staging_name=staging_name,
@@ -369,7 +389,26 @@ class WpdExportService:
 
                 stage = "publish"
                 self._report_progress(stage, 0)
-                session.rename_file(staged_object_id, destination_name)
+                if previous is not None:
+                    backup_name = f".yomira-{export_id.hex}.previous"
+                    if self._named_files(
+                        session, current_target, backup_name, trace_id=trace_id, stage=stage
+                    ):
+                        self._raise(
+                            ErrorCode.EXP_DESTINATION_CONFLICT,
+                            "backup_conflict",
+                            trace_id=trace_id,
+                            retryable=False,
+                        )
+                    session.rename_file(previous.object_id, backup_name)
+                try:
+                    session.rename_file(staged_object_id, destination_name)
+                except Exception:
+                    if previous is not None and not self._named_files(
+                        session, current_target, destination_name, trace_id=trace_id, stage=stage
+                    ):
+                        session.rename_file(previous.object_id, destination_name)
+                    raise
 
                 stage = "verify_final"
                 final_name_matches = self._named_files(
@@ -409,6 +448,21 @@ class WpdExportService:
                         trace_id=trace_id,
                         retryable=False,
                     )
+                if previous is not None:
+                    backup = session.get_file(previous.object_id)
+                    if (
+                        self._hash_remote_file(
+                            session, backup, trace_id=trace_id, stage="destination_verify"
+                        )[1]
+                        != replace_sha256
+                    ):
+                        self._raise(
+                            ErrorCode.EXP_HASH_MISMATCH,
+                            "backup_changed",
+                            trace_id=trace_id,
+                            retryable=False,
+                        )
+                    session.delete_file(previous.object_id)
             return "EXPORTED"
         except ExportFailure:
             raise
@@ -483,7 +537,7 @@ class WpdExportService:
                     total_bytes += len(chunk)
                     digest.update(chunk)
                     self._report_progress(stage, total_bytes)
-                    if total_bytes > MAX_EXPORT_BYTES:
+                    if total_bytes > MAX_EPUB_EXPORT_BYTES:
                         self._raise(
                             ErrorCode.EXP_SOURCE_INVALID,
                             "source_size_limit",
@@ -547,7 +601,7 @@ class WpdExportService:
                         staging_name=staging_name,
                     )
                 while chunk := source.read(COPY_CHUNK_BYTES):
-                    if copied_bytes + len(chunk) > MAX_EXPORT_BYTES:
+                    if copied_bytes + len(chunk) > MAX_EPUB_EXPORT_BYTES:
                         self._raise(
                             ErrorCode.EXP_SOURCE_INVALID,
                             "source_size_limit",
@@ -603,7 +657,7 @@ class WpdExportService:
             with session.open_read(remote_file.object_id) as stream:
                 while chunk := stream.read(COPY_CHUNK_BYTES):
                     total_bytes += len(chunk)
-                    if total_bytes > MAX_EXPORT_BYTES:
+                    if total_bytes > MAX_EPUB_EXPORT_BYTES:
                         self._raise(
                             ErrorCode.EXP_SOURCE_INVALID,
                             "remote_size_limit",

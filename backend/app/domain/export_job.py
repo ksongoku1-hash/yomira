@@ -8,7 +8,7 @@ from app.domain.timestamps import normalise_utc
 from app.errors import ErrorCode
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
-_MAX_EXPORT_BYTES = 8 * 1024 * 1024 * 1024
+_MAX_EXPORT_BYTES = 64 * 1024**3
 
 
 class ExportJobStatus(StrEnum):
