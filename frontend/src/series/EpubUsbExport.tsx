@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { ApiError, createUsbAssetExport, getUsbExportHistoryPage, getUsbExportTargets,
   prepareSeriesEpubUsbAsset } from "../api/client";
 import { isMobileConnection } from "../settings/MobileAccessPanel";
+import { ActionIcon } from "../app/ActionIcon";
 import { ExportProgress } from "../usb/ExportProgress";
 import styles from "./SeriesDetailPage.module.css";
 
@@ -40,9 +41,9 @@ export function EpubUsbExport({ seriesId, disabled, onBusyChange }: {
   if (isMobileConnection) return null;
 
   return <details className={styles.cbrResult} onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary>Enviar al lector</summary>
+    <summary><ActionIcon name="device" />Enviar al lector</summary>
     {open ? <>
-      <p>Conecta el lector por cable y activa la transferencia de archivos. La copia se comprueba antes de dar el envío por terminado.</p>
+      <p>En Windows, conecta el lector por cable y activa la transferencia de archivos. En Linux, usa «Guardar EPUB» para copiar el libro.</p>
       <button type="button" className={styles.secondaryButton} disabled={targets.isFetching || send.isPending}
         onClick={() => void targets.refetch()}>{targets.isFetching ? "Buscando lectores…" : "Detectar lector"}</button>
       {targets.isError ? <p role="alert">No se pudieron consultar los lectores. Vuelve a detectar el lector.</p> : null}
@@ -59,7 +60,7 @@ export function EpubUsbExport({ seriesId, disabled, onBusyChange }: {
           </select>
         </label>
         <button type="button" className={styles.secondaryButton} disabled={disabled || !targetId || send.isPending || targets.isFetching}
-          onClick={() => send.mutate()}>{send.isPending ? "Enviando EPUB…" : "Enviar EPUB"}</button>
+          onClick={() => send.mutate()}><ActionIcon name="device" />{send.isPending ? "Enviando EPUB…" : "Enviar EPUB"}</button>
       </div> : null}
       {send.isPending ? active ? <ExportProgress job={active} /> : <p role="status">Comprobando el EPUB y preparando el envío…</p> : null}
       {send.isError ? <p role="alert">{send.error instanceof ApiError ? send.error.message : "No se pudo enviar el EPUB. Comprueba la conexión y reintenta."}</p> : null}

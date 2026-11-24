@@ -5,8 +5,9 @@ No ejecuta el programa de Windows mediante Wine. Está preparado para probarse e
 **modo Escritorio de Steam Deck**. El arranque, los adaptadores de almacenamiento y la importación
 superaron pruebas automatizadas en un contenedor Arch durante la primera entrega. La versión
 0.1.17 corrigió el archivo de migraciones que faltaba en el paquete y los diagnósticos de biblioteca.
-0.1.19 mantiene esas correcciones y alinea la numeración con Windows; la corrección de
-configuración de FMD de esta entrega no afecta al motor nativo de Linux.
+0.1.19 añade libros EPUB manuales con índice por capítulo y reutiliza conversiones de
+imágenes al actualizarlos. Usa «Guardar EPUB» para copiarlos a tu lector; el envío MTP/WPD
+desde la aplicación está disponible en Windows.
 Falta certificar la instalación y el uso en hardware físico Arch o Steam Deck.
 No lo consideres una versión estable ni una sustitución de tu biblioteca actual de Windows.
 
