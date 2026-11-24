@@ -1,4 +1,4 @@
-# Yomira 0.1.18 — lector híbrido local
+# Yomira — lector híbrido local
 
 Yomira es una aplicación local para Windows que organiza, descarga y permite leer mangas desde una interfaz web. Los archivos y la biblioteca se guardan en el equipo del usuario.
 
@@ -8,7 +8,13 @@ La versión de prueba 0.1.18 corrige la configuración pública del motor que fa
 
 Se ha preparado un port nativo experimental para Linux x86_64, orientado al modo Escritorio de Steam Deck. Consulta [la guía Linux](README-LINUX.md) para instalarlo en la carpeta del usuario y conocer las funciones incluidas y los límites. La versión 0.1.17 superó 57 pruebas nativas en un contenedor Arch; falta certificar hardware Arch/SteamOS. Todavía no tiene paridad con el motor FMD ni con MTP de Windows.
 
-## Descargar Yomira 0.1.18
+## Candidata 0.1.19
+
+La rama `feature/epub-library` incorpora un EPUB manual por manga, índice por
+capítulo, envío USB verificado desde la ficha y reutilización de conversiones
+WebP al actualizar el libro. Consulta las [notas de la candidata](docs/releases/0.1.19.md).
+
+## Descargar la versión estable 0.1.18
 
 **Para usar Yomira en Windows 10/11 de 64 bits:**
 
