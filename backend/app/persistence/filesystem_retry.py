@@ -275,7 +275,9 @@ def retry_lstat(
             retry_budget=budget,
         )
         parent_identity = RetryingFileStream.identity_of(parent_info)
-    if parent_identity is None:
+    if (
+        parent_identity is None
+    ):
         raise OSError("Cannot prove the candidate's parent directory identity")
 
     def assert_parent_identity() -> None:
@@ -368,7 +370,8 @@ def close_read_handle(
     failure = OSError(errno.EIO, "Read handle close could not be verified")
     if close_error is not None:
         failure.add_note(
-            f"The prior read handle did not report a closed state ({type(close_error).__name__})."
+            "The prior read handle did not report a closed state "
+            f"({type(close_error).__name__})."
         )
     return failure
 
@@ -421,7 +424,9 @@ class RetryingFileStream:
             self._known_size = info.st_size
             self._position = stream.tell()
             if self._known_size != 0 or self._position != 0:
-                raise ValueError("RetryingFileStream requires a newly created empty file")
+                raise ValueError(
+                    "RetryingFileStream requires a newly created empty file"
+                )
             if identity is None:
                 raise OSError("Filesystem identity is unavailable for safe retry")
             self._identity = identity
@@ -430,7 +435,8 @@ class RetryingFileStream:
                 self._close_stream(stream)
             except BaseException as close_error:
                 initialization_error.add_note(
-                    f"New file stream cleanup failed ({type(close_error).__name__})."
+                    "New file stream cleanup failed "
+                    f"({type(close_error).__name__})."
                 )
             raise
 
@@ -514,7 +520,9 @@ class RetryingFileStream:
                 raise OSError("Cannot prove the exclusive-create pre-state") from None
             raise FileExistsError(errno.EEXIST, "Exclusive-create candidate exists")
         stream = retry_filesystem_operation(
-            lambda: _run_storage_mutation(storage_gate, lambda: path.open("x+b", buffering=0)),
+            lambda: _run_storage_mutation(
+                storage_gate, lambda: path.open("x+b", buffering=0)
+            ),
             unchanged=creation_prestate_is_unchanged,
             component=component,
             stage=stage,
@@ -578,7 +586,9 @@ class RetryingFileStream:
                     raise
                 expected_state = (self._identity, self._known_size)
                 self._close_after_failed_operation(error)
-                unchanged = self._path_matches_state(expected_state, retry_budget=retry_budget)
+                unchanged = self._path_matches_state(
+                    expected_state, retry_budget=retry_budget
+                )
                 if not self._wait_for_retry(
                     error,
                     operation_stage=f"{self._stage}_write_snapshot",
@@ -586,7 +596,9 @@ class RetryingFileStream:
                     unchanged=unchanged,
                 ):
                     raise
-                if not self._path_matches_state(expected_state, retry_budget=retry_budget):
+                if not self._path_matches_state(
+                    expected_state, retry_budget=retry_budget
+                ):
                     _log_stopped(
                         component=self._component,
                         stage=f"{self._stage}_write_snapshot",
@@ -735,7 +747,9 @@ class RetryingFileStream:
                     raise
                 expected_state = (self._identity, self._known_size)
                 self._close_after_failed_operation(error)
-                unchanged = self._path_matches_state(expected_state, retry_budget=retry_budget)
+                unchanged = self._path_matches_state(
+                    expected_state, retry_budget=retry_budget
+                )
                 if not self._wait_for_retry(
                     error,
                     operation_stage=operation_stage,
@@ -743,7 +757,9 @@ class RetryingFileStream:
                     unchanged=unchanged,
                 ):
                     raise
-                if not self._path_matches_state(expected_state, retry_budget=retry_budget):
+                if not self._path_matches_state(
+                    expected_state, retry_budget=retry_budget
+                ):
                     _log_stopped(
                         component=self._component,
                         stage=operation_stage,
@@ -776,7 +792,9 @@ class RetryingFileStream:
                 if winerror not in WIN32_TRANSIENT_LOCK_ERRORS:
                     raise
                 self._close_after_failed_operation(error)
-                unchanged = self._path_matches_state(before_state, retry_budget=retry_budget)
+                unchanged = self._path_matches_state(
+                    before_state, retry_budget=retry_budget
+                )
                 if not self._wait_for_retry(
                     error,
                     operation_stage=operation_stage,
@@ -836,7 +854,8 @@ class RetryingFileStream:
             (self._sleep or time.sleep)(delay)
         except Exception as sleep_error:
             error.add_note(
-                f"Filesystem retry stopped because its wait failed ({type(sleep_error).__name__})."
+                "Filesystem retry stopped because its wait failed "
+                f"({type(sleep_error).__name__})."
             )
             return False
         retry_budget.retries_used += 1
@@ -856,7 +875,9 @@ class RetryingFileStream:
     ) -> BinaryIO:
         stream = retry_filesystem_operation(
             lambda: self._open_update_stream(expected_state),
-            unchanged=lambda: self._path_matches_state(expected_state, retry_budget=retry_budget),
+            unchanged=lambda: self._path_matches_state(
+                expected_state, retry_budget=retry_budget
+            ),
             component=self._component,
             stage=f"{self._stage}_reopen",
             trace_id=self._trace_id,
@@ -883,7 +904,8 @@ class RetryingFileStream:
                 self._close_stream(stream)
             except BaseException as close_error:
                 validation_error.add_note(
-                    f"Reopened file stream cleanup failed ({type(close_error).__name__})."
+                    "Reopened file stream cleanup failed "
+                    f"({type(close_error).__name__})."
                 )
             raise
         self._stream = stream
@@ -901,7 +923,9 @@ class RetryingFileStream:
         def open_checked() -> BinaryIO:
             stream = self._open_update_stream(expected_state)
             try:
-                if not self._write_range_matches_stream(stream, snapshot, unchanged=True):
+                if not self._write_range_matches_stream(
+                    stream, snapshot, unchanged=True
+                ):
                     operation_error.add_note(
                         "Filesystem retry stopped because the write range changed "
                         "after its first unchanged-state proof."
@@ -915,16 +939,17 @@ class RetryingFileStream:
                     self._close_stream(stream)
                 except BaseException as close_error:
                     open_error.add_note(
-                        f"Reopened file stream cleanup failed ({type(close_error).__name__})."
+                        "Reopened file stream cleanup failed "
+                        f"({type(close_error).__name__})."
                     )
                 raise
 
         self._stream = retry_filesystem_operation(
             open_checked,
-            unchanged=lambda: (
-                self._classify_write_after_close(snapshot, payload, retry_budget=retry_budget)
-                == "unchanged"
-            ),
+            unchanged=lambda: self._classify_write_after_close(
+                snapshot, payload, retry_budget=retry_budget
+            )
+            == "unchanged",
             component=self._component,
             stage=f"{self._stage}_reopen",
             trace_id=self._trace_id,
@@ -966,7 +991,9 @@ class RetryingFileStream:
         *,
         retry_budget: _RetryBudget | None = None,
     ) -> str:
-        return self._classify_write_after_close(snapshot, payload, retry_budget=retry_budget)
+        return self._classify_write_after_close(
+            snapshot, payload, retry_budget=retry_budget
+        )
 
     def _classify_write_after_close(
         self,
@@ -1275,7 +1302,9 @@ def _path_range_equals(
             except BaseException:
                 definitely_closed = False
             if not definitely_closed:
-                failure = close_error or OSError(errno.EIO, "Read handle close is unverified")
+                failure = close_error or OSError(
+                    errno.EIO, "Read handle close is unverified"
+                )
                 raise failure from enter_error
             raise enter_error
         result = False
