@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$MotorDistribution,
     [Parameter(Mandatory = $true)][string]$ISCCPath,
     [string]$Python = '',
-    [string]$NpmCmd = ''
+    [string]$NpmCmd = '',
+    [string]$BackupRoot = ''
 )
 $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -81,6 +82,10 @@ $installerFiles = @(Get-ChildItem -LiteralPath (Join-Path $output 'installer') -
 if (-not (Test-Path -LiteralPath $releaseZip -PathType Leaf) -or (Get-Item -LiteralPath $releaseZip).Length -eq 0 -or $installerFiles.Count -eq 0) {
     throw 'The release ZIP or installer is missing; no version backup was created.'
 }
-& (Join-Path $repository 'scripts/backup-release.ps1') -ReleaseOutput $output -Version $version
+if ($BackupRoot) {
+    & (Join-Path $repository 'scripts/backup-release.ps1') -ReleaseOutput $output -Version $version -BackupRoot $BackupRoot
+} else {
+    & (Join-Path $repository 'scripts/backup-release.ps1') -ReleaseOutput $output -Version $version
+}
 Write-Output "Release files: $output"
 

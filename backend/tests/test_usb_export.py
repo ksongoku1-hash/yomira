@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
 from typing import Any, BinaryIO, cast
+from uuid import uuid4
 
 import pytest
 
@@ -18,6 +19,81 @@ from app.services.usb_export import (
     ExportTarget,
     UsbExportService,
 )
+
+
+@pytest.mark.parametrize("previous_hash_matches", [True, False])
+def test_epub_update_replaces_only_verified_previous_book(
+    tmp_path: Path,
+    previous_hash_matches: bool,
+) -> None:
+    library = tmp_path / "library"
+    folder = library / "EPUB" / str(uuid4())
+    folder.mkdir(parents=True)
+    path = folder / "Manga.epub"
+    content = b"new EPUB bytes"
+    path.write_bytes(content)
+    asset = Asset.new_local(
+        AssetType.EXPORT_COPY,
+        path.relative_to(library).as_posix(),
+        hashlib.sha256(content).hexdigest(),
+        len(content),
+        verified_at=datetime.now(UTC),
+    )
+    target = tmp_path / "reader"
+    service, _ = _service(library, target)
+    previous = b"earlier book with different size"
+    destination = target / path.name
+    destination.write_bytes(previous)
+    previous_sha = hashlib.sha256(previous).hexdigest() if previous_hash_matches else "0" * 64
+    if previous_hash_matches:
+        result = service.export_asset(asset, target_id="volume-test-1", replace_sha256=previous_sha)
+        assert result.status == "EXPORTED"
+        assert destination.read_bytes() == content
+        assert list(target.iterdir()) == [destination]
+        assert service.export_asset(asset, target_id="volume-test-1").status == "SKIPPED"
+    else:
+        with pytest.raises(ExportFailure):
+            service.export_asset(asset, target_id="volume-test-1", replace_sha256=previous_sha)
+        assert destination.read_bytes() == previous
+    assert path.read_bytes() == content
+
+
+def test_epub_publish_failure_restores_previous_book(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.persistence.atomic_file_publisher import AtomicFilePublisher
+
+    library = tmp_path / "library"
+    folder = library / "EPUB" / str(uuid4())
+    folder.mkdir(parents=True)
+    path = folder / "Manga.epub"
+    content = b"new book"
+    path.write_bytes(content)
+    asset = Asset.new_local(
+        AssetType.EXPORT_COPY,
+        path.relative_to(library).as_posix(),
+        hashlib.sha256(content).hexdigest(),
+        len(content),
+        verified_at=datetime.now(UTC),
+    )
+    target = tmp_path / "reader"
+    service, _ = _service(library, target)
+    destination = target / path.name
+    previous = b"previous book"
+    destination.write_bytes(previous)
+    publish = AtomicFilePublisher.publish_no_replace
+
+    def fail_new(self: AtomicFilePublisher, source: Path, dest: Path) -> None:
+        if source.suffix == ".part":
+            raise OSError("Simulated interrupted publication")
+        publish(self, source, dest)
+
+    monkeypatch.setattr(AtomicFilePublisher, "publish_no_replace", fail_new)
+    with pytest.raises(ExportFailure):
+        service.export_asset(
+            asset, target_id="volume-test-1", replace_sha256=hashlib.sha256(previous).hexdigest()
+        )
+    assert destination.read_bytes() == previous
 
 
 @dataclass
@@ -97,7 +173,8 @@ def test_export_copies_verified_cbz_and_keeps_library_source_unchanged(
 
 
 def test_fat32_rejects_a_single_file_over_4_gib_before_writing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     library_root = tmp_path / "library"
     library_root.mkdir()
@@ -105,6 +182,7 @@ def test_fat32_rejects_a_single_file_over_4_gib_before_writing(
     asset = replace(_asset(library_root / "manga.cbz", b"original"), size_bytes=1 << 32)
     service, provider = _service(library_root, destination)
     provider.target = replace(provider.target, file_system="FAT32")
+
     def inspect_large_file(*_args: object, **_kwargs: object) -> SimpleNamespace:
         return SimpleNamespace(st_size=asset.size_bytes)
 

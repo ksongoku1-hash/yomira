@@ -3,10 +3,13 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { getRecentLibrary } from "../api/client";
 import { ActionIcon } from "./ActionIcon";
+import { useAppearanceStore } from "./appearanceStore";
 import styles from "../App.module.css";
 
 export function AppSearch({ ready }: { ready: boolean }) {
   const navigate = useNavigate();
+  const theme = useAppearanceStore((state) => state.theme);
+  const updateAppearance = useAppearanceStore((state) => state.update);
   const searchRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
   const library = useQuery({ queryKey: ["library", "recent", 4], queryFn: () => getRecentLibrary(4), enabled: ready });
@@ -33,6 +36,11 @@ export function AppSearch({ ready }: { ready: boolean }) {
       <kbd aria-hidden="true">/</kbd>
       <button className={styles.searchSubmit} type="submit" aria-label="Buscar historias" title="Buscar historias"><ActionIcon name="next" /></button>
     </form>
+    <button className={styles.themeSwitch} type="button" aria-label="Tema claro" aria-pressed={theme === "papel"}
+      title={theme === "papel" ? "Cambiar a tema oscuro" : "Cambiar a tema claro"}
+      onClick={() => updateAppearance({ theme: theme === "papel" ? "tinta" : "papel" })}>
+      <ActionIcon name="moon" /><ActionIcon name="sun" /><span className={styles.themeThumb} aria-hidden="true" />
+    </button>
     <button className={styles.surpriseButton} type="button" aria-label="Sorpréndeme" title="Explorar una obra reciente de tu biblioteca"
       disabled={!ready || library.isError || works.length === 0} onClick={() => {
         const work = works[Math.floor(Math.random() * works.length)];

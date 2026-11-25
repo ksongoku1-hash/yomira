@@ -715,9 +715,9 @@ export function SearchResultCard({
   const coverLoading = group.coverUrl === null && coverQuery.isFetching;
 
   return (
-    <li className={styles.resultItem}>
+    <li className={styles.resultItem} data-motion-card>
       <article className={styles.resultCard}>
-        <div aria-label={coverTitle} className={styles.coverFrame} ref={coverFrameRef}>
+        <div aria-label={coverTitle} className={styles.coverFrame} data-motion-surface="cover" ref={coverFrameRef}>
           {coverUrl !== null && coverUrl !== failedCoverUrl ? (
             <img
               alt={coverTitle}

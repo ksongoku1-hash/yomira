@@ -23,13 +23,14 @@ from app.persistence.models.chapter_cbz_asset import ChapterCbzAssetRow
 from app.persistence.models.chapter_source import ChapterSourceRow
 from app.persistence.models.download_job import DownloadJobRow
 from app.persistence.models.download_manifest_state import DownloadManifestStateRow
+from app.persistence.models.export_job import ExportJobRow
 from app.persistence.repositories.export_job import (
     ExportJobCursorPage,
     ExportJobPage,
     ExportJobRepository,
     ExportJobTransitionConflict,
 )
-from app.services.usb_export import MAX_EXPORT_BYTES, ExportFailure, ExportResult, ExportTarget
+from app.services.usb_export import ExportFailure, ExportResult, ExportTarget, export_size_limit
 from app.tracing import activate_trace_id, create_trace_id, current_trace_id, reset_trace_id
 
 logger = logging.getLogger("yomira.usb_export_history")
@@ -46,7 +47,9 @@ class ExportAssetUnavailable(RuntimeError):
 class Exporter(Protocol):
     def list_targets(self) -> tuple[ExportTarget, ...]: ...
 
-    def export_asset(self, asset: Asset, *, target_id: str) -> ExportResult: ...
+    def export_asset(
+        self, asset: Asset, *, target_id: str, replace_sha256: str | None = None
+    ) -> ExportResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +81,7 @@ class UsbExportJobService:
         self._clock = clock
 
         """List removable targets from the configured exporter/provider."""
+
     def progress_for_trace(self, trace_id: str) -> dict[str, object] | None:
         callback = getattr(self._exporter, "progress_for_trace", None)
         return cast(dict[str, object] | None, callback(trace_id)) if callable(callback) else None
@@ -106,7 +110,26 @@ class UsbExportJobService:
         trace_token = activate_trace_id(exporting.trace_id)
         try:
             try:
-                result = self._exporter.export_asset(asset, target_id=target_id)
+                if asset.is_epub_export:
+                    with self._database.read_session() as session:
+                        previous_sha = session.scalar(
+                            select(ExportJobRow.expected_sha256)
+                            .join(AssetRow, AssetRow.asset_id == ExportJobRow.asset_id)
+                            .where(
+                                ExportJobRow.target_id == target_id,
+                                ExportJobRow.destination_name == Path(asset.relative_path).name,
+                                ExportJobRow.status.in_(("EXPORTED", "SKIPPED")),
+                                AssetRow.asset_type == AssetType.EXPORT_COPY.value,
+                                AssetRow.relative_path == asset.relative_path,
+                            )
+                            .order_by(ExportJobRow.terminal_at_us.desc())
+                            .limit(1)
+                        )
+                    result = self._exporter.export_asset(
+                        asset, target_id=target_id, replace_sha256=previous_sha
+                    )
+                else:
+                    result = self._exporter.export_asset(asset, target_id=target_id)
             except ExportFailure as error:
                 return self.mark_failed(
                     exporting.export_id,
@@ -416,10 +439,10 @@ class UsbExportJobService:
                 raise ExportAssetUnavailable()
             asset = asset_from_row(row)
         if (
-            asset.asset_type not in {AssetType.CBZ, AssetType.CBR}
+            (asset.asset_type not in {AssetType.CBZ, AssetType.CBR} and not asset.is_epub_export)
             or asset.verified_at is None
             or asset.size_bytes <= 0
-            or asset.size_bytes > MAX_EXPORT_BYTES
+            or asset.size_bytes > export_size_limit(asset)
         ):
             raise ExportAssetUnavailable()
         return asset

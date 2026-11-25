@@ -439,7 +439,7 @@ def test_download_job_schema_and_migration_preserve_exact_source_version(
                 {"job_id": str(job.job_id)},
             ).one()
 
-        assert report.current_revision == "0024_reader_sessions"
+        assert report.current_revision == "0025_epub_export_size"
         assert row is not None
         assert download_job_from_row(row) == job
         assert checkpoint_fields == (None, 0)

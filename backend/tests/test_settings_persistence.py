@@ -258,18 +258,18 @@ def test_settings_migration_preserves_existing_chapters_and_audit_history(
                 text("SELECT chapter_raw_label FROM chapters WHERE chapter_id = :chapter_id"),
                 {"chapter_id": str(chapter.chapter_id)},
             ).scalar_one()
-            last_event = session.get(SchemaHistoryRow, 24)
+            last_event = session.get(SchemaHistoryRow, 25)
             foreign_key_errors = (
                 session.connection().exec_driver_sql("PRAGMA foreign_key_check").all()
             )
 
         assert report.previous_revision == "0010_reader_progress"
-        assert report.current_revision == "0024_reader_sessions"
+        assert report.current_revision == "0025_epub_export_size"
         assert report.changed is True
         assert report.backup_path is not None and report.backup_path.is_file()
         assert saved_chapter_label == "7"
         assert last_event is not None
-        assert last_event.revision_id == "0024_reader_sessions"
+        assert last_event.revision_id == "0025_epub_export_size"
         assert foreign_key_errors == []
     finally:
         database.close()

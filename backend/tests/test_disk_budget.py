@@ -45,9 +45,7 @@ def test_disk_reservation_accepts_exact_threshold_and_rejects_one_byte_below(
         initial = manager.snapshot()
         assert initial.recovery_demand_bytes is not None
         maximum_job_bytes = PAGE_TEMP_RESERVATION_BYTES + CBZ_RESERVATION_BYTES
-        exact_threshold = (
-            initial.recovery_demand_bytes + MINIMUM_RESERVED_BYTES + maximum_job_bytes
-        )
+        exact_threshold = initial.recovery_demand_bytes + MINIMUM_RESERVED_BYTES + maximum_job_bytes
 
         free_bytes[0] = exact_threshold
         manager.reserve(uuid4())
@@ -80,6 +78,45 @@ def test_whole_manga_reservation_keeps_download_limits_and_cannot_overallocate(
         database.close()
 
 
+def test_epub_reservation_supports_whole_books_above_eight_gib_without_overallocation(
+    tmp_path: Path,
+) -> None:
+    gib = 1024**3
+    manager, database = _manager(tmp_path, [80 * gib])
+    operation = uuid4()
+    try:
+        manager.reserve_bounded_operation(operation, page_bytes=0, cbz_bytes=64 * gib)
+        assert manager.snapshot().reserved_bytes == 64 * gib
+        with pytest.raises(DiskBudgetUnavailableError):
+            manager.reserve_bounded_operation(uuid4(), page_bytes=0, cbz_bytes=20 * gib)
+        assert manager.release_bounded_operation(operation)
+        with pytest.raises(DiskBudgetUnavailableError):
+            manager.reserve_bounded_operation(uuid4(), page_bytes=0, cbz_bytes=64 * gib + 1)
+    finally:
+        database.close()
+
+
+def test_lossless_conversion_growth_rechecks_free_space_and_keeps_existing_reservation(
+    tmp_path: Path,
+) -> None:
+    free: list[int | None] = [10 * 1024**3]
+    manager, database = _manager(tmp_path, free)
+    operation = uuid4()
+    try:
+        manager.reserve_bounded_operation(operation, page_bytes=0, cbz_bytes=1000)
+        manager.increase_bounded_cbz_reservation(operation, 2000)
+        assert manager.snapshot().reserved_bytes == 3000
+        free[0] = 0
+        with pytest.raises(DiskBudgetUnavailableError):
+            manager.increase_bounded_cbz_reservation(operation, 1)
+        assert manager.snapshot().reserved_bytes == 3000
+        assert manager.release_bounded_operation(operation)
+        with pytest.raises(DiskBudgetUnavailableError):
+            manager.increase_bounded_cbz_reservation(operation, 1)
+    finally:
+        database.close()
+
+
 def test_concurrent_reservations_cannot_overallocate_one_volume(tmp_path: Path) -> None:
     free_bytes: list[int | None] = [0]
     manager, database = _manager(tmp_path, free_bytes)
@@ -90,11 +127,7 @@ def test_concurrent_reservations_cannot_overallocate_one_volume(tmp_path: Path) 
         assert baseline.recovery_demand_bytes is not None
         one_job = PAGE_TEMP_RESERVATION_BYTES + CBZ_RESERVATION_BYTES
         free_bytes[0] = (
-            baseline.recovery_demand_bytes
-            + MINIMUM_RESERVED_BYTES
-            + one_job
-            + one_job
-            - 1
+            baseline.recovery_demand_bytes + MINIMUM_RESERVED_BYTES + one_job + one_job - 1
         )
 
         def reserve() -> None:
@@ -286,11 +319,7 @@ def test_cbz_zip_backpatch_consumes_only_physical_file_growth(tmp_path: Path) ->
         snapshot = manager.snapshot()
         assert snapshot.recovery_demand_bytes is not None
         tokens = PAGE_TEMP_RESERVATION_BYTES + CBZ_RESERVATION_BYTES
-        free_bytes[0] = (
-            snapshot.recovery_demand_bytes
-            + MINIMUM_RESERVED_BYTES
-            + tokens
-        )
+        free_bytes[0] = snapshot.recovery_demand_bytes + MINIMUM_RESERVED_BYTES + tokens
         manager.reserve(job_id)
         with path.open("w+b", buffering=0) as raw:
             stream = _SizeBoundedZipStream(

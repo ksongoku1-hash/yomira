@@ -18,6 +18,7 @@ import { useInterfaceMotion } from "./app/useInterfaceMotion";
 import { isMobileConnection, MobileSessionGuard } from "./settings/MobileAccessPanel";
 
 import "./global.css";
+import "./interfaceEffects.css";
 
 const DownloadsPage = lazy(() => import("./downloads/DownloadsPage").then((module) => ({default: module.DownloadsPage})));
 
@@ -103,8 +104,8 @@ function AppShell() {
   const closeNavigation = useShellStore((state) => state.closeNavigation);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const moreNavigationRef = useRef<HTMLElement>(null);
-  const mainRef = useRef<HTMLElement>(null);
-  useInterfaceMotion(mainRef, pathname, !reading && !simpleGraphics);
+  const shellRef = useRef<HTMLDivElement>(null);
+  useInterfaceMotion(shellRef, pathname, !reading && !simpleGraphics);
   useEffect(() => {
     if (!isNavigationOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -127,7 +128,7 @@ function AppShell() {
 
   return (
     <div className={`${styles.appShell} ${reading ? styles.readerShell : ""} ${collapsed ? styles.collapsed : ""} ${simpleGraphics ? styles.simpleGraphics : ""}`} data-simple-graphics={simpleGraphics} data-theme={theme}
-      data-illustrated-background={backgroundEnabled} style={{ "--ambient-art-opacity": backgroundIntensity / 100 * 0.18 } as React.CSSProperties}>
+      ref={shellRef} data-illustrated-background={backgroundEnabled} style={{ "--ambient-art-opacity": backgroundIntensity / 100 * 0.18 } as React.CSSProperties}>
       <MobileSessionGuard />
       {!reading && backgroundEnabled && !simpleGraphics ? <div className={styles.ambientMotion} aria-hidden="true" /> : null}
       {!reading && backgroundEnabled && !simpleGraphics && theme === "tinta" ? <div className={styles.decorativeArt} aria-hidden="true" /> : null}
@@ -209,7 +210,7 @@ function AppShell() {
           </nav>
       </header>
       <div className={styles.appMain}>
-        <main ref={mainRef} className={styles.mainContent} id="main-content" tabIndex={-1}>
+        <main className={styles.mainContent} id="main-content" tabIndex={-1}>
           {!reading ? <AppSearch ready={ready} /> : null}
           {!isMobileConnection ? <AppUpdates compact hidden={reading || pathname === "/settings"} /> : null}
           <Suspense fallback={<p role="status">Abriendo pantalla…</p>}><Outlet /></Suspense>

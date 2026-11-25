@@ -81,6 +81,7 @@ def retry_filesystem_operation[T](
     applied_result: T | None = None,
     retry_budget: _RetryBudget | None = None,
     sleep: SleepOperation | None = None,
+    retryable_winerrors: frozenset[int] = WIN32_TRANSIENT_LOCK_ERRORS,
 ) -> T:
     """Retry an operation only while its caller proves its pre-state remains exact."""
     budget = retry_budget or _RetryBudget()
@@ -89,7 +90,7 @@ def retry_filesystem_operation[T](
             return operation()
         except OSError as error:
             winerror = native_winerror(error)
-            if winerror not in WIN32_TRANSIENT_LOCK_ERRORS:
+            if winerror not in retryable_winerrors:
                 raise
             try:
                 still_unchanged = unchanged()

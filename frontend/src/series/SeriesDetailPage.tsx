@@ -29,6 +29,7 @@ import { SeriesCover } from "../library/SeriesCover";
 import { IllustratedBackdrop } from "../library/IllustratedBackdrop";
 import { publicationStatus } from "../library/publicationStatus";
 import { OnlineChapters } from "./OnlineChapters";
+import { SeriesEpub } from "./SeriesEpub";
 import { ActionIcon } from "../app/ActionIcon";
 import { isMobileConnection } from "../settings/MobileAccessPanel";
 
@@ -577,6 +578,7 @@ function SeriesMetadata({ seriesId }: { seriesId: string }) {
               onDownload={onlineSource ? () => setDownloadOpen(!downloadOpen) : null}
               downloadOpen={downloadOpen}
             />
+            <SeriesEpub seriesId={seriesId} localChapterCount={localSummary.data?.meta.total ?? 0} />
             {onlineSource ? <OnlineChapters key={seriesId} seriesId={seriesId} sources={series.readingSources}
               source={onlineSource} onSourceChange={setOnlineSourceId} downloadOpen={downloadOpen} /> : <section className={styles.chapters} aria-labelledby="online-source-title">
                 <p className={styles.eyebrow}>Disponible sin descargar</p>

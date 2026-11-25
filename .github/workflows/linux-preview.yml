@@ -53,6 +53,10 @@ jobs:
           ../.venv/bin/python -m pytest tests/test_linux_platform.py tests/test_linux_installer.py tests/test_linux_package.py
           tests/test_reader_settings.py tests/test_reader_progress_api.py tests/test_mangadex_reader.py
           tests/test_local_import.py::test_import_is_readable_ordered_enriched_and_idempotent
+          tests/test_epub_builder.py tests/test_series_epub.py tests/test_export_history.py
+          tests/test_usb_export.py::test_epub_update_replaces_only_verified_previous_book
+          tests/test_usb_export.py::test_epub_publish_failure_restores_previous_book
+          tests/test_wpd_export.py::test_epub_wpd_update_keeps_foreign_books_and_verifies_replacement
       - name: Check Linux adapters
         working-directory: backend
         run: |
@@ -62,6 +66,6 @@ jobs:
         run: .venv/bin/python scripts/package-linux.py
       - uses: actions/upload-artifact@v4
         with:
-          name: Yomira-0.1.18-Linux-x86_64-preview
+          name: Yomira-0.1.19-Linux-x86_64-preview
           path: dist-linux/*
           if-no-files-found: error

@@ -104,10 +104,12 @@ class IsolatedWpdClient:
         target: ExportTarget,
         export_id: UUID,
         trace_id: str,
+        replace_sha256: str | None = None,
     ) -> Literal["EXPORTED", "SKIPPED"]:
         response = self._request(
             {
                 "action": "export_asset",
+                "replace_sha256": replace_sha256,
                 "asset": _asset_to_payload(asset),
                 "source_path": str(source_path),
                 "target": _target_to_payload(target),
@@ -318,7 +320,7 @@ class IsolatedWpdClient:
                             or not 0
                             <= cast(int, progress["processed_bytes"])
                             <= cast(int, progress["total_bytes"])
-                            <= 8 * 1024**3
+                            <= 64 * 1024**3
                         ):
                             raise ValueError("Invalid worker progress")
                         self._progress[trace_id] = progress
@@ -479,6 +481,7 @@ def _execute_worker_request(request_value: object) -> dict[str, object]:
                 target=target,
                 export_id=UUID(export_id_value),
                 trace_id=trace_id,
+                replace_sha256=_optional_string(request.get("replace_sha256")),
             )
             return {"ok": True, "status": result}
         return _worker_error(

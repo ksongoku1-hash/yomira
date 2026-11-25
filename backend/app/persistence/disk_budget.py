@@ -129,7 +129,7 @@ class DiskBudgetManager:
         if type(reservation_id) is not UUID or reservation_id.version != 4:
             raise ValueError("reservation_id must be a UUIDv4")
         self._validate_existing_bytes(page_bytes, 8 * 1024 * 1024 * 1024)
-        self._validate_existing_bytes(cbz_bytes, 8 * 1024 * 1024 * 1024)
+        self._validate_existing_bytes(cbz_bytes, 64 * 1024 * 1024 * 1024)
         job_id = reservation_id
 
         with self._lock:
@@ -157,6 +157,37 @@ class DiskBudgetManager:
                 pages_remaining_bytes=page_bytes,
                 cbz_remaining_bytes=cbz_bytes,
             )
+
+    def increase_bounded_cbz_reservation(self, operation_id: UUID, additional_bytes: int) -> None:
+        """Admit the extra bytes needed by a lossless image conversion before writing them."""
+        if type(operation_id) is not UUID or operation_id.version != 4:
+            raise ValueError("operation_id must be a UUIDv4")
+        self._validate_existing_bytes(additional_bytes, 64 * 1024**3)
+        with self._lock:
+            reservation = self._reservations.get(operation_id)
+            if reservation is None:
+                raise DiskBudgetUnavailableError(
+                    "RESERVATION_MISSING", free_bytes=None, required_bytes=None
+                )
+            self._validate_existing_bytes(
+                reservation.cbz_remaining_bytes + additional_bytes, 64 * 1024**3
+            )
+            snapshot = self._snapshot_locked()
+            required = (
+                None
+                if snapshot.required_bytes is None
+                else snapshot.required_bytes + additional_bytes
+            )
+            if (
+                not snapshot.safe
+                or snapshot.free_bytes is None
+                or required is None
+                or snapshot.free_bytes < required
+            ):
+                raise DiskBudgetUnavailableError(
+                    "INSUFFICIENT_SPACE", free_bytes=snapshot.free_bytes, required_bytes=required
+                )
+            reservation.cbz_remaining_bytes += additional_bytes
 
     def write_reserved(
         self,

@@ -836,6 +836,36 @@
 .ereaderProfile.scrolling .readerCanvas::-webkit-scrollbar-thumb, .ereaderProfile.scrolling .verticalViewport::-webkit-scrollbar-thumb { background: #555; }
 
 /* Reveal pixels without changing the geometry used to restore long-page positions. */
+@keyframes readerPanelEnter { from { opacity: 0; transform: perspective(800px) translateY(10px) rotateX(-3deg) scale(.98); } }
+.page:not(.ereaderProfile) :is(.optionsPanel, .navigator, .downloadPanel) { animation: readerPanelEnter 240ms cubic-bezier(.2,.7,.2,1); transform-origin: top right; }
+.page:not(.ereaderProfile) .optionsPanel { box-shadow: inset 0 1px 0 #d8efff20, 0 22px 64px #0008; }
+/* Opaque glass keeps page art out of the controls and avoids a live blur layer. */
+@media (forced-colors: none) {
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) :is(.navigator, .downloadPanel) { background: linear-gradient(145deg, color-mix(in srgb, var(--surface) 94%, #fff), var(--surface) 65%); box-shadow: inset 0 1px 0 #d8efff24, 0 22px 64px #0008; }
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .optionsPanel { background: linear-gradient(145deg, color-mix(in srgb, var(--option-bg) 95%, #fff), var(--option-bg) 65%); }
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .optionTile[aria-pressed="true"] { box-shadow: inset 0 1px 0 #ffffff38, inset 0 -2px 0 #0003, 0 0 0 2px var(--option-glow); }
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .switchRow input { box-shadow: inset 0 1px 3px #0005, 0 1px 0 #ffffff14; }
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .switchRow input::after { background: linear-gradient(145deg, #fff, #cee7fa); box-shadow: 0 1px 4px #0005, inset 0 1px 0 #fff; }
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .switchRow:has(input:checked) { border-color: color-mix(in srgb, var(--option-accent) 48%, var(--option-line)); }
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .savedTabs > button[aria-pressed="true"] { background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 22%, var(--surface)), var(--surface-hover)); box-shadow: inset 0 1px 0 #ffffff24, 0 3px 12px #0002; }
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .downloadChapterList li:is([data-current="true"], :has([aria-current="page"])) { border-radius: 10px; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); box-shadow: inset 3px 0 0 var(--accent); }
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .downloadChapterList [aria-current="page"] { opacity: 1; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+  @supports selector(:has(*)) {
+    :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .segmented { position: relative; isolation: isolate; }
+    :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .segmented::before { content: ""; position: absolute; z-index: -1; left: 4px; top: 4px; bottom: 4px; width: calc((100% - 11px) / 2); border-radius: 9px; background: var(--option-solid); box-shadow: inset 0 1px 0 #ffffff38, 0 2px 8px #0003; opacity: 0; pointer-events: none; transform: translateX(calc(var(--segment-index, 0) * (100% + 3px))); }
+    :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .segmented:has(> :nth-child(3))::before { width: calc((100% - 14px) / 3); }
+    :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .segmented:has(> [aria-pressed="true"])::before { opacity: 1; }
+    :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .segmented:has(> :nth-child(2)[aria-pressed="true"]) { --segment-index: 1; }
+    :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .segmented:has(> :nth-child(3)[aria-pressed="true"]) { --segment-index: 2; }
+    :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .optionsPanel .segmented .secondaryButton[aria-pressed="true"] { background: transparent; }
+  }
+}
+@media (forced-colors: none) and (prefers-reduced-motion: no-preference) {
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .segmented::before { transition: transform 260ms cubic-bezier(.2,.7,.2,1), opacity 160ms ease; }
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) :is(.chapterTrigger svg, .optionTile > svg) { transition: transform 220ms cubic-bezier(.2,.7,.2,1); }
+  :global([data-simple-graphics="false"]) .page:not(.ereaderProfile) .optionTile[aria-pressed="true"] > svg { transform: translateY(-1px) scale(1.05); }
+}
+@media (prefers-reduced-motion: reduce) { .page :is(.optionsPanel, .navigator, .downloadPanel) { animation: none; } }
 @keyframes pageEnter { from { opacity: .3; clip-path: inset(var(--reader-page-clip, 0 8% 0 0)); } to { opacity: 1; clip-path: inset(0); } }
 .page:not(.ereaderProfile) .readerCanvas .pageImage { animation: pageEnter 360ms cubic-bezier(.2,.7,.2,1); }
 .pageHeader, .bottomBar { transition: transform 350ms cubic-bezier(.2,.7,.2,1); }

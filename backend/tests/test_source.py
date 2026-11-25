@@ -170,7 +170,7 @@ def test_source_schema_enforces_values_indexes_and_health_restrict(tmp_path: Pat
     runner = MigrationRunner(database, tmp_path / "backups")
     try:
         report = runner.upgrade_to_head()
-        assert report.current_revision == "0024_reader_sessions"
+        assert report.current_revision == "0025_epub_export_size"
 
         source = Source.new_local(
             "shared-connector-id",
